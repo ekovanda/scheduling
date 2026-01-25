@@ -182,15 +182,14 @@ def page_regeln() -> None:
     - **TAs**: Arbeiten 2 Nächte/Monat (alleine, So→Mo & Mo→Di)
 
     ### Zeitliche Constraints
-    - **3-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 3-Wochen-Fenster
+    - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster (entspannt von 3 Wochen aus Kapazitätsgründen)
     - **Nacht/Tag-Konflikt**: Kein Tagdienst am selben oder nächsten Tag nach Nachtschicht
-    - **nd_count**: Anzahl aufeinanderfolgender Nächte muss in `nd_count` enthalten sein
     - **nd_exceptions**: Keine Nächte an Wochentagen in `nd_exceptions` (1=Mo, 7=So)
 
     ## Soft Constraints (Optimierungsziele)
 
-    ### Faire Verteilung
-    - **Proportional**: Notdienste proportional zu Wochenstunden
+    - **nd_count**: Anzahl aufeinanderfolgender Nächte soll idealerweise `nd_count` entsprechen (jetzt Soft Constraint, um Lösungen zu ermöglichen)
+    - **Faire Verteilung**: Notdienste proportional zu Wochenstunden
     - **Effective Nights**: Paar-Nächte zählen 0,5× pro Person
     - **Gruppen-Fairness**: Minimale Abweichung innerhalb TFA/Azubi/TA
     - **Minderjährige**: Erhalten mehr Samstage (Ausgleich für keine Sonntage)

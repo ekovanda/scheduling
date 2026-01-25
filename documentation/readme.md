@@ -33,15 +33,13 @@
 ### Greedy Assignment
 
 ```
-for each shift (sorted by date):
-    eligible = filter staff by:
-        - can_work_shift() (role/age/capabilities)
-        - no conflict on shift_date or next_day
-        
-    if shift == night && requires_pair:
-        assign 2 staff with nd_alone=False
-    else:
-        assign 1 staff with fewest assignments
+1. Sort shifts by date.
+2. Assign Saturdays/Sundays using "Fewest Assignments" heuristic.
+3. Assign Night Shifts using "Block-Aware" logic:
+   Iterate per day:
+     - Identify staff continuing a block from yesterday (Priority 1)
+     - Identify staff starting a new block (Priority 2)
+     - Maintain `active_blocks` state to satisfy `nd_count` constraints
 ```
 
 ### 3-Week Block Constraint

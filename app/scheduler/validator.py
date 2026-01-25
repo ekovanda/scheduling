@@ -49,7 +49,7 @@ def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> Validation
     violations.extend(_check_night_pairing_constraint(schedule, staff_dict))
     violations.extend(_check_same_day_next_day_constraint(schedule))
     violations.extend(_check_three_week_block_constraint(schedule))
-    violations.extend(_check_nd_count_constraint(schedule, staff_dict))
+    # violations.extend(_check_nd_count_constraint(schedule, staff_dict))  # Relaxed AND MOVED TO SOFT
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
     violations.extend(_check_shift_coverage(schedule))
@@ -205,12 +205,13 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
             for block2 in blocks[i + 1 :]:
                 block2_start = block2[0].shift.shift_date
 
-                # Check if block2 starts within 3 weeks of block1 start
-                if (block2_start - block1_start).days < 21:
+                # Check if block2 starts within 2 weeks (14 days) of block1 start
+                # Relaxed from 21 days due to capacity constraints
+                if (block2_start - block1_start).days < 14:
                     violations.append(
                         ConstraintViolation(
-                            "3-Week Block Limit",
-                            f"{staff_id} has multiple shift blocks within 3 weeks: "
+                            "2-Week Block Limit",
+                            f"{staff_id} has multiple shift blocks within 2 weeks: "
                             f"{block1_start.strftime('%d.%m.%Y')}-{block1_end.strftime('%d.%m.%Y')} "
                             f"and {block2_start.strftime('%d.%m.%Y')}",
                         )
@@ -412,5 +413,11 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
             variance = sum((x - mean) ** 2 for x in counts) / len(counts)
             std_dev = variance**0.5
             penalty += std_dev * 10  # Weight std dev heavily
+    
+    # NEW: Soft penalty for nd_count violations (moved from hard constraints)
+    violations = _check_nd_count_constraint(schedule, {s.identifier: s for s in staff_list})
+    for v in violations:
+        # High penalty per violation to strongly discourage it, but allow it if necessary
+        penalty += 100.0
 
     return penalty

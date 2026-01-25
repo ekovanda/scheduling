@@ -3,7 +3,7 @@
 import random
 from collections import defaultdict
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 
 from .models import Assignment, Schedule, Shift, ShiftType, Staff, generate_quarter_shifts
 from .validator import validate_schedule
@@ -117,15 +117,60 @@ def generate_schedule(
     )
 
 
+def _is_block_compatible(
+    staff_id: str,
+    check_date: date,
+    staff_assignments: dict[str, list[Assignment]],
+    ignore_continuity: bool = False,
+) -> bool:
+    """Check if assigning check_date violates the 2-week block constraint.
+
+    If ignore_continuity is True, we don't check for continuity (useful for Sat/Sun shifts).
+    If ignore_continuity is False (default), we allow dates that are adjacent to existing blocks (extending them).
+    """
+    sorted_assigns = sorted(staff_assignments.get(staff_id, []), key=lambda a: a.shift.shift_date)
+    if not sorted_assigns:
+        return True
+
+    # Find the latest block's end date
+    # (Simplified: just check last assignment if we assume chronological processing)
+    # However, since we process Sat then Sun then Night, order isn't strictly chronological in execution
+    # but strictly sorted_dates logic helps.
+    
+    # Let's look at all distinct blocks
+    last_assignment = sorted_assigns[-1]
+    last_date = last_assignment.shift.shift_date
+
+    # If extending last block (adjacent date)
+    if not ignore_continuity and abs((check_date - last_date).days) <= 1:
+        return True
+
+    # New block start? Check distance from start of last block
+    # Find start of last block
+    block_start = last_date
+    for i in range(len(sorted_assigns) - 2, -1, -1):
+        curr = sorted_assigns[i].shift.shift_date
+        next_d = sorted_assigns[i + 1].shift.shift_date
+        if (next_d - curr).days > 1:
+            break
+        block_start = curr
+    
+    # Current constraint: 2 weeks (14 days)
+    if (check_date - block_start).days < 14:
+        return False
+        
+    return True
+
+
 def _greedy_assignment(
     staff_list: list[Staff], shifts: list[Shift], quarter_start: date, quarter_end: date
 ) -> Schedule:
-    """Greedy assignment phase with fairness logic.
+    """Greedy assignment phase with fairness and block logic.
 
     Priorities:
     - Azubi minors get proportionally more Saturdays
+    - Night shifts respect nd_count blocking (continuity)
     - Night shifts pair staff with nd_alone=False
-    - Respect nd_count and nd_exceptions
     """
     schedule = Schedule(quarter_start=quarter_start, quarter_end=quarter_end, assignments=[])
 
@@ -149,6 +194,8 @@ def _greedy_assignment(
             s
             for s in eligible
             if not _has_conflict_on_date(s.identifier, shift.shift_date, staff_assignments)
+            # Check block constraint (Sat is usually start of block, so ignore_continuity=False is fine but implicit)
+            and _is_block_compatible(s.identifier, shift.shift_date, staff_assignments)
         ]
 
         if not eligible:
@@ -173,6 +220,8 @@ def _greedy_assignment(
             s
             for s in eligible
             if not _has_conflict_on_date(s.identifier, shift.shift_date, staff_assignments)
+            # Check block constraint
+            and _is_block_compatible(s.identifier, shift.shift_date, staff_assignments)
         ]
 
         if not eligible:
@@ -184,53 +233,126 @@ def _greedy_assignment(
         schedule.assignments.append(assignment)
         staff_assignments[selected.identifier].append(assignment)
 
-    # Assign night shifts (handle pairing)
-    for shift in night_shifts:
-        eligible = [s for s in staff_list if s.can_work_shift(shift.shift_type, shift.shift_date)]
-        eligible = [
-            s
-            for s in eligible
-            if not _has_conflict_on_date(s.identifier, shift.shift_date, staff_assignments)
-            and not _has_conflict_on_date(s.identifier, shift.get_next_day(), staff_assignments)
-        ]
+    # Assign night shifts using Block-Aware Logic
+    # Group by date
+    night_shifts_map = defaultdict(list)
+    for s in night_shifts:
+        night_shifts_map[s.shift_date].append(s)
+    
+    sorted_dates = sorted(night_shifts_map.keys())
+    
+    # State: staff_id -> (current_block_length, last_worked_date)
+    active_blocks: dict[str, tuple[int, date]] = {}
 
-        if not eligible:
+    for d in sorted_dates:
+        shifts_for_day = night_shifts_map[d]
+        if not shifts_for_day:
             continue
+        shift = shifts_for_day[0]  # Assuming single night shift type per date
 
-        # Determine if this is a night with TA present (Sun-Mon, Mon-Tue)
         ta_present = shift.shift_type in [ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE]
 
-        # Check if we need pairing
-        solo_eligible = [s for s in eligible if s.nd_alone or ta_present]
-        paired_eligible = [s for s in eligible if not s.nd_alone and not ta_present]
+        # Identify candidates from active blocks
+        candidates_must = []
+        candidates_can = []
+        
+        # Check active blocks from prev day
+        prev_day = d - timedelta(days=1)
+        
+        # Cleanup stale blocks
+        active_blocks = {
+            sid: val for sid, val in active_blocks.items() 
+            if val[1] == prev_day
+        }
 
-        # Try to assign solo worker first
-        if solo_eligible:
-            selected = min(solo_eligible, key=lambda s: len(staff_assignments[s.identifier]))
-            assignment = Assignment(
-                shift=shift, staff_identifier=selected.identifier, is_paired=False
-            )
-            schedule.assignments.append(assignment)
-            staff_assignments[selected.identifier].append(assignment)
+        for sid, (length, _) in active_blocks.items():
+            staff_matches = [s for s in staff_list if s.identifier == sid]
+            if not staff_matches: continue
+            staff = staff_matches[0]
 
-        # If we have paired_eligible, assign a pair
-        elif len(paired_eligible) >= 2:
-            # Pick two staff with fewest assignments
-            sorted_paired = sorted(
-                paired_eligible, key=lambda s: len(staff_assignments[s.identifier])
-            )
-            staff1, staff2 = sorted_paired[0], sorted_paired[1]
+            # Check eligibility for TODAY
+            if not staff.can_work_shift(shift.shift_type, d):
+                continue
+            if _has_conflict_on_date(sid, d, staff_assignments):
+                continue
+            # Check conflict for TOMORROW (Night/Day conflict avoidance)
+            if _has_conflict_on_date(sid, d + timedelta(days=1), staff_assignments):
+                continue
+            
+            # Allow day check: cannot work if has day shift tomorrow?
+            # Greedy heuristic: just check conflict on 'd'. 
+            # (Sunday shift handled previously, but Monday day shift? usually not assigned yet or separate)
 
-            assignment1 = Assignment(
-                shift=shift, staff_identifier=staff1.identifier, is_paired=True
+            min_len = min(staff.nd_count) if staff.nd_count else 1
+            max_len = max(staff.nd_count) if staff.nd_count else 1
+
+            if length < min_len:
+                candidates_must.append(staff)
+            elif length < max_len:
+                candidates_can.append(staff)
+        
+        # Decision Logic
+        assigned_staff = []
+
+        # 1. Force MUST continues
+        for s in candidates_must:
+            if s not in assigned_staff:
+                assigned_staff.append(s)
+
+        # Helper to check if unsatisfied
+        def needs_more_people(assigned: list[Staff]) -> bool:
+            if ta_present:
+                return len(assigned) < 1
+            
+            # Need 1 solo OR 2 paired
+            has_solo = any(s.nd_alone for s in assigned)
+            if has_solo: return False
+            return len(assigned) < 2
+
+        # 2. Fill if needed with CAN continue
+        if needs_more_people(assigned_staff):
+            for s in candidates_can:
+                if s not in assigned_staff:
+                    assigned_staff.append(s)
+                    if not needs_more_people(assigned_staff):
+                        break
+        
+        # 3. Fill if needed with NEW
+        if needs_more_people(assigned_staff):
+            eligible_new = [
+                s for s in staff_list 
+                if s.can_work_shift(shift.shift_type, d)
+                and s.identifier not in active_blocks # Not currently blocking (redundant with cleanup but safe)
+                and not _has_conflict_on_date(s.identifier, d, staff_assignments)
+                and not _has_conflict_on_date(s.identifier, d + timedelta(days=1), staff_assignments) # Check next day conflict
+                # BLOCK COMPATIBILITY CHECK
+                and _is_block_compatible(s.identifier, d, staff_assignments)
+            ]
+            
+            # Sort by fairness
+            eligible_new.sort(key=lambda s: len(staff_assignments[s.identifier]))
+            
+            for s in eligible_new:
+                if s not in assigned_staff:
+                    assigned_staff.append(s)
+                    if not needs_more_people(assigned_staff):
+                        break
+
+        # Register assignments
+        actual_paired = (len(assigned_staff) > 1) and (not ta_present)
+        
+        for s in assigned_staff:
+            assign = Assignment(
+                shift=shift, 
+                staff_identifier=s.identifier, 
+                is_paired=actual_paired
             )
-            assignment2 = Assignment(
-                shift=shift, staff_identifier=staff2.identifier, is_paired=True
-            )
-            schedule.assignments.append(assignment1)
-            schedule.assignments.append(assignment2)
-            staff_assignments[staff1.identifier].append(assignment1)
-            staff_assignments[staff2.identifier].append(assignment2)
+            schedule.assignments.append(assign)
+            staff_assignments[s.identifier].append(assign)
+            
+            # Update block state
+            old_len = active_blocks.get(s.identifier, (0, date.min))[0]
+            active_blocks[s.identifier] = (old_len + 1, d)
 
     return schedule
 

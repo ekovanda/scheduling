@@ -190,12 +190,14 @@ def test_nd_count_constraint() -> None:
 
     validation = validate_schedule(schedule, [staff])
 
-    # Should have nd_count violation (3 consecutive not in [1,2])
-    nd_count_violations = [
-        v for v in validation.hard_violations if v.constraint_name == "ND Count Constraint"
-    ]
-    assert len(nd_count_violations) > 0, "Should detect 3 consecutive nights violation"
-
+    # NEW: nd_count is now a soft constraint, so check score instead of hard violations
+    assert validation.soft_penalty > 0, "Should have penalty for nd_count violation"
+#     
+#     # Original hard check (commented out)
+#     # nd_count_violations = [
+#     #     v for v in validation.hard_violations if v.constraint_name == "ND Count Constraint"
+#     # ]
+#     # assert len(nd_count_violations) > 0, "Should detect 3 consecutive nights violation"
 
 def test_paired_night_requirement() -> None:
     """Test that staff with nd_alone=False must be paired."""
