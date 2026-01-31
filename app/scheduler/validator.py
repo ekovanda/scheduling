@@ -359,8 +359,9 @@ def _check_same_day_next_day_constraint(schedule: Schedule) -> list[ConstraintVi
 
 
 def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintViolation]:
-    """Each staff can have max 1 consecutive block per rolling 2-week window.
+    """Each staff can have max 1 consecutive block per rolling 3-week window.
     
+    Blocks must be separated by at least 21 days (from start to start).
     Note: Weekend shifts are already constrained to be isolated (single-shift blocks)
     by _check_weekend_isolation_constraint. This function handles the general case.
     """
@@ -386,12 +387,12 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
             for block2 in blocks[i + 1 :]:
                 block2_start = block2[0].shift.shift_date
 
-                # Check if block2 starts within 2 weeks (14 days) of block1 start
-                if (block2_start - block1_start).days < 14:
+                # Check if block2 starts within 3 weeks (21 days) of block1 start
+                if (block2_start - block1_start).days < 21:
                     violations.append(
                         ConstraintViolation(
-                            "2-Week Block Limit",
-                            f"{staff_id} has multiple shift blocks within 2 weeks: "
+                            "3-Week Block Limit",
+                            f"{staff_id} has multiple shift blocks within 3 weeks: "
                             f"{block1_start.strftime('%d.%m.%Y')}-{block1_end.strftime('%d.%m.%Y')} "
                             f"and {block2_start.strftime('%d.%m.%Y')}",
                         )

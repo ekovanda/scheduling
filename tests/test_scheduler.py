@@ -195,7 +195,7 @@ def test_generate_quarter_shifts() -> None:
 
 
 def test_three_week_block_constraint() -> None:
-    """Test that 3-week block constraint is enforced."""
+    """Test that 3-week (21-day) block constraint is enforced."""
     # Create minimal staff list
     staff_list = [
         Staff(

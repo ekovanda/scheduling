@@ -13,7 +13,7 @@
 | H5 | nd_alone=False must be paired (regular nights) | Employee capability | ✅ |
 | H6 | nd_alone=True must work **completely alone** (regular nights) | Employee preference | ✅ |
 | H7 | Non-Azubis min 2 consecutive nights | Block scheduling | ✅ |
-| H8 | Max 1 block per 14-day window | Workload distribution | ✅ |
+| H8 | Max 1 block per 21-day window (3 weeks) | Workload distribution | ✅ |
 | H9 | No day shift after night shift | Rest requirement | ✅ |
 | H10 | Respect nd_exceptions | Employee availability | ✅ |
 | H11 | All shifts must be covered | Operational requirement | ✅ |
@@ -29,8 +29,8 @@
 
 | ID | Constraint | Weight | Implemented |
 |----|------------|--------|-------------|
-| S1 | Proportional to hours | Squared deviation | ✅ |
-| S2 | Within-group fairness (combined Notdienste) | StdDev × 10 | ✅ |
+| S1 | Proportional to hours | FTE-normalized | ✅ |
+| S2 | Within-group fairness (combined Notdienste) | **Hard**: max 1.5 FTE-deviation; **Soft**: minimize range | ✅ |
 | S3 | Effective nights (TFA/Intern: paired=0.5, Azubi: always 1.0) | Built into counting | ✅ |
 | S4 | nd_max_consecutive not exceeded | 100 per violation | ✅ |
 

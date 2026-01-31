@@ -290,9 +290,8 @@ def generate_schedule_cpsat(
                     if we_key in x:
                         model.Add(x[night_key] + x[we_key] <= 1)
 
-    # 7. 2-week block constraint: gaps between shift blocks must be >= 14 days
-    # This is complex in CP - we approximate by limiting shifts per 14-day window
-    # More accurate: track block starts and enforce gap
+    # 7. 3-week block constraint: gaps between shift blocks must be >= 21 days
+    # Track block starts and enforce gap between consecutive blocks
     _add_block_constraints(model, x, staff_list, shifts, quarter_start, quarter_end)
 
     # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
@@ -321,7 +320,7 @@ def generate_schedule_cpsat(
     notdienst_half_counts: dict[str, cp_model.LinearExpr] = {}
     
     for staff in staff_list:
-        terms = []
+        terms: list[cp_model.LinearExpr] = []
         
         # Weekend shifts: each counts as 2 half-units
         for shift in weekend_shifts:
@@ -341,8 +340,26 @@ def generate_schedule_cpsat(
                         terms.append(2 * x[key])
                     else:
                         # Non-Azubis: paired = 1 half-unit (0.5), solo = 2 half-units (1.0)
-                        # Approximation: count 1 per assignment (refined in post-processing)
-                        terms.append(x[key])
+                        # Formula: contribution = 2*assigned - paired_and_assigned
+                        # = 2 if solo (assigned=1, paired=0)
+                        # = 1 if paired (assigned=1, paired=1)
+                        # = 0 if not assigned
+                        if pair_key in is_paired:
+                            # Create auxiliary variable for "assigned AND paired"
+                            paired_assigned = model.NewBoolVar(
+                                f"paired_assigned_{staff.identifier}_{shift.shift_date}"
+                            )
+                            # paired_assigned = x[key] AND is_paired[pair_key]
+                            model.AddBoolAnd([x[key], is_paired[pair_key]]).OnlyEnforceIf(paired_assigned)
+                            model.AddBoolOr([x[key].Not(), is_paired[pair_key].Not()]).OnlyEnforceIf(
+                                paired_assigned.Not()
+                            )
+                            # contribution = 2*x - paired_assigned
+                            terms.append(2 * x[key] - paired_assigned)
+                        else:
+                            # No pairing info available (shouldn't happen for night-capable staff)
+                            # Fall back to solo counting (2 half-units)
+                            terms.append(2 * x[key])
         
         if terms:
             notdienst_half_counts[staff.identifier] = sum(terms)
@@ -468,18 +485,18 @@ def _add_block_constraints(
     quarter_start: date,
     quarter_end: date,
 ) -> None:
-    """Add 2-week block constraints.
+    """Add 3-week block constraints.
 
-    The constraint from validator: if you have blocks B1 and B2, and B2 starts
-    within 14 days of B1's START, that's a violation.
+    The constraint: if you have blocks B1 and B2, and B2 starts
+    within 21 days of B1's START, that's a violation.
 
     Implementation: For each potential block-start day D (where we work but didn't
-    work D-1), we forbid working on any day in (D+2, D+13) that would also be a
+    work D-1), we forbid working on any day in (D+2, D+20) that would also be a
     block-start (i.e., without working the day before).
 
     Simplified approach: Forbid working on day D1 and day D2 where:
     - D1 and D2 are both "block starts" (no work on D1-1 and D2-1)
-    - 2 <= D2 - D1 < 14
+    - 2 <= D2 - D1 < 21
     """
     # Group shifts by date
     shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
@@ -533,12 +550,12 @@ def _add_block_constraints(
                 # No previous day in schedule, so if working, it's a block start
                 block_starts[d] = works_on[d]
 
-        # Enforce: no two block starts within 14 days
+        # Enforce: no two block starts within 21 days (3 weeks)
         block_start_dates = sorted(block_starts.keys())
         for i, d1 in enumerate(block_start_dates):
             for d2 in block_start_dates[i + 1:]:
                 gap = (d2 - d1).days
-                if gap >= 14:
+                if gap >= 21:
                     break  # No need to check further
                 # Both being block starts is forbidden
                 model.Add(block_starts[d1] + block_starts[d2] <= 1)
@@ -729,15 +746,24 @@ def _add_group_fairness_objective(
     group: list[Staff],
     scale: int,
     prefix: str,
+    max_fte_deviation: float = 1.5,
 ) -> None:
-    """Add min-max fairness objective for a group.
+    """Add min-max fairness objective for a group with hard constraint.
 
-    Minimizes (max_scaled_count - min_scaled_count) for the group.
+    Enforces hard constraint: (max - min) <= threshold (FTE-normalized).
+    Then minimizes (max - min) as soft objective for tightest fairness.
+
+    Args:
+        max_fte_deviation: Maximum allowed FTE-normalized Notdienst difference
+            within the group. Default 1.5 means no one can have more than
+            1.5 FTE-adjusted Notdienste more than the person with fewest.
     """
     if len(group) < 2:
         return
 
     # Create scaled count variables: count * (scale / hours)
+    # This FTE-normalizes the counts so a 20h employee with 5 shifts
+    # equals a 40h employee with 10 shifts.
     scaled_counts = []
     for staff in group:
         count_expr = counts.get(staff.identifier, 0)
@@ -763,7 +789,15 @@ def _add_group_fairness_objective(
     range_var = model.NewIntVar(0, 10000, f"{prefix}_range")
     model.Add(range_var == max_var - min_var)
 
-    # Add to objective (minimize range)
+    # HARD CONSTRAINT: Enforce maximum allowed deviation
+    # Threshold is in scaled units. Since counts are in half-units (1 Notdienst = 2),
+    # and scale=400, for a 40h employee: 1 Notdienst = 2 * (400/40) = 20 scaled units.
+    # So max_fte_deviation=1.5 Notdienste = 1.5 * 20 = 30 scaled units for 40h.
+    # We use 40h as reference (the "full-time equivalent").
+    threshold_scaled = int(max_fte_deviation * 2 * (scale // 40))
+    model.Add(range_var <= threshold_scaled)
+
+    # SOFT OBJECTIVE: Minimize range further (tightest possible fairness)
     objective_terms.append(range_var)
 
 
