@@ -10,8 +10,8 @@ from app.scheduler.validator import validate_schedule
 
 
 def test_effective_nights_calculation() -> None:
-    """Test that paired nights count as 0.5 per person."""
-    staff = Staff(
+    """Test that paired nights count as 0.5 per person for non-Azubis, 1.0 for Azubis."""
+    tfa_staff = Staff(
         name="Test Person",
         identifier="TP",
         adult=True,
@@ -24,11 +24,27 @@ def test_effective_nights_calculation() -> None:
         nd_exceptions=[],
     )
 
-    # Test paired night weight
-    assert staff.effective_nights_weight(is_paired=True) == 0.5
+    # Non-Azubi: paired night weight is 0.5
+    assert tfa_staff.effective_nights_weight(is_paired=True) == 0.5
+    # Non-Azubi: solo night weight is 1.0
+    assert tfa_staff.effective_nights_weight(is_paired=False) == 1.0
 
-    # Test solo night weight
-    assert staff.effective_nights_weight(is_paired=False) == 1.0
+    azubi_staff = Staff(
+        name="Test Azubi",
+        identifier="TA",
+        adult=True,
+        hours=40,
+        beruf=Beruf.AZUBI,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    # Azubi: always 1.0 even when paired
+    assert azubi_staff.effective_nights_weight(is_paired=True) == 1.0
+    assert azubi_staff.effective_nights_weight(is_paired=False) == 1.0
 
 
 def test_minor_cannot_work_sunday() -> None:
@@ -80,6 +96,80 @@ def test_intern_cannot_work_weekend() -> None:
 
     # But can work night shifts
     assert intern.can_work_shift(ShiftType.NIGHT_SUN_MON, date(2026, 4, 6))
+
+
+def test_weekend_shift_eligibility() -> None:
+    """Test weekend shift eligibility rules for each role."""
+    from app.scheduler.models import ShiftType, Beruf
+
+    # TFA staff
+    tfa = Staff(
+        name="TFA Test",
+        identifier="TFA",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+
+    # Adult Azubi with reception
+    azubi_reception = Staff(
+        name="Azubi Reception",
+        identifier="AZR",
+        adult=True,
+        hours=40,
+        beruf=Beruf.AZUBI,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    # Adult Azubi without reception
+    azubi_no_reception = Staff(
+        name="Azubi No Reception",
+        identifier="AZN",
+        adult=True,
+        hours=40,
+        beruf=Beruf.AZUBI,
+        reception=False,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    # Saturday 10-19: Azubis only
+    assert not tfa.can_work_shift(ShiftType.SATURDAY_10_19, date(2026, 4, 5))
+    assert azubi_reception.can_work_shift(ShiftType.SATURDAY_10_19, date(2026, 4, 5))
+    assert azubi_no_reception.can_work_shift(ShiftType.SATURDAY_10_19, date(2026, 4, 5))
+
+    # Saturday 10-21: TFA or Azubi with reception
+    assert tfa.can_work_shift(ShiftType.SATURDAY_10_21, date(2026, 4, 5))
+    assert azubi_reception.can_work_shift(ShiftType.SATURDAY_10_21, date(2026, 4, 5))
+    assert not azubi_no_reception.can_work_shift(ShiftType.SATURDAY_10_21, date(2026, 4, 5))
+
+    # Saturday 10-22: TFA only
+    assert tfa.can_work_shift(ShiftType.SATURDAY_10_22, date(2026, 4, 5))
+    assert not azubi_reception.can_work_shift(ShiftType.SATURDAY_10_22, date(2026, 4, 5))
+
+    # Sunday 8-20: TFA only
+    assert tfa.can_work_shift(ShiftType.SUNDAY_8_20, date(2026, 4, 6))
+    assert not azubi_reception.can_work_shift(ShiftType.SUNDAY_8_20, date(2026, 4, 6))
+
+    # Sunday 8-20:30: Adult Azubis only
+    assert not tfa.can_work_shift(ShiftType.SUNDAY_8_2030, date(2026, 4, 6))
+    assert azubi_reception.can_work_shift(ShiftType.SUNDAY_8_2030, date(2026, 4, 6))
+    assert azubi_no_reception.can_work_shift(ShiftType.SUNDAY_8_2030, date(2026, 4, 6))
+
+    # Sunday 10-22: TFA only
+    assert tfa.can_work_shift(ShiftType.SUNDAY_10_22, date(2026, 4, 6))
+    assert not azubi_reception.can_work_shift(ShiftType.SUNDAY_10_22, date(2026, 4, 6))
 
 
 def test_generate_quarter_shifts() -> None:
@@ -261,6 +351,49 @@ def test_nd_alone_can_work_intern_nights_and_regular_nights() -> None:
     # Can work other nights (but must be alone, not paired)
     assert solo_worker.can_work_shift(ShiftType.NIGHT_TUE_WED, date(2026, 4, 7))
     assert solo_worker.can_work_shift(ShiftType.NIGHT_FRI_SAT, date(2026, 4, 10))
+
+
+def test_weekend_isolation_constraint() -> None:
+    """Test that weekend shifts cannot be adjacent to other shifts."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    staff = Staff(
+        name="Test TFA",
+        identifier="TFA1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    # Create schedule with weekend shift adjacent to night shift (should violate)
+    # Friday night + Saturday weekend shift = violation
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 3),
+        quarter_end=date(2026, 4, 4),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_FRI_SAT, shift_date=date(2026, 4, 3)),
+                staff_identifier="TFA1",
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.SATURDAY_10_21, shift_date=date(2026, 4, 4)),
+                staff_identifier="TFA1",
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [staff])
+
+    # Check for weekend isolation violations
+    isolation_violations = [
+        v for v in validation.hard_violations if v.constraint_name == "Weekend Isolation"
+    ]
+    assert len(isolation_violations) > 0, "Should detect weekend isolation violation"
 
 
 def test_cpsat_solver_produces_valid_schedule() -> None:

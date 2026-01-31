@@ -137,31 +137,47 @@ def generate_schedule_cpsat(
             model.Add(sum(staff_for_shift) == 1)
 
     # 2. Night shift coverage:
-    #    - Sun-Mon and Mon-Tue: 1-2 people (Intern on-site, Azubi can join)
-    #    - Other nights: 1-2 people
+    #    - Sun-Mon and Mon-Tue (vet present): exactly 1 non-Azubi + optional 0-1 Azubi
+    #    - Other nights: 1-2 people total
     #    - At least one non-Azubi required on all nights
     for shift in night_shifts:
-        staff_for_shift = [
+        is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
+        
+        # Categorize staff for this shift
+        azubi_vars = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
             for s in staff_list
             if (s.identifier, shift.shift_date, shift.shift_type) in x
+            and s.beruf == Beruf.AZUBI
         ]
-        if staff_for_shift:
-            coverage_sum = sum(staff_for_shift)
+        non_azubi_vars = [
+            x[(s.identifier, shift.shift_date, shift.shift_type)]
+            for s in staff_list
+            if (s.identifier, shift.shift_date, shift.shift_type) in x
+            and s.beruf != Beruf.AZUBI
+        ]
+        all_vars = azubi_vars + non_azubi_vars
+        
+        if not all_vars:
+            continue
+        
+        if is_vet_present:
+            # Vet-present nights: exactly 1 non-Azubi + optional 0-1 Azubi
+            if non_azubi_vars:
+                model.Add(sum(non_azubi_vars) == 1)  # Exactly 1 non-Azubi
+            if azubi_vars:
+                model.Add(sum(azubi_vars) <= 1)  # Optional: max 1 Azubi
+        else:
+            # Regular nights: 1-2 people total, at least 1 non-Azubi
+            coverage_sum = sum(all_vars)
             model.Add(coverage_sum >= 1)
             model.Add(coverage_sum <= 2)
-            
-            # At least one non-Azubi must be assigned to every night
-            non_azubi_vars = [
-                x[(s.identifier, shift.shift_date, shift.shift_type)]
-                for s in staff_list
-                if (s.identifier, shift.shift_date, shift.shift_type) in x
-                and s.beruf != Beruf.AZUBI
-            ]
             if non_azubi_vars:
                 model.Add(sum(non_azubi_vars) >= 1)
-            
-            # Link is_paired variable: paired iff 2 people assigned
+        
+        # Link is_paired variable: paired iff 2 people assigned (only for regular nights)
+        if not is_vet_present:
+            coverage_sum = sum(all_vars)
             sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
             model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
             model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
@@ -180,10 +196,10 @@ def generate_schedule_cpsat(
     #    - Azubis must always pair with a non-Azubi (TFA or Intern)
     #    - Two Azubis can NEVER work together on any night
     #    - nd_alone=False (non-Azubi) must be paired on regular nights
-    #    - nd_alone=True (non-Azubi) must work ALONE on regular nights
+    #    - nd_alone=True (non-Azubi) must work COMPLETELY ALONE on regular nights
     
     for shift in night_shifts:
-        is_intern_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
+        is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
         
         # Categorize staff for this shift
         azubi_vars = []  # Azubis
@@ -213,16 +229,20 @@ def generate_schedule_cpsat(
                 # If Azubi is assigned, at least one non-Azubi must be assigned
                 model.Add(sum(non_azubi_vars) >= 1).OnlyEnforceIf(azubi_var)
         
-        # For regular nights (not intern-present):
-        if not is_intern_present:
-            # nd_alone=True staff must work alone (cannot be paired)
+        # For regular nights (not vet-present):
+        if not is_vet_present:
+            # nd_alone=True staff must work COMPLETELY alone (no one else at all)
             for staff, var in non_azubi_nd_alone_true:
-                other_vars = [
+                all_other_vars = [
                     v for (s, v) in non_azubi_nd_alone_true + non_azubi_nd_alone_false + azubi_vars
                     if s.identifier != staff.identifier
                 ]
-                if other_vars:
-                    for other_var in other_vars:
+                if all_other_vars:
+                    # If nd_alone=True staff is assigned, no one else can be
+                    for other_var in all_other_vars:
+                        model.Add(var + other_var <= 1)
+                    # If nd_alone=True staff is assigned, no one else can be
+                    for other_var in all_other_vars:
                         model.Add(var + other_var <= 1)
             
             # nd_alone=False staff must be paired (sum == 2)
@@ -242,6 +262,10 @@ def generate_schedule_cpsat(
             if intern_night_vars:
                 model.Add(sum(intern_night_vars) >= 6)
                 model.Add(sum(intern_night_vars) <= 9)
+
+    # 5. Weekend isolation: weekend shifts cannot be adjacent to any other shift
+    # This ensures weekend shifts are always single-shift blocks
+    _add_weekend_isolation_constraints(model, x, staff_list, weekend_shifts, night_shifts)
 
     # 6. Night/Day conflict: no day shift same day or next day after night shift
     for staff in staff_list:
@@ -286,7 +310,7 @@ def generate_schedule_cpsat(
     # To handle the 0.5 weight for paired nights, we count in half-units:
     # - Weekend shift = 2 half-units
     # - Solo night = 2 half-units (1.0 effective)
-    # - Paired night = 1 half-unit (0.5 effective per person)
+    # - Paired night = 1 half-unit (0.5 effective per person) - EXCEPT Azubis always get 2
 
     # Combined Notdienste count (in half-units) per staff
     notdienst_half_counts: dict[str, cp_model.LinearExpr] = {}
@@ -301,18 +325,19 @@ def generate_schedule_cpsat(
                 # 2 * x (2 half-units per weekend)
                 terms.append(2 * x[key])
         
-        # Night shifts: count depends on pairing
+        # Night shifts: count depends on pairing and role
         if staff.nd_possible:
             for shift in night_shifts:
                 key = (staff.identifier, shift.shift_date, shift.shift_type)
                 pair_key = (staff.identifier, shift.shift_date)
                 if key in x:
-                    # If assigned: paired = 1 half-unit, solo = 2 half-units
-                    # Contribution = 2*x - is_paired = x + (x - is_paired) = x + solo_indicator
-                    # Simpler: 2*x - is_paired when paired, 2*x when solo
-                    # For CP: use x[key] as base, then track pairing separately
-                    # Approximation for objective: count raw assignments (post-process for exact)
-                    terms.append(x[key])
+                    if staff.beruf == Beruf.AZUBI:
+                        # Azubis always get full credit (2 half-units = 1.0 effective)
+                        terms.append(2 * x[key])
+                    else:
+                        # Non-Azubis: paired = 1 half-unit (0.5), solo = 2 half-units (1.0)
+                        # Approximation: count 1 per assignment (refined in post-processing)
+                        terms.append(x[key])
         
         if terms:
             notdienst_half_counts[staff.identifier] = sum(terms)
@@ -389,6 +414,45 @@ def generate_schedule_cpsat(
             penalties=[],
             unsatisfiable_constraints=unsatisfiable,
         )
+
+
+def _add_weekend_isolation_constraints(
+    model: cp_model.CpModel,
+    x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
+    staff_list: list[Staff],
+    weekend_shifts: list[Shift],
+    night_shifts: list[Shift],
+) -> None:
+    """Ensure weekend shifts are isolated (not adjacent to other shifts).
+    
+    A weekend shift cannot be on the same day or adjacent day to any other shift
+    for the same person. This prevents weekend shifts from being part of blocks.
+    """
+    # Group shifts by date
+    shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
+    for s in weekend_shifts + night_shifts:
+        shifts_by_date[s.shift_date].append(s)
+    
+    all_dates = sorted(shifts_by_date.keys())
+    
+    for staff in staff_list:
+        for we_shift in weekend_shifts:
+            we_key = (staff.identifier, we_shift.shift_date, we_shift.shift_type)
+            if we_key not in x:
+                continue
+            
+            we_date = we_shift.shift_date
+            prev_date = we_date - timedelta(days=1)
+            next_date = we_date + timedelta(days=1)
+            
+            # Cannot have shifts on adjacent days
+            for adj_date in [prev_date, next_date]:
+                if adj_date in shifts_by_date:
+                    for other_shift in shifts_by_date[adj_date]:
+                        other_key = (staff.identifier, other_shift.shift_date, other_shift.shift_type)
+                        if other_key in x and other_key != we_key:
+                            # Weekend shift and adjacent shift cannot both be assigned
+                            model.Add(x[we_key] + x[other_key] <= 1)
 
 
 def _add_block_constraints(

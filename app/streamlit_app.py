@@ -464,7 +464,7 @@ def page_plan_anzeigen() -> None:
             staff_stats = []
             for staff in staff_list:
                 weekends = schedule.count_weekend_shifts(staff.identifier)
-                effective_nights = schedule.count_effective_nights(staff.identifier)
+                effective_nights = schedule.count_effective_nights(staff.identifier, staff)
                 total_notdienst = weekends + effective_nights  # Combined metric
                 
                 # FTE Scaling (normalized to 40h)

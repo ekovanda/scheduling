@@ -18,6 +18,14 @@ class Beruf(str, Enum):
     INTERN = "Intern"  # Formerly "TA" - veterinary interns
 
 
+class Abteilung(str, Enum):
+    """Department/ward assignment."""
+
+    STATION = "station"
+    OP = "op"
+    OTHER = "other"
+
+
 class ShiftType(str, Enum):
     """Type of shift."""
 
@@ -44,11 +52,22 @@ class Staff(BaseModel):
     adult: bool
     hours: int  # Weekly contracted hours
     beruf: Beruf
+    abteilung: Abteilung = Abteilung.OTHER  # Department assignment
     reception: bool  # Can work reception/Anmeldung
     nd_possible: bool  # Can do night shifts at all
     nd_alone: bool  # Can work nights solo (False = must pair)
     nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
+
+    @field_validator("abteilung", mode="before")
+    @classmethod
+    def parse_abteilung(cls, v: Any) -> Abteilung:
+        """Parse abteilung from CSV (handles empty strings)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return Abteilung.OTHER
+        if isinstance(v, str):
+            return Abteilung(v.lower())
+        return v
 
     @field_validator("nd_max_consecutive", mode="before")
     @classmethod
@@ -69,9 +88,11 @@ class Staff(BaseModel):
     def effective_nights_weight(self, is_paired: bool) -> float:
         """Calculate effective night weight for fairness.
 
-        Paired nights count as 0.5 per person (two people share the shift).
-        Solo nights count as 1.0.
+        Azubis always count as 1.0 effective night (even when paired).
+        Non-Azubis: Paired nights count as 0.5, solo nights count as 1.0.
         """
+        if self.beruf == Beruf.AZUBI:
+            return 1.0  # Azubis always get full credit
         return 0.5 if is_paired else 1.0
 
     def can_work_shift(self, shift_type: ShiftType, shift_date: date) -> bool:
@@ -96,19 +117,31 @@ class Staff(BaseModel):
                 return False
             # Note: nd_alone and Azubi pairing constraints are handled at solver level
 
-        # Saturday 10-19: Any Azubi can work this shift
+        # Saturday 10-19: Azubis only
         if shift_type == ShiftType.SATURDAY_10_19:
             return self.beruf == Beruf.AZUBI
 
-        # Saturday 10-21: Azubi with reception=True OR TFA (not Azubi with reception=False)
+        # Saturday 10-21: TFA or Azubi with reception=True
         if shift_type == ShiftType.SATURDAY_10_21:
             if self.beruf == Beruf.AZUBI:
                 return self.reception
             return self.beruf == Beruf.TFA
 
-        # Sunday 8-20:30 must be adult Azubi
+        # Saturday 10-22: TFA only
+        if shift_type == ShiftType.SATURDAY_10_22:
+            return self.beruf == Beruf.TFA
+
+        # Sunday 8-20: TFA only
+        if shift_type == ShiftType.SUNDAY_8_20:
+            return self.beruf == Beruf.TFA
+
+        # Sunday 8-20:30: Adult Azubis only
         if shift_type == ShiftType.SUNDAY_8_2030:
             return self.beruf == Beruf.AZUBI and self.adult
+
+        # Sunday 10-22: TFA only
+        if shift_type == ShiftType.SUNDAY_10_22:
+            return self.beruf == Beruf.TFA
 
         return True
 
@@ -160,11 +193,23 @@ class Schedule(BaseModel):
             if a.shift.shift_date == shift.shift_date and a.shift.shift_type == shift.shift_type
         ]
 
-    def count_effective_nights(self, staff_identifier: str) -> float:
-        """Count effective nights for a staff member (paired = 0.5, solo = 1.0)."""
+    def count_effective_nights(self, staff_identifier: str, staff: "Staff | None" = None) -> float:
+        """Count effective nights for a staff member.
+        
+        Azubis always get 1.0 effective night (even when paired).
+        Non-Azubis: paired = 0.5, solo = 1.0.
+        
+        If staff object is provided, uses proper role-based calculation.
+        Otherwise falls back to standard paired/solo logic.
+        """
         night_assignments = [
             a for a in self.get_staff_assignments(staff_identifier) if a.shift.is_night_shift()
         ]
+        
+        if staff is not None:
+            return sum(staff.effective_nights_weight(a.is_paired) for a in night_assignments)
+        
+        # Fallback without staff object (legacy behavior)
         return sum(0.5 if a.is_paired else 1.0 for a in night_assignments)
 
     def count_weekend_shifts(self, staff_identifier: str) -> int:
@@ -173,10 +218,10 @@ class Schedule(BaseModel):
             1 for a in self.get_staff_assignments(staff_identifier) if a.shift.is_weekend_shift()
         )
 
-    def count_total_notdienst(self, staff_identifier: str) -> float:
+    def count_total_notdienst(self, staff_identifier: str, staff: "Staff | None" = None) -> float:
         """Count total Notdienst (weekends + effective nights)."""
         return self.count_weekend_shifts(staff_identifier) + self.count_effective_nights(
-            staff_identifier
+            staff_identifier, staff
         )
 
 

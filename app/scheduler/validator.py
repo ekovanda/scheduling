@@ -1,6 +1,7 @@
 """Constraint validation for schedules."""
 
 from collections import defaultdict
+from datetime import timedelta
 from typing import Any
 
 from .models import Assignment, Beruf, Schedule, ShiftType, Staff
@@ -52,6 +53,7 @@ def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> Validation
     violations.extend(_check_intern_night_capacity(schedule, staff_dict))
     violations.extend(_check_same_day_next_day_constraint(schedule))
     violations.extend(_check_three_week_block_constraint(schedule))
+    violations.extend(_check_weekend_isolation_constraint(schedule))
     violations.extend(_check_min_consecutive_nights_constraint(schedule, staff_dict))
     # violations.extend(_check_nd_max_consecutive_constraint(schedule, staff_dict))  # Relaxed to soft
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
@@ -110,10 +112,10 @@ def _check_same_day_double_booking(schedule: Schedule) -> list[ConstraintViolati
 def _check_nd_alone_improper_pairing(
     schedule: Schedule, staff_dict: dict[str, Staff]
 ) -> list[ConstraintViolation]:
-    """Staff with nd_alone=True must work alone on regular nights (not Sun-Mon, Mon-Tue).
+    """Staff with nd_alone=True must work ALONE on regular nights (not Sun-Mon, Mon-Tue).
 
-    They cannot be paired with nd_alone=False staff on these nights.
-    Sun-Mon and Mon-Tue nights are single-capacity slots where TA is on-site externally.
+    They cannot be paired with ANYONE on regular nights.
+    Sun-Mon and Mon-Tue nights have a vet on-site, so nd_alone doesn't apply there.
     """
     violations: list[ConstraintViolation] = []
     ta_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
@@ -126,30 +128,32 @@ def _check_nd_alone_improper_pairing(
             night_assignments_by_shift[key].append(assignment)
 
     for (shift_date, shift_type), assignments in night_assignments_by_shift.items():
-        # Skip TA-present nights (these are single-capacity, handled separately)
+        # Skip vet-present nights (nd_alone doesn't apply there)
         if shift_type in ta_present_types:
             continue
 
         if len(assignments) < 2:
             continue
 
-        # Check if any nd_alone=True staff is paired with nd_alone=False staff
-        nd_alone_true = []
-        nd_alone_false = []
+        # Check if any nd_alone=True staff is paired with ANYONE
+        nd_alone_true_staff = []
+        other_staff = []
         for a in assignments:
             staff = staff_dict.get(a.staff_identifier)
             if staff:
                 if staff.nd_alone:
-                    nd_alone_true.append(staff.name)
+                    nd_alone_true_staff.append(staff.name)
                 else:
-                    nd_alone_false.append(staff.name)
+                    other_staff.append(staff.name)
 
-        if nd_alone_true and nd_alone_false:
+        # nd_alone=True staff cannot be paired with anyone on regular nights
+        if nd_alone_true_staff and len(assignments) > 1:
+            all_others = [name for name in nd_alone_true_staff[1:]] + other_staff
             violations.append(
                 ConstraintViolation(
                     "ND Alone Improper Pairing",
-                    f"Staff with nd_alone=True ({', '.join(nd_alone_true)}) paired with "
-                    f"nd_alone=False ({', '.join(nd_alone_false)}) on "
+                    f"Staff with nd_alone=True ({', '.join(nd_alone_true_staff)}) cannot be "
+                    f"paired with anyone on regular nights. Found with: {', '.join(all_others)} on "
                     f"{shift_date.strftime('%d.%m.%Y')} {shift_type.value}",
                 )
             )
@@ -158,15 +162,16 @@ def _check_nd_alone_improper_pairing(
 
 
 def _check_intern_night_capacity(schedule: Schedule, staff_dict: dict[str, Staff]) -> list[ConstraintViolation]:
-    """Sun-Mon and Mon-Tue nights: 1-2 people, Azubi must pair with non-Azubi.
+    """Sun-Mon and Mon-Tue nights: exactly 1 non-Azubi + optional 0-1 Azubi.
     
-    These nights have an external Intern on-site, so:
-    - Minimum 1 non-Azubi (TFA or Intern)
-    - Optional: 1 Azubi can join (paired with the non-Azubi)
+    These nights have a vet on-site externally, so:
+    - Exactly 1 non-Azubi (TFA or Intern) - NOT 2 non-Azubis
+    - Optional: 1 Azubi can join for fairness (but not required)
     - Two Azubis cannot work together
+    - Two non-Azubis cannot work together on these nights
     """
     violations: list[ConstraintViolation] = []
-    intern_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
+    vet_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
 
     # Group assignments by (date, shift_type)
     night_assignments_by_shift: dict[tuple[Any, ShiftType], list[Assignment]] = defaultdict(list)
@@ -176,21 +181,10 @@ def _check_intern_night_capacity(schedule: Schedule, staff_dict: dict[str, Staff
             night_assignments_by_shift[key].append(assignment)
 
     for (shift_date, shift_type), assignments in night_assignments_by_shift.items():
-        if shift_type not in intern_present_types:
-            continue
-            
-        if len(assignments) > 2:
-            staff_names = [a.staff_identifier for a in assignments]
-            violations.append(
-                ConstraintViolation(
-                    "Intern Night Over Capacity",
-                    f"Sun-Mon/Mon-Tue night on {shift_date.strftime('%d.%m.%Y')} has "
-                    f"{len(assignments)} people ({', '.join(staff_names)}), max is 2",
-                )
-            )
+        if shift_type not in vet_present_types:
             continue
         
-        # Check that at least one non-Azubi is present
+        # Categorize staff
         non_azubis = []
         azubis = []
         for a in assignments:
@@ -201,15 +195,25 @@ def _check_intern_night_capacity(schedule: Schedule, staff_dict: dict[str, Staff
                 else:
                     non_azubis.append(staff.name)
         
-        if len(assignments) > 0 and len(non_azubis) == 0:
+        # Must have exactly 1 non-Azubi
+        if len(non_azubis) == 0:
             violations.append(
                 ConstraintViolation(
                     "Intern Night No Non-Azubi",
                     f"Sun-Mon/Mon-Tue night on {shift_date.strftime('%d.%m.%Y')} has "
-                    f"only Azubis ({', '.join(azubis)}), needs at least 1 TFA or Intern",
+                    f"only Azubis ({', '.join(azubis)}), needs exactly 1 TFA or Intern",
+                )
+            )
+        elif len(non_azubis) > 1:
+            violations.append(
+                ConstraintViolation(
+                    "Vet Night Over Capacity",
+                    f"Sun-Mon/Mon-Tue night on {shift_date.strftime('%d.%m.%Y')} has "
+                    f"{len(non_azubis)} non-Azubis ({', '.join(non_azubis)}), max is 1",
                 )
             )
         
+        # Max 1 Azubi
         if len(azubis) > 1:
             violations.append(
                 ConstraintViolation(
@@ -354,7 +358,11 @@ def _check_same_day_next_day_constraint(schedule: Schedule) -> list[ConstraintVi
 
 
 def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintViolation]:
-    """Each staff can have max 1 consecutive block per rolling 3-week window."""
+    """Each staff can have max 1 consecutive block per rolling 2-week window.
+    
+    Note: Weekend shifts are already constrained to be isolated (single-shift blocks)
+    by _check_weekend_isolation_constraint. This function handles the general case.
+    """
     violations: list[ConstraintViolation] = []
 
     # Group assignments by staff
@@ -369,7 +377,7 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
         # Find consecutive blocks
         blocks = _find_consecutive_blocks(sorted_assignments)
 
-        # Check rolling 3-week windows
+        # Check rolling 2-week windows
         for i, block1 in enumerate(blocks):
             block1_start = block1[0].shift.shift_date
             block1_end = block1[-1].shift.shift_date
@@ -378,7 +386,6 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
                 block2_start = block2[0].shift.shift_date
 
                 # Check if block2 starts within 2 weeks (14 days) of block1 start
-                # Relaxed from 21 days due to capacity constraints
                 if (block2_start - block1_start).days < 14:
                     violations.append(
                         ConstraintViolation(
@@ -389,6 +396,49 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
                         )
                     )
                     break  # Only report first violation per block
+
+    return violations
+
+
+def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintViolation]:
+    """Weekend shifts must always be isolated (single-shift, not part of a block).
+    
+    A weekend shift cannot be adjacent (same day or next day) to any other shift
+    for the same person. This prevents weekend shifts from being part of night blocks.
+    """
+    violations: list[ConstraintViolation] = []
+
+    # Group assignments by staff
+    staff_assignments: dict[str, list[Assignment]] = defaultdict(list)
+    for assignment in schedule.assignments:
+        staff_assignments[assignment.staff_identifier].append(assignment)
+
+    for staff_id, assignments in staff_assignments.items():
+        # Get weekend shifts and all dates worked
+        weekend_assignments = [a for a in assignments if a.shift.is_weekend_shift()]
+        all_dates_worked = {a.shift.shift_date for a in assignments}
+
+        for we_assignment in weekend_assignments:
+            we_date = we_assignment.shift.shift_date
+            prev_date = we_date - timedelta(days=1)
+            next_date = we_date + timedelta(days=1)
+
+            # Check if adjacent to another shift (forming a block)
+            adjacent_worked = []
+            if prev_date in all_dates_worked:
+                adjacent_worked.append(prev_date.strftime('%d.%m.%Y'))
+            if next_date in all_dates_worked:
+                adjacent_worked.append(next_date.strftime('%d.%m.%Y'))
+
+            if adjacent_worked:
+                violations.append(
+                    ConstraintViolation(
+                        "Weekend Isolation",
+                        f"{staff_id}'s weekend shift on {we_date.strftime('%d.%m.%Y')} "
+                        f"({we_assignment.shift.shift_type.value}) is adjacent to shifts on "
+                        f"{', '.join(adjacent_worked)}. Weekend shifts must be isolated.",
+                    )
+                )
 
     return violations
 
@@ -608,13 +658,14 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
     - Unfairness within role groups (std deviation)
     """
     penalty = 0.0
+    staff_dict = {s.identifier: s for s in staff_list}
 
     # Calculate target Notdienst per staff based on hours
     total_hours = sum(s.hours for s in staff_list)
 
     # Penalty for deviation from proportional target
     for staff in staff_list:
-        actual_notdienst = schedule.count_total_notdienst(staff.identifier)
+        actual_notdienst = schedule.count_total_notdienst(staff.identifier, staff)
         total_notdienst_needed = len(schedule.assignments)
 
         # Target proportional to hours
@@ -627,7 +678,7 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
     # Penalty for unfairness within role groups
     role_groups: dict[Beruf, list[float]] = defaultdict(list)
     for staff in staff_list:
-        notdienst_count = schedule.count_total_notdienst(staff.identifier)
+        notdienst_count = schedule.count_total_notdienst(staff.identifier, staff)
         role_groups[staff.beruf].append(notdienst_count)
 
     # Add standard deviation penalty for each group
@@ -639,7 +690,7 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
             penalty += std_dev * 10  # Weight std dev heavily
     
     # NEW: Soft penalty for nd_count violations (moved from hard constraints)
-    violations = _check_nd_count_constraint(schedule, {s.identifier: s for s in staff_list})
+    violations = _check_nd_count_constraint(schedule, staff_dict)
     for v in violations:
         # High penalty per violation to strongly discourage it, but allow it if necessary
         penalty += 100.0
