@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from scheduler.models import Beruf, Staff, load_staff_from_csv
+from scheduler.models import Beruf, ShiftType, Staff, load_staff_from_csv
 from scheduler.solver import SolverBackend, generate_schedule
 from scheduler.validator import validate_schedule
 
@@ -344,15 +344,42 @@ def page_plan_anzeigen() -> None:
     with tab_calendar:
         st.markdown("### Kompaktansicht")
         
+        # New descriptive labels for weekend shifts
+        SHIFT_DISPLAY_LABELS = {
+            ShiftType.SATURDAY_10_21: "Sa 10-21: Anmeldung/Ruf",
+            ShiftType.SATURDAY_10_22: "Sa 10-22: Rufbereitschaft",
+            ShiftType.SATURDAY_10_19: "Sa 10-19: Azubidienst",
+            ShiftType.SUNDAY_8_20: "So 08-20: Dienst",
+            ShiftType.SUNDAY_10_22: "So 10-22: Rufbereitschaft",
+            ShiftType.SUNDAY_8_2030: "So 08-20:30: Azubi/Ruf",
+        }
+
+        # Logical week order for columns: Nights first, then Weekends
+        WEEK_ORDER = [
+            # Night shifts
+            ShiftType.NIGHT_MON_TUE,
+            ShiftType.NIGHT_TUE_WED,
+            ShiftType.NIGHT_WED_THU,
+            ShiftType.NIGHT_THU_FRI,
+            ShiftType.NIGHT_FRI_SAT,
+            ShiftType.NIGHT_SAT_SUN,
+            ShiftType.NIGHT_SUN_MON,
+            # Weekend shifts
+            ShiftType.SATURDAY_10_19,
+            ShiftType.SATURDAY_10_21,
+            ShiftType.SATURDAY_10_22,
+            ShiftType.SUNDAY_8_20,
+            ShiftType.SUNDAY_10_22,
+            ShiftType.SUNDAY_8_2030,
+        ]
+
         # Matrix: Date x ShiftType -> Staff
-        # Handle paired assignments (combine names)
         # 1. Map (Date, Shift) -> [Staff1, Staff2]
         shift_map = {}
         unique_dates = sorted(list(set(a.shift.shift_date for a in schedule.assignments)))
-        unique_shifts = sorted(list(set(a.shift.shift_type.value for a in schedule.assignments)))
         
         for assignment in schedule.assignments:
-            key = (assignment.shift.shift_date, assignment.shift.shift_type.value)
+            key = (assignment.shift.shift_date, assignment.shift.shift_type)
             if key not in shift_map:
                 shift_map[key] = []
             shift_map[key].append(assignment.staff_identifier)
@@ -361,26 +388,24 @@ def page_plan_anzeigen() -> None:
         calendar_rows = []
         for d in unique_dates:
             row = {"Datum": d.strftime("%d.%m.%Y (%a)")}
-            # Only populate columns relevant for this day to avoid sparse mess? 
-            # Actually having fixed columns is better for eyes.
-            # We iterate all potential shift types found in schedule
-            for s_name in unique_shifts:
-                staff_ids = shift_map.get((d, s_name), [])
+            for s_type in WEEK_ORDER:
+                staff_ids = shift_map.get((d, s_type), [])
                 if staff_ids:
-                    row[s_name] = " + ".join(staff_ids)
-                else:
-                    # Leave empty or specific marker if shift didn't exist that day?
-                    # Ideally pandas NaN, displayed as empty
-                    pass
+                    col_name = SHIFT_DISPLAY_LABELS.get(s_type, s_type.value)
+                    row[col_name] = " + ".join(staff_ids)
             calendar_rows.append(row)
 
         if calendar_rows:
             df_calendar = pd.DataFrame(calendar_rows)
             df_calendar.set_index("Datum", inplace=True)
-            # Reorder columns: Sat first, then Sun, then Nights? 
-            # Or just alpha sorted, or sorted by ShiftType definition order if possible.
-            # For now, alpha sorted columns are enough.
-            df_calendar = df_calendar.reindex(sorted(df_calendar.columns), axis=1)
+            
+            # Reindex to ensure strictly logical column order (only present columns)
+            ordered_cols = [
+                SHIFT_DISPLAY_LABELS.get(s, s.value) 
+                for s in WEEK_ORDER 
+                if SHIFT_DISPLAY_LABELS.get(s, s.value) in df_calendar.columns
+            ]
+            df_calendar = df_calendar.reindex(columns=ordered_cols)
             
             st.dataframe(
                 df_calendar, 
