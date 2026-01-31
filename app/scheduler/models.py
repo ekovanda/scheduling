@@ -15,7 +15,7 @@ class Beruf(str, Enum):
 
     TFA = "TFA"
     AZUBI = "Azubi"
-    TA = "TA"
+    INTERN = "Intern"  # Formerly "TA" - veterinary interns
 
 
 class ShiftType(str, Enum):
@@ -47,10 +47,18 @@ class Staff(BaseModel):
     reception: bool  # Can work reception/Anmeldung
     nd_possible: bool  # Can do night shifts at all
     nd_alone: bool  # Can work nights solo (False = must pair)
-    nd_count: list[int]  # Allowed consecutive night counts [1], [2], [1,2], etc.
+    nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
 
-    @field_validator("nd_count", "nd_exceptions", mode="before")
+    @field_validator("nd_max_consecutive", mode="before")
+    @classmethod
+    def parse_nd_max_consecutive(cls, v: Any) -> int | None:
+        """Parse nd_max_consecutive from CSV (handles empty strings)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return int(v)
+
+    @field_validator("nd_exceptions", mode="before")
     @classmethod
     def parse_json_array(cls, v: Any) -> list[int]:
         """Parse JSON string arrays from CSV."""
@@ -72,8 +80,8 @@ class Staff(BaseModel):
         if not self.adult and shift_type.value.startswith("So_"):
             return False
 
-        # TAs never work weekends
-        if self.beruf == Beruf.TA and (
+        # Interns never work weekends
+        if self.beruf == Beruf.INTERN and (
             shift_type.value.startswith("Sa_") or shift_type.value.startswith("So_")
         ):
             return False
@@ -86,15 +94,13 @@ class Staff(BaseModel):
             weekday = shift_date.isoweekday()  # 1=Mon, 7=Sun
             if weekday in self.nd_exceptions:
                 return False
-            # Note: nd_alone is handled at the solver constraint level, not here.
-            # nd_alone=True can work Sun-Mon/Mon-Tue (single slot with TA on-site)
-            # nd_alone=True cannot be paired with nd_alone=False on regular nights
+            # Note: nd_alone and Azubi pairing constraints are handled at solver level
 
-        # Saturday 10-19 must be Azubi with reception=False
+        # Saturday 10-19: Any Azubi can work this shift
         if shift_type == ShiftType.SATURDAY_10_19:
-            return self.beruf == Beruf.AZUBI and not self.reception
+            return self.beruf == Beruf.AZUBI
 
-        # Saturday 10-21 prefers Azubi with reception or TFA
+        # Saturday 10-21: Azubi with reception=True OR TFA (not Azubi with reception=False)
         if shift_type == ShiftType.SATURDAY_10_21:
             if self.beruf == Beruf.AZUBI:
                 return self.reception

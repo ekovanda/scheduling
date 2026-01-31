@@ -7,24 +7,26 @@
 | ID | Constraint | Rationale | Implemented |
 |----|------------|-----------|-------------|
 | H1 | Minors cannot work Sundays | German labor law | ✅ |
-| H2 | TAs never work weekends | Contract/role definition | ✅ |
-| H3 | Azubis never work nights alone | Safety requirement | ✅ |
-| H4 | nd_alone=False must be paired | Employee preference/capability | ✅ |
-| H5 | nd_alone=True cannot work TA nights | Would be forced pairing | ✅ |
-| H6 | Max 1 block per 14-day window | Workload distribution | ✅ |
-| H7 | No day shift after night shift | Rest requirement | ✅ |
-| H8 | Respect nd_exceptions | Employee availability | ✅ |
-| H9 | nd_count max not exceeded | Employee preference | ✅ |
-| H10 | All shifts must be covered | Operational requirement | ✅ |
+| H2 | Interns never work weekends | Contract/role definition | ✅ |
+| H3 | Azubis must pair with non-Azubi on nights | Safety requirement | ✅ |
+| H4 | Two Azubis can never pair on nights | Supervision requirement | ✅ |
+| H5 | nd_alone=False must be paired (regular nights) | Employee capability | ✅ |
+| H6 | nd_alone=True must work alone (regular nights) | Employee preference | ✅ |
+| H7 | Non-Azubis min 2 consecutive nights | Block scheduling | ✅ |
+| H8 | Max 1 block per 14-day window | Workload distribution | ✅ |
+| H9 | No day shift after night shift | Rest requirement | ✅ |
+| H10 | Respect nd_exceptions | Employee availability | ✅ |
+| H11 | All shifts must be covered | Operational requirement | ✅ |
+| H12 | At least 1 non-Azubi per night | Supervision requirement | ✅ |
 
 ### Soft Constraints (Optimized)
 
 | ID | Constraint | Weight | Implemented |
 |----|------------|--------|-------------|
 | S1 | Proportional to hours | Squared deviation | ✅ |
-| S2 | Within-group fairness | StdDev × 10 | ✅ |
+| S2 | Within-group fairness (combined Notdienste) | StdDev × 10 | ✅ |
 | S3 | Effective nights (paired=0.5) | Built into counting | ✅ |
-| S4 | nd_count preference match | 100 per violation | ✅ |
+| S4 | nd_max_consecutive not exceeded | 100 per violation | ✅ |
 
 ---
 

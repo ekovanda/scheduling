@@ -258,7 +258,7 @@ def _greedy_assignment(
 
     Priorities:
     - Azubi minors get proportionally more Saturdays
-    - Night shifts respect nd_count blocking (continuity)
+    - Night shifts respect nd_max_consecutive blocking (continuity)
     - Night shifts pair staff with nd_alone=False
     """
     schedule = Schedule(quarter_start=quarter_start, quarter_end=quarter_end, assignments=[])
@@ -356,7 +356,7 @@ def _greedy_assignment(
                 and not _has_conflict_on_date(staff.identifier, d, staff_assignments)
                 and not _has_conflict_on_date(staff.identifier, d + timedelta(days=1), staff_assignments)
                 and _is_block_compatible(staff.identifier, d, staff_assignments)
-                and not _has_reached_ta_night_cap(staff, staff_assignments)
+                and not _has_reached_intern_night_cap(staff, staff_assignments)
             )
 
         all_eligible = [s for s in staff_list if is_eligible_for_night(s)]
@@ -377,8 +377,9 @@ def _greedy_assignment(
                 continue
             staff = staff_matches[0]
 
-            min_len = min(staff.nd_count) if staff.nd_count else 1
-            max_len = max(staff.nd_count) if staff.nd_count else 1
+            # Non-Azubis must do at least 2 consecutive nights; Azubis can do 1
+            min_len = 1 if staff.beruf == Beruf.AZUBI else 2
+            max_len = staff.nd_max_consecutive if staff.nd_max_consecutive else 7
 
             if length < min_len:
                 if staff.nd_alone:
@@ -482,15 +483,15 @@ def _has_conflict_on_date(
     return False
 
 
-def _has_reached_ta_night_cap(
+def _has_reached_intern_night_cap(
     staff: Staff, staff_assignments: dict[str, list[Assignment]], cap: int = 6
 ) -> bool:
-    """Check if a TA has reached their quarterly night cap.
+    """Check if an Intern has reached their quarterly night cap.
     
-    TAs should work max 2 nights/month = 6 nights/quarter.
-    Non-TAs always return False (no cap).
+    Interns should work max 2 nights/month = 6 nights/quarter.
+    Non-Interns always return False (no cap).
     """
-    if staff.beruf != Beruf.TA:
+    if staff.beruf != Beruf.INTERN:
         return False
     
     night_count = sum(

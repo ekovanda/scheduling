@@ -20,7 +20,7 @@ def test_effective_nights_calculation() -> None:
         reception=True,
         nd_possible=True,
         nd_alone=False,
-        nd_count=[1, 2],
+        nd_max_consecutive=2,
         nd_exceptions=[],
     )
 
@@ -42,7 +42,7 @@ def test_minor_cannot_work_sunday() -> None:
         reception=False,
         nd_possible=False,
         nd_alone=False,
-        nd_count=[],
+        nd_max_consecutive=None,
         nd_exceptions=[],
     )
 
@@ -53,33 +53,33 @@ def test_minor_cannot_work_sunday() -> None:
     assert not minor.can_work_shift(ShiftType.SUNDAY_10_22, date(2026, 4, 6))
     assert not minor.can_work_shift(ShiftType.SUNDAY_8_2030, date(2026, 4, 6))
 
-    # But can work Saturday
+    # But can work Saturday (any Azubi can work Sa_10-19 now)
     assert minor.can_work_shift(ShiftType.SATURDAY_10_19, date(2026, 4, 5))
 
 
-def test_ta_cannot_work_weekend() -> None:
-    """Test that TAs cannot be assigned weekend shifts."""
-    ta = Staff(
-        name="TA Test",
-        identifier="TAT",
+def test_intern_cannot_work_weekend() -> None:
+    """Test that Interns cannot be assigned weekend shifts."""
+    intern = Staff(
+        name="Intern Test",
+        identifier="INT",
         adult=True,
         hours=40,
-        beruf=Beruf.TA,
+        beruf=Beruf.INTERN,
         reception=True,
         nd_possible=True,
         nd_alone=True,
-        nd_count=[1],
+        nd_max_consecutive=3,
         nd_exceptions=[],
     )
 
     from app.scheduler.models import ShiftType
 
-    # TA cannot work weekend shifts
-    assert not ta.can_work_shift(ShiftType.SATURDAY_10_21, date(2026, 4, 5))
-    assert not ta.can_work_shift(ShiftType.SUNDAY_8_20, date(2026, 4, 6))
+    # Intern cannot work weekend shifts
+    assert not intern.can_work_shift(ShiftType.SATURDAY_10_21, date(2026, 4, 5))
+    assert not intern.can_work_shift(ShiftType.SUNDAY_8_20, date(2026, 4, 6))
 
     # But can work night shifts
-    assert ta.can_work_shift(ShiftType.NIGHT_SUN_MON, date(2026, 4, 6))
+    assert intern.can_work_shift(ShiftType.NIGHT_SUN_MON, date(2026, 4, 6))
 
 
 def test_generate_quarter_shifts() -> None:
@@ -117,7 +117,7 @@ def test_three_week_block_constraint() -> None:
             reception=True,
             nd_possible=True,
             nd_alone=True,
-            nd_count=[1, 2],
+            nd_max_consecutive=2,
             nd_exceptions=[],
         ),
         Staff(
@@ -129,7 +129,7 @@ def test_three_week_block_constraint() -> None:
             reception=False,
             nd_possible=True,
             nd_alone=False,
-            nd_count=[1],
+            nd_max_consecutive=2,
             nd_exceptions=[],
         ),
     ]
@@ -151,8 +151,8 @@ def test_three_week_block_constraint() -> None:
         assert len(block_violations) == 0, f"Found {len(block_violations)} 3-week block violations"
 
 
-def test_nd_count_constraint() -> None:
-    """Test that nd_count is respected for consecutive nights."""
+def test_nd_max_consecutive_constraint() -> None:
+    """Test that nd_max_consecutive is respected for consecutive nights."""
     from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
 
     staff = Staff(
@@ -164,7 +164,7 @@ def test_nd_count_constraint() -> None:
         reception=True,
         nd_possible=True,
         nd_alone=True,
-        nd_count=[1, 2],  # Can only work 1 or 2 consecutive nights
+        nd_max_consecutive=2,  # Can only work max 2 consecutive nights
         nd_exceptions=[],
     )
 
@@ -190,8 +190,8 @@ def test_nd_count_constraint() -> None:
 
     validation = validate_schedule(schedule, [staff])
 
-    # NEW: nd_count is now a soft constraint, so check score instead of hard violations
-    assert validation.soft_penalty > 0, "Should have penalty for nd_count violation"
+    # nd_max_consecutive is now a soft constraint, so check score instead of hard violations
+    assert validation.soft_penalty > 0, "Should have penalty for nd_max_consecutive violation"
 #     
 #     # Original hard check (commented out)
 #     # nd_count_violations = [
@@ -200,7 +200,7 @@ def test_nd_count_constraint() -> None:
 #     # assert len(nd_count_violations) > 0, "Should detect 3 consecutive nights violation"
 
 def test_paired_night_requirement() -> None:
-    """Test that staff with nd_alone=False must be paired."""
+    """Test that Azubis must be paired with non-Azubi."""
     from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
 
     staff_needs_pair = Staff(
@@ -212,7 +212,7 @@ def test_paired_night_requirement() -> None:
         reception=False,
         nd_possible=True,
         nd_alone=False,  # Must be paired
-        nd_count=[1],
+        nd_max_consecutive=2,
         nd_exceptions=[],
     )
 
@@ -231,7 +231,7 @@ def test_paired_night_requirement() -> None:
 
     validation = validate_schedule(schedule, [staff_needs_pair])
 
-    # Should have pairing violation
+    # Should have pairing violation (Azubi alone without TFA/Intern)
     pairing_violations = [
         v
         for v in validation.hard_violations
@@ -240,9 +240,8 @@ def test_paired_night_requirement() -> None:
     assert len(pairing_violations) > 0, "Should detect unpaired night violation"
 
 
-def test_nd_alone_can_work_ta_nights_but_must_work_alone_on_regular() -> None:
-    """Test that staff with nd_alone=True CAN work Sun-Mon/Mon-Tue (single capacity) 
-    but must work alone on regular nights (no pairing with nd_alone=False)."""
+def test_nd_alone_can_work_intern_nights_and_regular_nights() -> None:
+    """Test that staff with nd_alone=True can work all nights but must work alone on regular nights."""
     solo_worker = Staff(
         name="Solo Worker",
         identifier="SW1",
@@ -252,11 +251,11 @@ def test_nd_alone_can_work_ta_nights_but_must_work_alone_on_regular() -> None:
         reception=True,
         nd_possible=True,
         nd_alone=True,  # Must work alone on regular nights
-        nd_count=[1],
+        nd_max_consecutive=2,
         nd_exceptions=[],
     )
 
-    # CAN work Sun-Mon and Mon-Tue (these are single-capacity slots with external TA)
+    # CAN work Sun-Mon and Mon-Tue (intern on-site, can work solo)
     assert solo_worker.can_work_shift(ShiftType.NIGHT_SUN_MON, date(2026, 4, 5))
     assert solo_worker.can_work_shift(ShiftType.NIGHT_MON_TUE, date(2026, 4, 6))
     # Can work other nights (but must be alone, not paired)

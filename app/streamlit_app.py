@@ -154,7 +154,7 @@ def page_personal() -> None:
     with col2:
         st.metric("Azubi", sum(1 for s in staff_list if s.beruf == Beruf.AZUBI))
     with col3:
-        st.metric("TA", sum(1 for s in staff_list if s.beruf == Beruf.TA))
+        st.metric("Intern", sum(1 for s in staff_list if s.beruf == Beruf.INTERN))
     with col4:
         st.metric("Gesamt", len(staff_list))
 
@@ -167,21 +167,22 @@ def page_regeln() -> None:
     ## Hard Constraints (müssen erfüllt sein)
 
     ### Wochenend-Schichten
-    - **Samstag 10-19**: Nur Azubis mit `reception=False`
-    - **Samstag 10-21**: Azubis mit `reception=True` oder TFA
+    - **Samstag 10-19**: Alle Azubis (Azubidienst)
+    - **Samstag 10-21**: Azubis mit `reception=True` oder TFA (Anmeldung)
     - **Sonntag 8-20:30**: Nur erwachsene Azubis (≥18 Jahre)
     - **Minderjährige**: Dürfen **nicht** sonntags arbeiten
-    - **TAs**: Arbeiten **nie** am Wochenende
+    - **Interns**: Arbeiten **nie** am Wochenende
     - **Max. 1 Schicht/Tag**: Jede Person kann max. 1 Schicht pro Tag haben
 
     ### Nachtdienste
-    - **Sonntag→Montag**: Genau 1 TFA (TA vor Ort, zählt als volle Nacht)
-    - **Montag→Dienstag**: Genau 1 TFA (TA vor Ort, zählt als volle Nacht)
-    - **Andere Nächte**: 1-2 TFA
-    - **Azubis**: Arbeiten **nie** alleine nachts (außer So→Mo, Mo→Di mit TA)
+    - **Alle Nächte**: 1-2 Personen, mind. 1 nicht-Azubi (TFA oder Intern)
+    - **Sonntag→Montag / Montag→Dienstag**: Intern vor Ort, optional +1 Azubi
+    - **Azubis**: Müssen **immer** mit einem TFA oder Intern zusammenarbeiten
+    - **Zwei Azubis**: Können **nie** zusammen Nachtdienst machen
     - **nd_alone=False**: Mitarbeiter müssen paarweise arbeiten (außer So→Mo, Mo→Di)
-    - **nd_alone=True**: Mitarbeiter müssen **alleine** arbeiten (keine Paarung mit nd_alone=False)
-    - **TAs**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
+    - **nd_alone=True**: Mitarbeiter arbeiten **alleine** (keine Paarung)
+    - **Min. 2 Nächte**: TFA und Interns müssen mind. 2 aufeinanderfolgende Nächte arbeiten
+    - **Interns**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
 
     ### Zeitliche Constraints
     - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster
@@ -190,15 +191,15 @@ def page_regeln() -> None:
 
     ## Soft Constraints (Optimierungsziele)
 
-    - **nd_count**: Anzahl aufeinanderfolgender Nächte soll idealerweise `nd_count` entsprechen
-    - **Faire Verteilung**: Notdienste proportional zu Wochenstunden
+    - **nd_max_consecutive**: Max. aufeinanderfolgende Nächte (wird möglichst eingehalten)
+    - **Faire Verteilung**: Notdienste (WE + Nächte kombiniert) proportional zu Wochenstunden
     - **Effective Nights**: Paar-Nächte zählen 0,5× pro Person, Solo-Nächte 1,0×
-    - **Gruppen-Fairness**: Minimale Abweichung innerhalb TFA/Azubi/TA
-    - **Minderjährige**: Erhalten mehr Samstage (Ausgleich für keine Sonntage)
+    - **Gruppen-Fairness**: Minimale Abweichung (±1-2) innerhalb TFA/Azubi/Intern
 
     ### Penalty-System
     - Abweichung von Ziel → Quadratische Strafe
     - Ungleichheit in Gruppe → Standardabweichung × 10
+    - nd_max_consecutive Überschreitung → 100 pro Verletzung
     """)
 
     st.markdown("---")
@@ -502,9 +503,12 @@ def page_plan_anzeigen() -> None:
             # Map Constraint Name -> Description
             known_constraints = {
                 "Minor Sunday Ban": "Keine Minderjährigen am Sonntag",
-                "TA Weekend Ban": "Keine Tierärzte am Wochenende",
-                "Azubi Night Pairing": "Azubi Nachtdienst nur mit Partner (außer mit TA)",
+                "Intern Weekend Ban": "Keine Interns am Wochenende",
+                "Azubi Night Pairing": "Azubi Nachtdienst nur mit TFA/Intern",
+                "Multiple Azubis on Night": "Max. 1 Azubi pro Nachtschicht",
+                "Intern Night No Non-Azubi": "Mind. 1 TFA/Intern pro Nacht (So-Mo, Mo-Di)",
                 "Night Pairing Required": "Mitarbeiter ohne 'nd_alone' nur im Team",
+                "Min Consecutive Nights": "TFA/Interns: mind. 2 aufeinanderfolgende Nächte",
                 "Night/Day Conflict": "Ruhezeiten: Kein Tagdienst an/nach Nachtdienst",
                 "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
                 "ND Exception Weekday": "Beachtung blockierter Wochentage (nd_exceptions)",

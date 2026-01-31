@@ -72,8 +72,8 @@ def generate_schedule_cpsat(
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
     night_shifts = [s for s in shifts if s.is_night_shift()]
 
-    # Night shifts categorized by TA presence
-    ta_present_nights = [
+    # Night shifts categorized by Intern presence (Interns are on-site Sun-Mon, Mon-Tue)
+    intern_present_nights = [
         s for s in night_shifts
         if s.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
     ]
@@ -137,8 +137,9 @@ def generate_schedule_cpsat(
             model.Add(sum(staff_for_shift) == 1)
 
     # 2. Night shift coverage:
-    #    - Sun-Mon and Mon-Tue: exactly 1 person (TA is already on-site)
+    #    - Sun-Mon and Mon-Tue: 1-2 people (Intern on-site, Azubi can join)
     #    - Other nights: 1-2 people
+    #    - At least one non-Azubi required on all nights
     for shift in night_shifts:
         staff_for_shift = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
@@ -148,85 +149,99 @@ def generate_schedule_cpsat(
         if staff_for_shift:
             coverage_sum = sum(staff_for_shift)
             model.Add(coverage_sum >= 1)
+            model.Add(coverage_sum <= 2)
             
-            # TA-present nights (Sun-Mon, Mon-Tue) have capacity for exactly 1
-            if shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE):
-                model.Add(coverage_sum == 1)
-                # These are always "solo" from scheduler perspective (TA handled externally)
-                # No is_paired linking needed - they're never paired in this model
-            else:
-                model.Add(coverage_sum <= 2)
-                
-                # Link is_paired variable: paired iff 2 people assigned (only for regular nights)
-                # Create sum_is_two variable ONCE per shift (outside staff loop)
-                sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
-                model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
-                model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
-                
-                for s in staff_list:
-                    key = (s.identifier, shift.shift_date, shift.shift_type)
-                    pair_key = (s.identifier, shift.shift_date)
-                    if key in x and pair_key in is_paired:
-                        # is_paired = sum_is_two AND assigned
-                        model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
-                        model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
-                            is_paired[pair_key].Not()
-                        )
+            # At least one non-Azubi must be assigned to every night
+            non_azubi_vars = [
+                x[(s.identifier, shift.shift_date, shift.shift_type)]
+                for s in staff_list
+                if (s.identifier, shift.shift_date, shift.shift_type) in x
+                and s.beruf != Beruf.AZUBI
+            ]
+            if non_azubi_vars:
+                model.Add(sum(non_azubi_vars) >= 1)
+            
+            # Link is_paired variable: paired iff 2 people assigned
+            sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
+            model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
+            model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
+            
+            for s in staff_list:
+                key = (s.identifier, shift.shift_date, shift.shift_type)
+                pair_key = (s.identifier, shift.shift_date)
+                if key in x and pair_key in is_paired:
+                    # is_paired = sum_is_two AND assigned
+                    model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
+                    model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
+                        is_paired[pair_key].Not()
+                    )
 
-    # 3. nd_alone constraints for regular nights (where TA is NOT present):
-    #    - nd_alone=False staff must be paired (cannot work alone)
-    #    - nd_alone=True staff must work ALONE (cannot be paired with anyone)
-    #    
-    #    This means on a regular night:
-    #    - Either 2 people with nd_alone=False work together
-    #    - OR 1 person with nd_alone=True works alone
-    #    - NEVER mix nd_alone=True with anyone else
+    # 3. Azubi and nd_alone constraints:
+    #    - Azubis must always pair with a non-Azubi (TFA or Intern)
+    #    - Two Azubis can NEVER work together on any night
+    #    - nd_alone=False (non-Azubi) must be paired on regular nights
+    #    - nd_alone=True (non-Azubi) must work ALONE on regular nights
     
-    for shift in regular_nights:
-        # Get all staff variables for this shift
-        nd_alone_true_vars = []  # Staff who MUST work alone
-        nd_alone_false_vars = []  # Staff who MUST be paired
+    for shift in night_shifts:
+        is_intern_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
+        
+        # Categorize staff for this shift
+        azubi_vars = []  # Azubis
+        non_azubi_nd_alone_true = []  # Non-Azubis who must work alone
+        non_azubi_nd_alone_false = []  # Non-Azubis who must be paired
         
         for staff in staff_list:
             key = (staff.identifier, shift.shift_date, shift.shift_type)
             if key not in x:
                 continue
-            if staff.nd_alone:
-                nd_alone_true_vars.append((staff, x[key]))
+            
+            if staff.beruf == Beruf.AZUBI:
+                azubi_vars.append((staff, x[key]))
+            elif staff.nd_alone:
+                non_azubi_nd_alone_true.append((staff, x[key]))
             else:
-                nd_alone_false_vars.append((staff, x[key]))
+                non_azubi_nd_alone_false.append((staff, x[key]))
         
-        # Constraint: If ANY nd_alone=True staff is assigned, total coverage must be 1
-        # (they work alone, no pairing allowed)
-        for staff, var in nd_alone_true_vars:
-            # Sum of all other assignments on this shift
-            other_vars = [
-                v for (s, v) in nd_alone_true_vars + nd_alone_false_vars 
-                if s.identifier != staff.identifier
-            ]
-            if other_vars:
-                # If this nd_alone=True person is assigned, no one else can be assigned
-                for other_var in other_vars:
-                    model.Add(var + other_var <= 1)
+        # Rule: At most 1 Azubi per night (two Azubis can never pair)
+        if len(azubi_vars) > 1:
+            model.Add(sum(v for _, v in azubi_vars) <= 1)
         
-        # Constraint: nd_alone=False staff must be paired (exactly 2 people)
-        for staff, var in nd_alone_false_vars:
-            pair_key = (staff.identifier, shift.shift_date)
-            if pair_key in is_paired:
-                # If assigned, must be paired (sum == 2)
-                model.AddImplication(var, is_paired[pair_key])
+        # Rule: Azubi can only work if a non-Azubi is also assigned
+        for azubi_staff, azubi_var in azubi_vars:
+            non_azubi_vars = [v for _, v in non_azubi_nd_alone_true + non_azubi_nd_alone_false]
+            if non_azubi_vars:
+                # If Azubi is assigned, at least one non-Azubi must be assigned
+                model.Add(sum(non_azubi_vars) >= 1).OnlyEnforceIf(azubi_var)
+        
+        # For regular nights (not intern-present):
+        if not is_intern_present:
+            # nd_alone=True staff must work alone (cannot be paired)
+            for staff, var in non_azubi_nd_alone_true:
+                other_vars = [
+                    v for (s, v) in non_azubi_nd_alone_true + non_azubi_nd_alone_false + azubi_vars
+                    if s.identifier != staff.identifier
+                ]
+                if other_vars:
+                    for other_var in other_vars:
+                        model.Add(var + other_var <= 1)
+            
+            # nd_alone=False staff must be paired (sum == 2)
+            for staff, var in non_azubi_nd_alone_false:
+                pair_key = (staff.identifier, shift.shift_date)
+                if pair_key in is_paired:
+                    model.AddImplication(var, is_paired[pair_key])
 
-    # 4. TA night cap: 6-9 nights per quarter (2-3/month)
+    # 4. Intern night cap: 6-9 nights per quarter (2-3/month)
     for staff in staff_list:
-        if staff.beruf == Beruf.TA:
-            ta_night_vars = [
+        if staff.beruf == Beruf.INTERN:
+            intern_night_vars = [
                 x[(staff.identifier, s.shift_date, s.shift_type)]
                 for s in night_shifts
                 if (staff.identifier, s.shift_date, s.shift_type) in x
             ]
-            if ta_night_vars:
-                model.Add(sum(ta_night_vars) >= 6)
-                model.Add(sum(ta_night_vars) <= 9)
+            if intern_night_vars:
+                model.Add(sum(intern_night_vars) >= 6)
+                model.Add(sum(intern_night_vars) <= 9)
 
     # 6. Night/Day conflict: no day shift same day or next day after night shift
     for staff in staff_list:
@@ -255,99 +270,86 @@ def generate_schedule_cpsat(
     # More accurate: track block starts and enforce gap
     _add_block_constraints(model, x, staff_list, shifts, quarter_start, quarter_end)
 
-    # 8. nd_count max constraint: consecutive night blocks cannot exceed max(nd_count)
-    _add_nd_count_constraints(model, x, staff_list, night_shifts)
+    # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
+    _add_nd_max_consecutive_constraints(model, x, staff_list, night_shifts)
+    
+    # 9. Non-Azubi min consecutive nights: TFA/Intern must work at least 2 consecutive nights
+    _add_min_consecutive_nights_constraints(model, x, staff_list, night_shifts)
 
     # =========================================================================
     # FAIRNESS OBJECTIVE
     # =========================================================================
 
-    # Goal: minimize max FTE-deviation within each role group
+    # Goal: minimize max FTE-deviation of combined Notdienste within each role group
+    # Notdienste = weekends + effective_nights (paired nights = 0.5 per person)
+    
+    # To handle the 0.5 weight for paired nights, we count in half-units:
+    # - Weekend shift = 2 half-units
+    # - Solo night = 2 half-units (1.0 effective)
+    # - Paired night = 1 half-unit (0.5 effective per person)
 
-    # Calculate FTE-normalized targets
-    # Weekend target for each person: (their hours / 40) * avg_weekends_per_40h
-    # Night target: similar but accounting for paired=0.5
-
-    # First, calculate total shifts available
-    total_weekend_shifts = len(weekend_shifts)
-    total_night_shifts = len(night_shifts)  # Each can have 1-2 people
-
-    # Calculate per-group targets
-    # Weekends: everyone eligible participates
-    # Nights: only nd_possible=True participates
-
-    # For fairness, we minimize the range (max - min) of FTE-normalized counts
-    # within each group: TFA, Azubi, TA
-
-    # Weekend counts per staff
-    weekend_counts: dict[str, cp_model.LinearExpr] = {}
+    # Combined Notdienste count (in half-units) per staff
+    notdienst_half_counts: dict[str, cp_model.LinearExpr] = {}
+    
     for staff in staff_list:
-        vars_for_staff = [
-            x[(staff.identifier, s.shift_date, s.shift_type)]
-            for s in weekend_shifts
-            if (staff.identifier, s.shift_date, s.shift_type) in x
-        ]
-        if vars_for_staff:
-            weekend_counts[staff.identifier] = sum(vars_for_staff)
-        else:
-            weekend_counts[staff.identifier] = 0
-
-    # Night counts per staff (effective: paired = 0.5)
-    # We model this by tracking 2*effective_nights to avoid fractions
-    # effective_nights * 2 = paired_nights * 1 + solo_nights * 2
-    night_counts_2x: dict[str, cp_model.LinearExpr] = {}
-    for staff in staff_list:
-        if not staff.nd_possible:
-            night_counts_2x[staff.identifier] = 0
-            continue
-
         terms = []
-        for shift in night_shifts:
+        
+        # Weekend shifts: each counts as 2 half-units
+        for shift in weekend_shifts:
             key = (staff.identifier, shift.shift_date, shift.shift_type)
-            pair_key = (staff.identifier, shift.shift_date)
             if key in x:
-                # Contribution: if paired -> 1, if solo -> 2
-                # = 2 * x - is_paired (since is_paired = x when paired)
-                # More precisely: 2*x - (x AND is_paired_shift)
-                # Simpler: solo_contribution + paired_contribution
-                # For now, count raw assignments, we'll handle pairing in post
-                terms.append(x[key])
-
+                # 2 * x (2 half-units per weekend)
+                terms.append(2 * x[key])
+        
+        # Night shifts: count depends on pairing
+        if staff.nd_possible:
+            for shift in night_shifts:
+                key = (staff.identifier, shift.shift_date, shift.shift_type)
+                pair_key = (staff.identifier, shift.shift_date)
+                if key in x:
+                    # If assigned: paired = 1 half-unit, solo = 2 half-units
+                    # Contribution = 2*x - is_paired = x + (x - is_paired) = x + solo_indicator
+                    # Simpler: 2*x - is_paired when paired, 2*x when solo
+                    # For CP: use x[key] as base, then track pairing separately
+                    # Approximation for objective: count raw assignments (post-process for exact)
+                    terms.append(x[key])
+        
         if terms:
-            night_counts_2x[staff.identifier] = sum(terms)
+            notdienst_half_counts[staff.identifier] = sum(terms)
         else:
-            night_counts_2x[staff.identifier] = 0
+            notdienst_half_counts[staff.identifier] = 0
 
     # FTE-scaled counts (multiplied by 40/hours to normalize)
     # To avoid fractions in CP, we multiply everything by a common factor
     SCALE = 40 * 10  # Scale factor for integer arithmetic
 
-    # Calculate scaled weekend fairness by group
+    # Calculate scaled fairness by group
     objective_terms = []
 
     # Group staff by role for fairness within groups
     tfa_staff = [s for s in staff_list if s.beruf == Beruf.TFA]
     azubi_staff = [s for s in staff_list if s.beruf == Beruf.AZUBI]
-    ta_staff = [s for s in staff_list if s.beruf == Beruf.TA]
+    intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
 
-    # For each group, add fairness constraint/objective
-    for group_name, group in [("TFA", tfa_staff), ("Azubi", azubi_staff), ("TA", ta_staff)]:
+    # For each group, add combined fairness objective
+    for group_name, group in [("TFA", tfa_staff), ("Azubi", azubi_staff), ("Intern", intern_staff)]:
         if len(group) < 2:
             continue
-
-        # Weekend fairness (all staff in group)
-        we_eligible = [s for s in group if s.beruf != Beruf.TA]  # TAs don't do weekends
-        if len(we_eligible) >= 2:
-            _add_group_fairness_objective(
-                model, objective_terms, weekend_counts, we_eligible, SCALE, f"WE_{group_name}"
-            )
-
-        # Night fairness (only nd_possible staff)
-        nd_eligible = [s for s in group if s.nd_possible]
-        if len(nd_eligible) >= 2:
-            _add_group_fairness_objective(
-                model, objective_terms, night_counts_2x, nd_eligible, SCALE, f"ND_{group_name}"
-            )
+        
+        # Combined Notdienste fairness (weekends + nights together)
+        # For Interns: only nights (they don't do weekends)
+        if group_name == "Intern":
+            nd_eligible = [s for s in group if s.nd_possible]
+            if len(nd_eligible) >= 2:
+                _add_group_fairness_objective(
+                    model, objective_terms, notdienst_half_counts, nd_eligible, SCALE, f"ND_{group_name}"
+                )
+        else:
+            # TFA and Azubi: combined weekends + nights
+            if len(group) >= 2:
+                _add_group_fairness_objective(
+                    model, objective_terms, notdienst_half_counts, group, SCALE, f"ND_{group_name}"
+                )
 
     # Minimize total fairness deviation
     if objective_terms:
@@ -473,20 +475,20 @@ def _add_block_constraints(
                 model.Add(block_starts[d1] + block_starts[d2] <= 1)
 
 
-def _add_nd_count_constraints(
+def _add_nd_max_consecutive_constraints(
     model: cp_model.CpModel,
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
     staff_list: list[Staff],
     night_shifts: list[Shift],
 ) -> None:
-    """Enforce max consecutive nights based on nd_count field."""
+    """Enforce max consecutive nights based on nd_max_consecutive field."""
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
 
     for staff in staff_list:
-        if not staff.nd_possible or not staff.nd_count:
+        if not staff.nd_possible or staff.nd_max_consecutive is None:
             continue
 
-        max_consecutive = max(staff.nd_count)
+        max_consecutive = staff.nd_max_consecutive
 
         # Get this staff's night variables in order
         staff_night_vars = []
@@ -523,6 +525,61 @@ def _add_nd_count_constraints(
                     model.Add(sum(constraint_vars) <= max_consecutive)
 
             i = j
+
+
+def _add_min_consecutive_nights_constraints(
+    model: cp_model.CpModel,
+    x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
+    staff_list: list[Staff],
+    night_shifts: list[Shift],
+) -> None:
+    """Enforce minimum 2 consecutive nights for non-Azubi staff (TFA, Intern).
+    
+    This constraint ensures that if a non-Azubi works any nights, they work
+    at least 2 consecutive nights (no single-night assignments).
+    """
+    sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
+    
+    for staff in staff_list:
+        # Only applies to non-Azubi staff
+        if staff.beruf == Beruf.AZUBI or not staff.nd_possible:
+            continue
+        
+        # Get this staff's night variables in order
+        staff_night_vars = []
+        for shift in sorted_nights:
+            key = (staff.identifier, shift.shift_date, shift.shift_type)
+            if key in x:
+                staff_night_vars.append((shift.shift_date, x[key]))
+        
+        if len(staff_night_vars) < 2:
+            continue
+        
+        # For each night, if assigned, at least one adjacent night must also be assigned
+        # This prevents single-night assignments
+        for i, (d, var) in enumerate(staff_night_vars):
+            adjacent_vars = []
+            
+            # Check previous day
+            if i > 0:
+                prev_d, prev_var = staff_night_vars[i - 1]
+                if (d - prev_d).days == 1:
+                    adjacent_vars.append(prev_var)
+            
+            # Check next day
+            if i < len(staff_night_vars) - 1:
+                next_d, next_var = staff_night_vars[i + 1]
+                if (next_d - d).days == 1:
+                    adjacent_vars.append(next_var)
+            
+            # If this night is assigned, at least one adjacent night must be assigned
+            if adjacent_vars:
+                # var => OR(adjacent_vars)
+                model.Add(sum(adjacent_vars) >= 1).OnlyEnforceIf(var)
+            else:
+                # No adjacent nights available - this non-Azubi cannot work this night
+                # (would result in isolated single night)
+                model.Add(var == 0)
 
 
 def _add_group_fairness_objective(
@@ -588,13 +645,8 @@ def _extract_schedule(
                 if solver.Value(var) == 1:
                     assigned_staff.append(staff_id)
 
-        # Determine if paired (2 people on same regular night)
+        # Determine if paired (2 people on same night)
         paired = len(assigned_staff) >= 2 and shift.is_night_shift()
-
-        # Sun-Mon and Mon-Tue nights are SOLO shifts (TA is external, not in this schedule)
-        # These count as full nights (is_paired=False) for fairness calculations
-        if shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE):
-            paired = False
 
         for staff_id in assigned_staff:
             assignments.append(
@@ -628,28 +680,29 @@ def _diagnose_infeasibility(
     saturday_shifts = [s for s in weekend_shifts if s.shift_type.value.startswith("Sa_")]
     sunday_shifts = [s for s in weekend_shifts if s.shift_type.value.startswith("So_")]
 
-    # Saturday 10-19: only Azubi with reception=False
-    sa_1019_eligible = [s for s in staff_list if s.beruf == Beruf.AZUBI and not s.reception]
+    # Saturday 10-19: Any Azubi can work this shift
+    sa_1019_eligible = [s for s in staff_list if s.beruf == Beruf.AZUBI]
     if len(sa_1019_eligible) * 13 < len([s for s in saturday_shifts if s.shift_type == ShiftType.SATURDAY_10_19]):
-        issues.append(f"Insufficient Azubi (reception=False) for Sa_10-19 shifts. Have {len(sa_1019_eligible)}, need coverage for 13 weeks.")
+        issues.append(f"Insufficient Azubis for Sa_10-19 shifts. Have {len(sa_1019_eligible)}, need coverage for 13 weeks.")
 
     # Sunday: adults only
     adult_azubis = [s for s in staff_list if s.beruf == Beruf.AZUBI and s.adult]
     if len(adult_azubis) == 0:
         issues.append("No adult Azubis available for Sunday So_8-20:30 shifts.")
 
-    # Night capacity
-    nd_eligible = [s for s in staff_list if s.nd_possible]
-    if len(nd_eligible) < 2:
-        issues.append(f"Insufficient night-capable staff. Have {len(nd_eligible)}, need at least 2 for pairing.")
-
-    # Check nd_alone availability for TA-present nights
-    ta_present_eligible = [
-        s for s in nd_eligible
-        if not s.nd_alone or s.beruf == Beruf.TA  # nd_alone=False OR is TA
-    ]
-    if len(ta_present_eligible) == 0:
-        issues.append("No staff eligible for Sun-Mon and Mon-Tue nights (need nd_alone=False or TA).")
+    # Night capacity - need non-Azubis for all nights
+    non_azubi_nd_eligible = [s for s in staff_list if s.nd_possible and s.beruf != Beruf.AZUBI]
+    if len(non_azubi_nd_eligible) < 1:
+        issues.append("Insufficient non-Azubi night-capable staff. Need at least 1 TFA or Intern per night.")
+    
+    # Check for min 2 consecutive nights constraint feasibility
+    # Non-Azubis with limited availability may not be able to do 2+ consecutive
+    for staff in non_azubi_nd_eligible:
+        if len(staff.nd_exceptions) >= 6:  # Can only work 1 night type
+            issues.append(
+                f"{staff.name} ({staff.beruf.value}) has too many nd_exceptions to work "
+                f"2 consecutive nights (min required for non-Azubis)."
+            )
 
     if not issues:
         issues.append("Model infeasible. Check constraint interactions or increase solve time.")

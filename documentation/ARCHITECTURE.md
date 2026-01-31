@@ -22,11 +22,11 @@ app/
 ### 1. models.py - Data Structures
 
 **Enums:**
-- `Beruf`: Staff roles (TFA, Azubi, TA)
+- `Beruf`: Staff roles (TFA, Azubi, Intern)
 - `ShiftType`: All shift types (Sa_10-21, N_So-Mo, etc.)
 
 **Pydantic Models:**
-- `Staff`: Employee with constraints (nd_count, nd_exceptions, etc.)
+- `Staff`: Employee with constraints (nd_max_consecutive, nd_exceptions, etc.)
 - `Shift`: A specific shift slot (type + date)
 - `Assignment`: Staff → Shift mapping with `is_paired` flag
 - `Schedule`: Full quarter schedule with helper methods
@@ -44,9 +44,11 @@ Schedule.count_effective_nights(staff_id) -> float  # Sum of weighted nights
 | Function | Rule |
 |----------|------|
 | `_check_minor_sunday_constraint` | Minors cannot work Sundays |
-| `_check_ta_weekend_constraint` | TAs never work weekends |
-| `_check_night_pairing_constraint` | nd_alone=False must be paired |
-| `_check_nd_alone_ta_nights_constraint` | nd_alone=True cannot work TA-present nights |
+| `_check_intern_weekend_constraint` | Interns never work weekends |
+| `_check_night_pairing_constraint` | Azubis must pair with non-Azubi |
+| `_check_nd_alone_improper_pairing` | nd_alone=True cannot pair on regular nights |
+| `_check_intern_night_capacity` | Sun-Mon/Mon-Tue: 1-2 people, need non-Azubi |
+| `_check_min_consecutive_nights_constraint` | Non-Azubis must work 2+ consecutive nights |
 | `_check_same_day_next_day_constraint` | No day shift after night shift |
 | `_check_three_week_block_constraint` | Max 1 block per 14-day window |
 | `_check_nd_exceptions_constraint` | Respect weekday exclusions |
@@ -56,7 +58,7 @@ Schedule.count_effective_nights(staff_id) -> float  # Sum of weighted nights
 **Soft Penalty Calculation:**
 - Squared deviation from proportional target
 - Standard deviation within role groups × 10
-- nd_count violations × 100 (moved from hard to soft)
+- nd_max_consecutive violations × 100 (moved from hard to soft)
 
 ### 3. solver.py - Solver Facade
 
@@ -83,13 +85,15 @@ def generate_schedule(
 
 **Constraint Encoding:**
 - Weekend coverage: `sum(x[*, date, type]) == 1`
-- Night coverage: `1 <= sum(x[*, date, type]) <= 2`
+- Night coverage: `1 <= sum(x[*, date, type]) <= 2`, at least 1 non-Azubi
+- Azubi pairing: Azubi assigned => non-Azubi assigned
 - Pairing logic: `x[s,d,t] => is_paired[s,d]` for nd_alone=False
+- Min consecutive: Non-Azubis must have adjacent night if assigned
 - Block constraint: Track block starts, forbid two within 14 days
-- nd_count: Sliding window sum constraints
+- nd_max_consecutive: Sliding window sum constraints
 
 **Objective Function:**
-Minimize `sum(range_var)` where `range_var = max_fte - min_fte` for each group.
+Minimize `sum(range_var)` where `range_var = max_fte - min_fte` for combined Notdienste within each group.
 
 ## Algorithms
 
