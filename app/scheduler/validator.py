@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import Any
 
-from .models import Assignment, Beruf, Schedule, ShiftType, Staff
+from .models import Abteilung, Assignment, Beruf, Schedule, ShiftType, Staff
 
 
 class ConstraintViolation:
@@ -59,6 +59,7 @@ def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> Validation
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
     violations.extend(_check_shift_coverage(schedule))
+    violations.extend(_check_abteilung_night_constraint(schedule, staff_dict))
 
     # Calculate soft penalty
     soft_penalty = _calculate_soft_penalty(schedule, staff_list)
@@ -647,6 +648,83 @@ def _check_shift_coverage(schedule: Schedule) -> list[ConstraintViolation]:
                     )
                 )
 
+    return violations
+
+
+def _check_abteilung_night_constraint(
+    schedule: Schedule, staff_dict: dict[str, Staff]
+) -> list[ConstraintViolation]:
+    """Check abteilung separation on night shifts.
+    
+    Employees in the same abteilung (op or station) cannot:
+    1. Work the same night shift together
+    2. Work consecutive night shifts (day N and day N+1)
+    
+    Employees in abteilung="other" are exempt.
+    """
+    violations: list[ConstraintViolation] = []
+    restricted_abteilungen = {Abteilung.OP, Abteilung.STATION}
+    
+    # Group night assignments by date
+    night_assignments_by_date: dict[Any, list[Assignment]] = defaultdict(list)
+    for assignment in schedule.assignments:
+        if assignment.shift.is_night_shift():
+            night_assignments_by_date[assignment.shift.shift_date].append(assignment)
+    
+    sorted_dates = sorted(night_assignments_by_date.keys())
+    
+    for i, shift_date in enumerate(sorted_dates):
+        assignments = night_assignments_by_date[shift_date]
+        
+        # Get staff with restricted abteilung for this night
+        restricted_staff_today: dict[Abteilung, list[str]] = defaultdict(list)
+        for a in assignments:
+            staff = staff_dict.get(a.staff_identifier)
+            if staff and staff.abteilung in restricted_abteilungen:
+                restricted_staff_today[staff.abteilung].append(staff.name)
+        
+        # 1. Check same night: no two staff from same abteilung
+        for abteilung, names in restricted_staff_today.items():
+            if len(names) >= 2:
+                violations.append(
+                    ConstraintViolation(
+                        "Abteilung Same Night",
+                        f"Multiple {abteilung.value} staff ({', '.join(names)}) "
+                        f"assigned to same night on {shift_date.strftime('%d.%m.%Y')}",
+                    )
+                )
+        
+        # 2. Check consecutive days: no two staff from same abteilung on consecutive days
+        if i < len(sorted_dates) - 1:
+            next_date = sorted_dates[i + 1]
+            # Only check if dates are actually consecutive
+            if (next_date - shift_date).days == 1:
+                next_assignments = night_assignments_by_date[next_date]
+                
+                restricted_staff_tomorrow: dict[Abteilung, list[str]] = defaultdict(list)
+                for a in next_assignments:
+                    staff = staff_dict.get(a.staff_identifier)
+                    if staff and staff.abteilung in restricted_abteilungen:
+                        restricted_staff_tomorrow[staff.abteilung].append(staff.name)
+                
+                # Check for same abteilung on consecutive days (different people)
+                for abteilung in restricted_abteilungen:
+                    today_names = set(restricted_staff_today.get(abteilung, []))
+                    tomorrow_names = set(restricted_staff_tomorrow.get(abteilung, []))
+                    
+                    # Find different people from same abteilung on consecutive days
+                    # (same person on consecutive days is allowed and handled elsewhere)
+                    different_people = today_names.symmetric_difference(tomorrow_names)
+                    if today_names and tomorrow_names and different_people:
+                        violations.append(
+                            ConstraintViolation(
+                                "Abteilung Consecutive Days",
+                                f"Staff from {abteilung.value} on consecutive nights: "
+                                f"{', '.join(today_names)} on {shift_date.strftime('%d.%m.%Y')} "
+                                f"and {', '.join(tomorrow_names)} on {next_date.strftime('%d.%m.%Y')}",
+                            )
+                        )
+    
     return violations
 
 

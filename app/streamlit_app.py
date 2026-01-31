@@ -187,20 +187,30 @@ def page_regeln() -> None:
     ### Wochenend-Schichten
     - **Samstag 10-19**: Alle Azubis (Azubidienst)
     - **Samstag 10-21**: Azubis mit `reception=True` oder TFA (Anmeldung)
+    - **Samstag 10-22 / Sonntag 8-20 / Sonntag 10-22**: Nur TFA
     - **Sonntag 8-20:30**: Nur erwachsene Azubis (≥18 Jahre)
     - **Minderjährige**: Dürfen **nicht** sonntags arbeiten
     - **Interns**: Arbeiten **nie** am Wochenende
     - **Max. 1 Schicht/Tag**: Jede Person kann max. 1 Schicht pro Tag haben
+    - **Wochenend-Isolation**: WE-Schichten können nicht Teil eines Blocks sein
 
     ### Nachtdienste
     - **Alle Nächte**: 1-2 Personen, mind. 1 nicht-Azubi (TFA oder Intern)
-    - **Sonntag→Montag / Montag→Dienstag**: Intern vor Ort, optional +1 Azubi
+    - **Sonntag→Montag / Montag→Dienstag**: Genau 1 TFA/Intern + optional 1 Azubi
     - **Azubis**: Müssen **immer** mit einem TFA oder Intern zusammenarbeiten
+    - **Azubi effektive Nächte**: Zählen immer 1.0× (auch bei Paarung)
     - **Zwei Azubis**: Können **nie** zusammen Nachtdienst machen
     - **nd_alone=False**: Mitarbeiter müssen paarweise arbeiten (außer So→Mo, Mo→Di)
-    - **nd_alone=True**: Mitarbeiter arbeiten **alleine** (keine Paarung)
+    - **nd_alone=True**: Mitarbeiter arbeiten **komplett alleine** (keine Paarung erlaubt)
     - **Min. 2 Nächte**: TFA und Interns müssen mind. 2 aufeinanderfolgende Nächte arbeiten
     - **Interns**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
+
+    ### Abteilungs-Constraint
+    - **Abteilung (OP/Station)**: Mitarbeiter derselben Abteilung (`op` oder `station`) dürfen:
+      - **Nicht zusammen** auf derselben Nachtschicht arbeiten
+      - **Nicht aufeinanderfolgend** Nachtschichten machen (Tag N und Tag N+1)
+    - **Begründung**: Verhindert Kapazitätsengpässe in Spezialgebieten
+    - **Ausnahme**: Mitarbeiter mit `abteilung=other` sind von dieser Regel ausgenommen
 
     ### Zeitliche Constraints
     - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster
@@ -211,8 +221,8 @@ def page_regeln() -> None:
 
     - **nd_max_consecutive**: Max. aufeinanderfolgende Nächte (wird möglichst eingehalten)
     - **Faire Verteilung**: Notdienste (WE + Nächte kombiniert) proportional zu Wochenstunden
-    - **Effective Nights**: Paar-Nächte zählen 0,5× pro Person, Solo-Nächte 1,0×
-    - **Gruppen-Fairness**: Minimale Abweichung (±1-2) innerhalb TFA/Azubi/Intern
+    - **Effective Nights**: TFA/Intern: Paar-Nächte = 0,5×, Solo-Nächte = 1,0×; Azubi: immer 1,0×
+    - **Gruppen-Fairness**: Minimale Abweichung (±2) innerhalb TFA/Azubi/Intern
 
     ### Penalty-System
     - Abweichung von Ziel → Quadratische Strafe
@@ -477,6 +487,7 @@ def page_plan_anzeigen() -> None:
                     "Name": staff.name,
                     "Kürzel": staff.identifier,
                     "Beruf": staff.beruf.value,
+                    "Abteilung": staff.abteilung.value,
                     "Stunden": staff.hours,
                     "ND möglich": "✅" if staff.nd_possible else "❌",
                     "WE (Abs)": weekends,
@@ -486,6 +497,54 @@ def page_plan_anzeigen() -> None:
                 })
             
             df_stats = pd.DataFrame(staff_stats)
+            
+            # ========== FAIRNESS CHECK PER GROUP ==========
+            # Check for unfair distribution WITHIN each job group (threshold: 2+ normalized shifts)
+            fairness_issues: list[dict] = []
+            for beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
+                group_df = df_stats[df_stats["Beruf"] == beruf.value]
+                if len(group_df) < 2:
+                    continue
+                
+                group_mean = group_df["Notdienst / 40h"].mean()
+                for _, row in group_df.iterrows():
+                    deviation = row["Notdienst / 40h"] - group_mean
+                    if abs(deviation) >= 2.0:  # Threshold: 2+ normalized shifts
+                        fairness_issues.append({
+                            "name": row["Name"],
+                            "kuerzel": row["Kürzel"],
+                            "beruf": beruf.value,
+                            "value": row["Notdienst / 40h"],
+                            "group_mean": group_mean,
+                            "deviation": deviation,
+                            "status": "overburdened" if deviation > 0 else "underburdened",
+                        })
+            
+            # Display fairness warning with specific names
+            if fairness_issues:
+                overburdened = [i for i in fairness_issues if i["status"] == "overburdened"]
+                underburdened = [i for i in fairness_issues if i["status"] == "underburdened"]
+                
+                error_lines = ["**⚠️ Unfaire Verteilung innerhalb von Berufsgruppen erkannt:**\n"]
+                if overburdened:
+                    error_lines.append("**Überlastet** (≥2 über Gruppendurchschnitt):")
+                    for item in overburdened:
+                        error_lines.append(
+                            f"- {item['name']} ({item['kuerzel']}, {item['beruf']}): "
+                            f"{item['value']:.2f} vs. Ø {item['group_mean']:.2f} "
+                            f"(+{item['deviation']:.2f})"
+                        )
+                if underburdened:
+                    error_lines.append("\n**Unterlastet** (≥2 unter Gruppendurchschnitt):")
+                    for item in underburdened:
+                        error_lines.append(
+                            f"- {item['name']} ({item['kuerzel']}, {item['beruf']}): "
+                            f"{item['value']:.2f} vs. Ø {item['group_mean']:.2f} "
+                            f"({item['deviation']:.2f})"
+                        )
+                st.error("\n".join(error_lines))
+            else:
+                st.success("✅ Faire Verteilung: Keine Mitarbeiter mit ≥2 Abweichung vom Gruppendurchschnitt.")
             
             # ========== KEY METRICS ==========
             st.markdown("#### 📊 Übersicht")
@@ -501,26 +560,59 @@ def page_plan_anzeigen() -> None:
                 st.metric("Min", f"{notdienst_values.min():.2f}")
             with col_m4:
                 st.metric("Max", f"{notdienst_values.max():.2f}")
-            
-            # Fairness indicator bar
-            fairness_range = notdienst_values.max() - notdienst_values.min()
-            if fairness_range <= 1.5:
-                st.success(f"✅ Sehr faire Verteilung (Spread: {fairness_range:.2f})")
-            elif fairness_range <= 3.0:
-                st.warning(f"⚠️ Akzeptable Verteilung (Spread: {fairness_range:.2f})")
-            else:
-                st.error(f"❌ Ungleiche Verteilung (Spread: {fairness_range:.2f}) - Überprüfung empfohlen")
 
-            # ========== DETAILED TABLE ==========
+            # ========== DETAILED TABLES BY GROUP ==========
             st.markdown("---")
-            st.markdown("#### 📋 Detailansicht")
-            st.caption("Sortierbar durch Klick auf Spaltenüberschrift. 'Notdienst Gesamt' = Wochenenden + effektive Nächte (Paar = 0.5, Solo = 1.0)")
+            st.markdown("#### 📋 Detailansicht nach Berufsgruppe")
+            st.caption("Farbkodierung: 🟢 Grün = unterdurchschnittlich, 🟡 Gelb = durchschnittlich, 🔴 Rot = überdurchschnittlich (relativ zur Gruppe)")
             
-            # Style the dataframe with gradient on key metric
-            styled_df = df_stats.style.background_gradient(
-                subset=["Notdienst / 40h"], cmap="RdYlGn_r"
-            ).format({"Nächte (Eff)": "{:.1f}", "Notdienst Gesamt": "{:.1f}"})
-            st.dataframe(styled_df, use_container_width=True, height=400)
+            def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.DataFrame:
+                """Apply red/yellow/green styling based on deviation from group mean."""
+                def color_notdienst(val: float) -> str:
+                    deviation = val - group_mean
+                    if deviation >= 1.5:
+                        return "background-color: #ffcccc"  # Red - overburdened
+                    elif deviation <= -1.5:
+                        return "background-color: #ccffcc"  # Green - underburdened
+                    else:
+                        return "background-color: #ffffcc"  # Yellow - normal
+                
+                return df.style.applymap(
+                    color_notdienst, subset=["Notdienst / 40h"]
+                ).format({"Nächte (Eff)": "{:.1f}", "Notdienst Gesamt": "{:.1f}"})
+            
+            # TFA Table
+            df_tfa = df_stats[df_stats["Beruf"] == "TFA"].copy()
+            if not df_tfa.empty:
+                tfa_mean = df_tfa["Notdienst / 40h"].mean()
+                st.markdown(f"##### 👩‍⚕️ TFA ({len(df_tfa)} Mitarbeiter, Ø {tfa_mean:.2f} Notdienst/40h)")
+                st.dataframe(
+                    style_group_table(df_tfa, tfa_mean),
+                    use_container_width=True,
+                    height=min(400, 35 * len(df_tfa) + 38),
+                )
+            
+            # Azubi Table
+            df_azubi = df_stats[df_stats["Beruf"] == "Azubi"].copy()
+            if not df_azubi.empty:
+                azubi_mean = df_azubi["Notdienst / 40h"].mean()
+                st.markdown(f"##### 🎓 Azubi ({len(df_azubi)} Mitarbeiter, Ø {azubi_mean:.2f} Notdienst/40h)")
+                st.dataframe(
+                    style_group_table(df_azubi, azubi_mean),
+                    use_container_width=True,
+                    height=min(400, 35 * len(df_azubi) + 38),
+                )
+            
+            # Intern Table
+            df_intern = df_stats[df_stats["Beruf"] == "Intern"].copy()
+            if not df_intern.empty:
+                intern_mean = df_intern["Notdienst / 40h"].mean()
+                st.markdown(f"##### 🩺 Intern ({len(df_intern)} Mitarbeiter, Ø {intern_mean:.2f} Notdienst/40h)")
+                st.dataframe(
+                    style_group_table(df_intern, intern_mean),
+                    use_container_width=True,
+                    height=min(400, 35 * len(df_intern) + 38),
+                )
 
             # ========== GROUP COMPARISON ==========
             st.markdown("---")
@@ -545,25 +637,42 @@ def page_plan_anzeigen() -> None:
             st.markdown("---")
             st.markdown("#### 🎯 Handlungsempfehlungen")
             
-            mean_notdienst = notdienst_values.mean()
-            std_notdienst = notdienst_values.std()
+            # Find intra-group outliers (focus on within-group fairness)
+            recommendations = []
+            for beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
+                group_df = df_stats[df_stats["Beruf"] == beruf.value]
+                if len(group_df) < 2:
+                    continue
+                
+                group_mean = group_df["Notdienst / 40h"].mean()
+                group_std = group_df["Notdienst / 40h"].std()
+                group_spread = group_df["Notdienst / 40h"].max() - group_df["Notdienst / 40h"].min()
+                
+                # Flag groups with high internal spread (>3.0)
+                if group_spread > 3.0:
+                    high_load = group_df[group_df["Notdienst / 40h"] > group_mean + 1.5]
+                    low_load = group_df[group_df["Notdienst / 40h"] < group_mean - 1.5]
+                    
+                    high_names = ", ".join(high_load["Name"].tolist()) if not high_load.empty else "-"
+                    low_names = ", ".join(low_load["Name"].tolist()) if not low_load.empty else "-"
+                    
+                    recommendations.append({
+                        "group": beruf.value,
+                        "spread": group_spread,
+                        "high_load": high_names,
+                        "low_load": low_names,
+                    })
             
-            # Find outliers (>1.5 std from mean)
-            df_outliers_high = df_stats[df_stats["Notdienst / 40h"] > mean_notdienst + 1.5 * std_notdienst]
-            df_outliers_low = df_stats[df_stats["Notdienst / 40h"] < mean_notdienst - 1.5 * std_notdienst]
-            
-            if not df_outliers_high.empty:
-                st.warning("**Überdurchschnittlich belastet:**")
-                for _, row in df_outliers_high.iterrows():
-                    st.write(f"- {row['Name']} ({row['Kürzel']}): {row['Notdienst / 40h']:.2f} Notdienst/40h")
-            
-            if not df_outliers_low.empty:
-                st.info("**Unterdurchschnittlich eingeteilt:**")
-                for _, row in df_outliers_low.iterrows():
-                    st.write(f"- {row['Name']} ({row['Kürzel']}): {row['Notdienst / 40h']:.2f} Notdienst/40h")
-            
-            if df_outliers_high.empty and df_outliers_low.empty:
-                st.success("✅ Keine signifikanten Ausreißer - Verteilung ist ausgewogen.")
+            if recommendations:
+                st.warning("**Ungleichgewicht innerhalb von Gruppen:**")
+                for rec in recommendations:
+                    st.markdown(f"""
+                    **{rec['group']}** (Spread: {rec['spread']:.2f}):
+                    - Überlastet: {rec['high_load']}
+                    - Unterlastet: {rec['low_load']}
+                    """)
+            else:
+                st.success("✅ Alle Gruppen haben eine ausgewogene interne Verteilung (Spread ≤ 3.0).")
             
             # Breakdown explanation
             with st.expander("ℹ️ Berechnungslogik"):
@@ -571,11 +680,19 @@ def page_plan_anzeigen() -> None:
                 **Notdienst Gesamt** = Wochenend-Schichten + Effektive Nächte
                 
                 - **Wochenend-Schichten**: Jede WE-Schicht zählt 1×
-                - **Effektive Nächte**: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
+                - **Effektive Nächte**: 
+                  - TFA/Intern: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
+                  - Azubi: Immer 1.0× (auch bei Paarung)
                 
                 **FTE-Normalisierung**: $\frac{\text{Notdienst Gesamt}}{\text{Vertragsstunden}} \times 40$
                 
-                Dies ermöglicht fairen Vergleich zwischen Vollzeit (40h) und Teilzeit.
+                **Fairness-Schwellwert**: Eine Abweichung von ≥2.0 normalisierte Schichten 
+                vom Gruppendurchschnitt wird als unfair markiert.
+                
+                **Farbkodierung**: Vergleich mit dem Durchschnitt der eigenen Berufsgruppe:
+                - 🔴 Rot: ≥1.5 über Durchschnitt
+                - 🟡 Gelb: Innerhalb ±1.5
+                - 🟢 Grün: ≥1.5 unter Durchschnitt
                 """)
 
     # --- TAB 3: VALIDATION ---
@@ -598,12 +715,16 @@ def page_plan_anzeigen() -> None:
                 "Multiple Azubis on Night": "Max. 1 Azubi pro Nachtschicht",
                 "Intern Night No Non-Azubi": "Mind. 1 TFA/Intern pro Nacht (So-Mo, Mo-Di)",
                 "Night Pairing Required": "Mitarbeiter ohne 'nd_alone' nur im Team",
+                "ND Alone Improper Pairing": "nd_alone=True muss alleine arbeiten",
                 "Min Consecutive Nights": "TFA/Interns: mind. 2 aufeinanderfolgende Nächte",
                 "Night/Day Conflict": "Ruhezeiten: Kein Tagdienst an/nach Nachtdienst",
                 "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
+                "Weekend Isolation": "Wochenend-Schichten nicht in Blöcken",
                 "ND Exception Weekday": "Beachtung blockierter Wochentage (nd_exceptions)",
                 "Shift Eligibility": "Qualifikation für Schicht",
                 "Shift Coverage": "Mindestbesetzung (Nachts)",
+                "Abteilung Same Night": "Gleiche Abteilung (OP/Station) nicht zusammen nachts",
+                "Abteilung Consecutive Days": "Gleiche Abteilung (OP/Station) nicht aufeinander folgend",
             }
 
             # Map violations

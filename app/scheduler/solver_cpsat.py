@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from ortools.sat.python import cp_model
 
 from .models import (
+    Abteilung,
     Assignment,
     Beruf,
     Schedule,
@@ -299,6 +300,10 @@ def generate_schedule_cpsat(
     
     # 9. Non-Azubi min consecutive nights: TFA/Intern must work at least 2 consecutive nights
     _add_min_consecutive_nights_constraints(model, x, staff_list, night_shifts)
+    
+    # 10. Abteilung constraint: employees in same abteilung (op or station) cannot work 
+    # night shifts together or on consecutive days (prevents capacity shortages)
+    _add_abteilung_night_constraints(model, x, staff_list, night_shifts)
 
     # =========================================================================
     # FAIRNESS OBJECTIVE
@@ -644,6 +649,77 @@ def _add_min_consecutive_nights_constraints(
                 # No adjacent nights available - this non-Azubi cannot work this night
                 # (would result in isolated single night)
                 model.Add(var == 0)
+
+
+def _add_abteilung_night_constraints(
+    model: cp_model.CpModel,
+    x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
+    staff_list: list[Staff],
+    night_shifts: list[Shift],
+) -> None:
+    """Enforce abteilung separation on night shifts.
+    
+    Employees in the same abteilung (op or station) cannot:
+    1. Work the same night shift together
+    2. Work consecutive night shifts (day N and day N+1)
+    
+    This prevents capacity shortages in specialized departments.
+    Employees in abteilung="other" are exempt from this rule.
+    """
+    sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
+    
+    # Only apply to staff in "op" or "station" abteilung
+    restricted_abteilungen = {Abteilung.OP, Abteilung.STATION}
+    
+    # Group staff by abteilung
+    staff_by_abteilung: dict[Abteilung, list[Staff]] = defaultdict(list)
+    for staff in staff_list:
+        if staff.nd_possible and staff.abteilung in restricted_abteilungen:
+            staff_by_abteilung[staff.abteilung].append(staff)
+    
+    # For each restricted abteilung, add constraints
+    for abteilung, abt_staff in staff_by_abteilung.items():
+        if len(abt_staff) < 2:
+            continue  # No constraint needed if only 1 person in abteilung
+        
+        # 1. Same night constraint: no two staff from same abteilung on same night
+        for shift in sorted_nights:
+            vars_for_shift = []
+            for staff in abt_staff:
+                key = (staff.identifier, shift.shift_date, shift.shift_type)
+                if key in x:
+                    vars_for_shift.append(x[key])
+            
+            # At most 1 person from this abteilung per night
+            if len(vars_for_shift) >= 2:
+                model.Add(sum(vars_for_shift) <= 1)
+        
+        # 2. Consecutive nights constraint: no two staff from same abteilung on consecutive days
+        for i, shift in enumerate(sorted_nights):
+            # Find next day's night shifts
+            next_day = shift.shift_date + timedelta(days=1)
+            next_day_shifts = [s for s in sorted_nights if s.shift_date == next_day]
+            
+            if not next_day_shifts:
+                continue
+            
+            # For each pair of staff in same abteilung
+            for staff1 in abt_staff:
+                key1 = (staff1.identifier, shift.shift_date, shift.shift_type)
+                if key1 not in x:
+                    continue
+                
+                for staff2 in abt_staff:
+                    if staff1.identifier == staff2.identifier:
+                        continue  # Same person, handled by single-assignment constraint
+                    
+                    for next_shift in next_day_shifts:
+                        key2 = (staff2.identifier, next_shift.shift_date, next_shift.shift_type)
+                        if key2 not in x:
+                            continue
+                        
+                        # staff1 on day N and staff2 on day N+1 cannot both be true
+                        model.Add(x[key1] + x[key2] <= 1)
 
 
 def _add_group_fairness_objective(

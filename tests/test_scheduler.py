@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from app.scheduler.models import Beruf, Staff, ShiftType, generate_quarter_shifts
+from app.scheduler.models import Abteilung, Beruf, Staff, ShiftType, generate_quarter_shifts
 from app.scheduler.solver import SolverBackend, generate_schedule
 from app.scheduler.validator import validate_schedule
 
@@ -458,6 +458,244 @@ def test_cpsat_fairness_within_tolerance() -> None:
         # Note: Stricter pairing constraints (nd_alone=True must work alone, 
         # single-capacity Sun-Mon/Mon-Tue) limit solution space significantly
         assert azubi_range < 3.0, f"Azubi FTE range too wide: {azubi_range:.2f}"
+
+
+def test_abteilung_same_night_constraint() -> None:
+    """Test that staff from same abteilung (op/station) cannot work same night."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    # Two OP staff on the same night
+    staff_op1 = Staff(
+        name="OP Staff 1",
+        identifier="OP1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.OP,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+    staff_op2 = Staff(
+        name="OP Staff 2",
+        identifier="OP2",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.OP,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+
+    # Schedule with both OP staff on same night (should violate)
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 1),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="OP1",
+                is_paired=True,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="OP2",
+                is_paired=True,
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [staff_op1, staff_op2])
+
+    # Should have abteilung same night violation
+    abt_violations = [
+        v for v in validation.hard_violations if v.constraint_name == "Abteilung Same Night"
+    ]
+    assert len(abt_violations) > 0, "Should detect same abteilung on same night"
+
+
+def test_abteilung_consecutive_days_constraint() -> None:
+    """Test that staff from same abteilung (op/station) cannot work consecutive nights."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    # Two station staff on consecutive nights
+    staff_station1 = Staff(
+        name="Station Staff 1",
+        identifier="ST1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.STATION,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+    staff_station2 = Staff(
+        name="Station Staff 2",
+        identifier="ST2",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.STATION,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+
+    # Schedule with station staff on consecutive nights (should violate)
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 2),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="ST1",
+                is_paired=False,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_WED_THU, shift_date=date(2026, 4, 2)),
+                staff_identifier="ST2",
+                is_paired=False,
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [staff_station1, staff_station2])
+
+    # Should have abteilung consecutive days violation
+    abt_violations = [
+        v for v in validation.hard_violations if v.constraint_name == "Abteilung Consecutive Days"
+    ]
+    assert len(abt_violations) > 0, "Should detect same abteilung on consecutive nights"
+
+
+def test_abteilung_other_exempt() -> None:
+    """Test that staff with abteilung='other' are exempt from abteilung constraints."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    # Two staff with abteilung=other on same night (should NOT violate)
+    staff_other1 = Staff(
+        name="Other Staff 1",
+        identifier="OT1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.OTHER,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+    staff_other2 = Staff(
+        name="Other Staff 2",
+        identifier="OT2",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.OTHER,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+
+    # Schedule with both 'other' staff on same night (should be allowed)
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 1),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="OT1",
+                is_paired=True,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="OT2",
+                is_paired=True,
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [staff_other1, staff_other2])
+
+    # Should NOT have abteilung violations (other is exempt)
+    abt_violations = [
+        v for v in validation.hard_violations 
+        if "Abteilung" in v.constraint_name
+    ]
+    assert len(abt_violations) == 0, "abteilung=other should be exempt from abteilung constraints"
+
+
+def test_abteilung_cross_department_allowed() -> None:
+    """Test that staff from different abteilungen can work together/consecutively."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    # OP staff and station staff on same night (should be allowed)
+    staff_op = Staff(
+        name="OP Staff",
+        identifier="OP1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.OP,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+    staff_station = Staff(
+        name="Station Staff",
+        identifier="ST1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        abteilung=Abteilung.STATION,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_exceptions=[],
+    )
+
+    # Schedule with OP and station staff on same night (should be allowed)
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 1),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="OP1",
+                is_paired=True,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="ST1",
+                is_paired=True,
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [staff_op, staff_station])
+
+    # Should NOT have abteilung violations (different abteilungen)
+    abt_violations = [
+        v for v in validation.hard_violations 
+        if "Abteilung" in v.constraint_name
+    ]
+    assert len(abt_violations) == 0, "Different abteilungen should be allowed to work together"
 
 
 if __name__ == "__main__":

@@ -11,13 +11,19 @@
 | H3 | Azubis must pair with non-Azubi on nights | Safety requirement | ✅ |
 | H4 | Two Azubis can never pair on nights | Supervision requirement | ✅ |
 | H5 | nd_alone=False must be paired (regular nights) | Employee capability | ✅ |
-| H6 | nd_alone=True must work alone (regular nights) | Employee preference | ✅ |
+| H6 | nd_alone=True must work **completely alone** (regular nights) | Employee preference | ✅ |
 | H7 | Non-Azubis min 2 consecutive nights | Block scheduling | ✅ |
 | H8 | Max 1 block per 14-day window | Workload distribution | ✅ |
 | H9 | No day shift after night shift | Rest requirement | ✅ |
 | H10 | Respect nd_exceptions | Employee availability | ✅ |
 | H11 | All shifts must be covered | Operational requirement | ✅ |
 | H12 | At least 1 non-Azubi per night | Supervision requirement | ✅ |
+| H13 | Max 1 shift per person per day | Workload limit | ✅ |
+| H14 | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional Azubi | Vet on-site requirement | ✅ |
+| H15 | Weekend shifts isolated (not in blocks) | Prevents fatigue | ✅ |
+| H16 | Sa 10-22, So 8-20, So 10-22: TFA only | Role eligibility | ✅ |
+| H17 | Abteilung (op/station) cannot work same night | Capacity protection | ✅ |
+| H18 | Abteilung (op/station) cannot work consecutive nights | Capacity protection | ✅ |
 
 ### Soft Constraints (Optimized)
 
@@ -25,49 +31,78 @@
 |----|------------|--------|-------------|
 | S1 | Proportional to hours | Squared deviation | ✅ |
 | S2 | Within-group fairness (combined Notdienste) | StdDev × 10 | ✅ |
-| S3 | Effective nights (paired=0.5) | Built into counting | ✅ |
+| S3 | Effective nights (TFA/Intern: paired=0.5, Azubi: always 1.0) | Built into counting | ✅ |
 | S4 | nd_max_consecutive not exceeded | 100 per violation | ✅ |
+
+---
+
+## Staff Data Model
+
+```python
+class Staff:
+    name: str              # Full name
+    identifier: str        # Short code (e.g., "Jul", "AA")
+    adult: bool            # True if ≥18 years
+    hours: int             # Weekly contracted hours (18-40)
+    beruf: Beruf           # TFA, Azubi, or Intern
+    abteilung: Abteilung   # station, op, or other (NEW)
+    reception: bool        # Can work reception/Anmeldung
+    nd_possible: bool      # Can do night shifts at all
+    nd_alone: bool         # Must work alone on regular nights
+    nd_max_consecutive: int | None  # Max consecutive nights (soft limit)
+    nd_exceptions: list[int]  # Weekdays excluded (1=Mon, 7=Sun)
+```
+
+### Abteilung Enum
+
+| Value | Description | Constraint |
+|-------|-------------|------------|
+| `station` | Station/Ward staff | Cannot pair with other station staff on nights |
+| `op` | Operating room staff | Cannot pair with other OP staff on nights |
+| `other` | General/unassigned | **Exempt** from abteilung constraints |
+
+---
+
+## Key Constraint Details
+
+### nd_alone Behavior
+
+- **nd_alone=True**: Staff MUST work **completely alone** on regular nights (Tue-Wed through Sat-Sun). No pairing allowed.
+- **nd_alone=False**: Staff MUST be paired with another person on regular nights.
+- **Sun-Mon / Mon-Tue**: Vet is on-site, so nd_alone rules don't apply. Exactly 1 non-Azubi required, optional Azubi.
+
+### Azubi Effective Nights
+
+Azubis **always count as 1.0 effective night**, even when paired. This ensures fairness tracking reflects their full participation, since they cannot lead a shift.
+
+### Weekend Isolation
+
+Weekend shifts (Sa/So) must always be **single-shift blocks** — they cannot be adjacent to any other shift for the same person. This prevents weekend shifts from being part of multi-day fatigue blocks.
+
+### Abteilung Night Constraint
+
+To prevent capacity shortages in specialized departments:
+1. **Same night**: Two staff from the same `abteilung` (op or station) cannot work the same night shift
+2. **Consecutive nights**: Two staff from the same `abteilung` cannot work on consecutive calendar days (e.g., if Alice from OP works Monday night, Bob from OP cannot work Tuesday night)
+
+**Exempt**: Staff with `abteilung=other` are not subject to these constraints.
 
 ---
 
 ## Stakeholder Analysis: Fairness Limitations
 
-### Current Fairness Results (Q2/2026)
+### Fairness Calculation
 
-| Group | Metric | Range | Tolerance | Status |
-|-------|--------|-------|-----------|--------|
-| **TFA** | Weekend FTE | 1.74 - 2.67 | ±1 | ⚠️ Slightly wide |
-| **TFA** | Night FTE | 3.00 - 6.67 | ±1 | ❌ Exceeds tolerance |
-| **Azubi** | Weekend FTE | 3.00 - 3.00 | ±1 | ✅ Perfect |
-| **Azubi** | Night FTE | 0.50 - 0.50 | ±1 | ✅ Perfect |
-| **TA** | Night FTE | 1.00 - 2.00 | ±1 | ✅ Within tolerance |
+Fairness is now calculated **per job group** (TFA, Azubi, Intern) rather than globally:
+- Threshold for unfair: ≥2 normalized shifts deviation from group mean
+- Color coding: Green (underburdened), Yellow (normal), Red (overburdened)
 
 ### Root Cause: Restrictive Individual Constraints
 
-The TFA night FTE range (3.00 - 6.67) exceeds tolerance **not due to algorithm failure**, but because certain employees have highly restrictive availability.
-
----
-
-## Staff Availability Analysis
-
-### TFA Night Availability (21 night-capable TFAs)
-
-| Availability | Staff | Night FTE Result |
-|--------------|-------|------------------|
-| **1/7 nights** | Julia Hausmann (20h) | 6.00 FTE |
-| **3/7 nights** | Sarah Heiter (30h), Anke Penzin (23h), Tiago Santos (40h) | 4.35-6.00 FTE |
-| **5/7 nights** | Elena Wottrich (32h) | 3.12 FTE |
-| **7/7 nights** | 16 other TFAs | 3.00-5.00 FTE |
-
-### Detailed Constraint Analysis
-
-| Employee | Hours | nd_exceptions | Available Nights | nd_alone | nd_count | Impact |
-|----------|-------|---------------|------------------|----------|----------|--------|
-| **Julia Hausmann** | 20 | [1,2,3,4,6,7] | Fri-Sat only (1/7) | solo | [1] | Cannot achieve fairness - only 2 nights/quarter possible |
-| **Sarah Heiter** | 30 | [1,2,3,4] | Fri-Sat-Sun (3/7) | solo | [3] | Limited, but 3-night blocks help |
-| **Anke Penzin** | 23 | [1,2,3,4] | Fri-Sat-Sun (3/7) | solo | [2] | Part-time + restrictions = high FTE |
-| **Tiago Santos** | 40 | [1,2,3,4] | Fri-Sat-Sun (3/7) | solo | [2,3] | Weekend-only nights |
-| **Caroline Bauer** | 18 | [] | All nights (7/7) | solo | [3] | Part-time causes high FTE despite full availability |
+High FTE variance within groups is often caused by:
+1. **nd_exceptions**: Employees available only on certain weekdays
+2. **Part-time hours**: Same absolute shifts = higher FTE-normalized count
+3. **nd_alone restrictions**: Solo workers have fewer pairing options
 
 ---
 
@@ -77,82 +112,37 @@ The TFA night FTE range (3.00 - 6.67) exceeds tolerance **not due to algorithm f
 
 **Accept that perfect fairness is impossible** given individual employee contracts and preferences.
 
-**Rationale:**
-- Julia Hausmann's exceptions are presumably for valid personal reasons
-- Forcing more nights would violate her stated availability
-- The algorithm is optimal *given the constraints*
+### Option B: Exempt Restricted Employees
 
-**Action:** Document that employees with restrictive nd_exceptions will appear "unfair" in FTE metrics but are working their maximum available shifts.
+Exclude employees with <4/7 night availability from fairness metrics.
 
-### Option B: Exempt Restricted Employees from Fairness Calculation
+### Option C: Use Absolute Counts
 
-**Exclude** employees with <4/7 night availability from fairness metrics.
-
-**Affected:** Julia Hausmann, Sarah Heiter, Anke Penzin, Tiago Santos
-
-**Impact:**
-- Remaining TFA Night FTE range: 3.00 - 5.00 (within ±2)
-- Fairness metrics become meaningful for comparable employees
-
-**Implementation:** Add `fairness_exempt: bool` field to Staff model.
-
-### Option C: Relax Individual Constraints
-
-Discuss with affected employees whether their nd_exceptions can be reduced.
-
-| Employee | Current | Proposed | Gain |
-|----------|---------|----------|------|
-| Julia Hausmann | [1,2,3,4,6,7] | [1,2,3,4,7] | +1 night (Thu-Fri) |
-| Sarah Heiter | [1,2,3,4] | [1,2,3] | +1 night (Thu-Fri) |
-
-**Caution:** These are personal preferences that may have valid reasons (childcare, second job, etc.)
-
-### Option D: Adjust Part-Timer Expectations
-
-**Recognize** that part-timers (18-23h) will always show higher FTE-normalized metrics.
-
-**Math:**
-- Julia (20h) with 3 nights = 3/20×40 = **6.0 FTE**
-- Full-timer (40h) with 3 nights = 3/40×40 = **3.0 FTE**
-
-This is mathematically unavoidable if they work the same absolute number of shifts.
-
-**Option:** Use absolute counts instead of FTE for fairness, accepting that part-timers work fewer total shifts.
+Display absolute shift counts instead of FTE-normalized values for part-timers.
 
 ---
 
-## Decision Matrix
+## Appendix: Constraint Violation Examples
 
-| Option | Fairness Impact | Employee Impact | Implementation Effort |
-|--------|-----------------|-----------------|----------------------|
-| A: Accept | None | None | None |
-| B: Exempt | Improved metrics | May feel excluded | Low (model change) |
-| C: Relax | Improved actual | Potential pushback | Medium (negotiation) |
-| D: Absolute | Different metric | Part-timers favored | Low (UI change) |
-
----
-
-## Appendix: Full Constraint Violation Examples
-
-### Block Constraint (H6) Violation Example
+### Abteilung Same Night Violation
 ```
-Employee: AA (Anika Alles)
-Block 1: 2026-04-04 to 2026-04-07 (Sat-Sun-Mon-Tue)
-Block 2: 2026-04-11 (Sat)
-Gap: 7 days < 14 days → VIOLATION
-```
-
-### Night Pairing (H4) Violation Example
-```
-Employee: Bax (Lindsay Bax, nd_alone=False)
+Staff: SH (Sabrina Hafer, abteilung=op)
+Staff: JH (Jacqueline Hülsmann, abteilung=op)
 Shift: N_Di-Mi on 2026-04-07
-Assigned: Bax alone (no partner)
-→ VIOLATION (must be paired or TA present)
+→ VIOLATION (two OP staff on same night)
 ```
 
-### nd_alone TA Night (H5) Violation Example
+### Abteilung Consecutive Days Violation
+```
+Staff: LB (Lisanne Bayerl, abteilung=station) on N_Di-Mi (2026-04-07)
+Staff: SG (Stefanie Gelhardt, abteilung=station) on N_Mi-Do (2026-04-08)
+→ VIOLATION (two station staff on consecutive nights)
+```
+
+### nd_alone Improper Pairing Violation
 ```
 Employee: Jul (Julia Hausmann, nd_alone=True)
-Shift: N_So-Mo on 2026-04-05
-→ VIOLATION (solo worker assigned to TA-present night)
+Shift: N_Di-Mi on 2026-04-07
+Assigned with: AA (Anika Alles)
+→ VIOLATION (nd_alone=True must work completely alone on regular nights)
 ```
