@@ -367,7 +367,7 @@ def page_plan_anzeigen() -> None:
             st.dataframe(
                 df_calendar, 
                 height=700, 
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Datum": st.column_config.TextColumn("Datum")
                 }
@@ -415,7 +415,7 @@ def page_plan_anzeigen() -> None:
             st.markdown("#### Detailansicht")
             st.dataframe(
                 df_stats.style.background_gradient(subset=["WE / 40h", "Nacht / 40h"], cmap="YlOrRd"), 
-                use_container_width=True, 
+                width="stretch", 
                 height=400
             )
 
@@ -436,7 +436,7 @@ def page_plan_anzeigen() -> None:
                     st.error(f"Fehler bei Berechnung der Statistiken für {metric}: {e}")
             
             if summary_dfs:
-                st.dataframe(pd.concat(summary_dfs, axis=1), use_container_width=True)
+                st.dataframe(pd.concat(summary_dfs, axis=1), width="stretch")
 
     # --- TAB 3: VALIDATION ---
     with tab_validation:

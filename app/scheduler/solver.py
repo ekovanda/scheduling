@@ -5,7 +5,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import date, timedelta
 
-from .models import Assignment, Schedule, Shift, ShiftType, Staff, generate_quarter_shifts
+from .models import Assignment, Beruf, Schedule, Shift, ShiftType, Staff, generate_quarter_shifts
 from .validator import validate_schedule
 
 
@@ -27,6 +27,40 @@ class SolverResult:
     def get_best_schedule(self) -> Schedule | None:
         """Get the best schedule (lowest penalty)."""
         return self.schedules[0] if self.schedules else None
+
+
+def _calculate_fte_load(
+    staff: Staff,
+    staff_assignments: dict[str, list[Assignment]],
+    shift_type: str = "all",
+) -> float:
+    """Calculate FTE-normalized load for a staff member.
+    
+    Args:
+        staff: Staff member
+        staff_assignments: Current assignment map
+        shift_type: "all", "night", or "weekend"
+    
+    Returns:
+        Load normalized to 40h FTE (higher = more loaded)
+    """
+    assignments = staff_assignments.get(staff.identifier, [])
+    
+    if shift_type == "night":
+        # Effective nights: paired = 0.5, solo = 1.0
+        count = sum(0.5 if a.is_paired else 1.0 for a in assignments if a.shift.is_night_shift())
+    elif shift_type == "weekend":
+        count = sum(1 for a in assignments if a.shift.is_weekend_shift())
+    else:
+        # Total: weekends + effective nights
+        weekend_count = sum(1 for a in assignments if a.shift.is_weekend_shift())
+        night_count = sum(0.5 if a.is_paired else 1.0 for a in assignments if a.shift.is_night_shift())
+        count = weekend_count + night_count
+    
+    if staff.hours <= 0:
+        return float('inf')  # Avoid division by zero
+    
+    return (count / staff.hours) * 40
 
 
 def generate_schedule(
@@ -72,8 +106,11 @@ def generate_schedule(
     candidates: list[tuple[Schedule, float]] = [(schedule, best_penalty)]
 
     for iteration in range(max_iterations):
-        # Try random swap or shift move
-        if random.random() < 0.5:
+        # Choose move type: 40% fairness-targeted, 30% swap, 30% shift
+        r = random.random()
+        if r < 0.4:
+            new_schedule = _try_fairness_move(schedule, staff_list)
+        elif r < 0.7:
             new_schedule = _try_swap_move(schedule, staff_list)
         else:
             new_schedule = _try_shift_move(schedule, staff_list)
@@ -207,8 +244,8 @@ def _greedy_assignment(
             if minors:
                 eligible = minors
 
-        # Pick staff with fewest assignments (fairness)
-        selected = min(eligible, key=lambda s: len(staff_assignments[s.identifier]))
+        # Pick staff with LOWEST FTE-normalized weekend load (fairness)
+        selected = min(eligible, key=lambda s: _calculate_fte_load(s, staff_assignments, "weekend"))
         assignment = Assignment(shift=shift, staff_identifier=selected.identifier)
         schedule.assignments.append(assignment)
         staff_assignments[selected.identifier].append(assignment)
@@ -227,8 +264,8 @@ def _greedy_assignment(
         if not eligible:
             continue
 
-        # Pick staff with fewest assignments
-        selected = min(eligible, key=lambda s: len(staff_assignments[s.identifier]))
+        # Pick staff with LOWEST FTE-normalized weekend load (fairness)
+        selected = min(eligible, key=lambda s: _calculate_fte_load(s, staff_assignments, "weekend"))
         assignment = Assignment(shift=shift, staff_identifier=selected.identifier)
         schedule.assignments.append(assignment)
         staff_assignments[selected.identifier].append(assignment)
@@ -329,8 +366,8 @@ def _greedy_assignment(
                 and _is_block_compatible(s.identifier, d, staff_assignments)
             ]
             
-            # Sort by fairness
-            eligible_new.sort(key=lambda s: len(staff_assignments[s.identifier]))
+            # Sort by FTE-normalized night load (fairness)
+            eligible_new.sort(key=lambda s: _calculate_fte_load(s, staff_assignments, "night"))
             
             for s in eligible_new:
                 if s not in assigned_staff:
@@ -415,6 +452,65 @@ def _try_shift_move(schedule: Schedule, staff_list: list[Staff]) -> Schedule | N
     assignment.staff_identifier = new_staff.identifier
 
     return new_schedule
+
+
+def _try_fairness_move(schedule: Schedule, staff_list: list[Staff]) -> Schedule | None:
+    """Targeted move: take shift from most overloaded and give to least loaded eligible."""
+    if not schedule.assignments:
+        return None
+
+    new_schedule = deepcopy(schedule)
+    staff_dict = {s.identifier: s for s in staff_list}
+
+    # Build current assignment map
+    staff_assignments: dict[str, list[Assignment]] = defaultdict(list)
+    for a in new_schedule.assignments:
+        staff_assignments[a.staff_identifier].append(a)
+
+    # Find most overloaded staff (by FTE load)
+    overloaded_candidates = []
+    for staff in staff_list:
+        load = _calculate_fte_load(staff, staff_assignments, "all")
+        assignments = staff_assignments.get(staff.identifier, [])
+        if assignments:
+            overloaded_candidates.append((staff, load, assignments))
+
+    if not overloaded_candidates:
+        return None
+
+    # Sort by load descending (most overloaded first)
+    overloaded_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    # Try to reassign a shift from the most overloaded
+    for overloaded_staff, _, assignments in overloaded_candidates[:5]:  # Top 5 overloaded
+        # Pick a random assignment from this person
+        if not assignments:
+            continue
+        victim_assignment = random.choice(assignments)
+
+        # Find eligible replacements with lower load
+        current_load = _calculate_fte_load(overloaded_staff, staff_assignments, "all")
+        
+        eligible = [
+            s for s in staff_list
+            if s.can_work_shift(victim_assignment.shift.shift_type, victim_assignment.shift.shift_date)
+            and s.identifier != overloaded_staff.identifier
+            and _calculate_fte_load(s, staff_assignments, "all") < current_load - 0.5  # Must be meaningfully lower
+        ]
+
+        if eligible:
+            # Pick the least loaded eligible
+            new_staff = min(eligible, key=lambda s: _calculate_fte_load(s, staff_assignments, "all"))
+            
+            # Find and update the assignment in new_schedule
+            for a in new_schedule.assignments:
+                if (a.shift.shift_date == victim_assignment.shift.shift_date 
+                    and a.shift.shift_type == victim_assignment.shift.shift_type
+                    and a.staff_identifier == overloaded_staff.identifier):
+                    a.staff_identifier = new_staff.identifier
+                    return new_schedule
+
+    return None
 
 
 def _acceptance_probability(
