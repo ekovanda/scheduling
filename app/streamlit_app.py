@@ -79,7 +79,7 @@ def page_load_csv() -> None:
             # Show preview
             st.markdown("### Vorschau")
             df = pd.DataFrame([s.model_dump() for s in staff_list])
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="content")
 
             # Cleanup
             temp_path.unlink(missing_ok=True)
@@ -143,7 +143,7 @@ def page_personal() -> None:
     # Display table
     st.markdown(f"### Mitarbeiter ({len(filtered)} von {len(staff_list)})")
     df = pd.DataFrame([s.model_dump() for s in filtered])
-    st.dataframe(df, use_container_width=True, height=600)
+    st.dataframe(df, width="content", height=600)
 
     # Statistics
     st.markdown("---")
@@ -247,7 +247,7 @@ def page_plan_erstellen() -> None:
 
     # Generate button
     st.markdown("---")
-    if st.button("🚀 Plan generieren", type="primary", use_container_width=True):
+    if st.button("🚀 Plan generieren", type="primary", width="content"):
         with st.spinner("⏳ Generiere Dienstplan..."):
             try:
                 staff_list: list[Staff] = st.session_state.staff_list
@@ -306,8 +306,8 @@ def page_plan_erstellen() -> None:
 
 
 def page_plan_anzeigen() -> None:
-    """Page: Display generated schedule."""
-    st.title("📅 Plan anzeigen")
+    """Page: One-stop shop for viewing, analyzing and validating the schedule."""
+    st.title("📅 Dienstplan Übersicht")
 
     if st.session_state.schedule is None:
         st.warning("⚠️ Bitte zuerst einen Plan erstellen (Seite 'Plan erstellen')")
@@ -315,79 +315,192 @@ def page_plan_anzeigen() -> None:
 
     schedule = st.session_state.schedule
     staff_list: list[Staff] = st.session_state.staff_list
-    validation = st.session_state.validation_result
+    validation_result = st.session_state.validation_result
 
-    # Validation status
-    if validation:
-        if validation.is_valid():
-            st.success(f"✅ Plan ist gültig (Soft Penalty: {validation.soft_penalty:.2f})")
+    # Tabs for different views
+    tab_calendar, tab_stats, tab_validation = st.tabs(
+        ["📆 Kalender", "📊 Fairness & Statistik", "✅ Validierung"]
+    )
+
+    # --- TAB 1: CALENDAR VIEW ---
+    with tab_calendar:
+        st.markdown("### Kompaktansicht")
+        
+        # Matrix: Date x ShiftType -> Staff
+        # Handle paired assignments (combine names)
+        # 1. Map (Date, Shift) -> [Staff1, Staff2]
+        shift_map = {}
+        unique_dates = sorted(list(set(a.shift.shift_date for a in schedule.assignments)))
+        unique_shifts = sorted(list(set(a.shift.shift_type.value for a in schedule.assignments)))
+        
+        for assignment in schedule.assignments:
+            key = (assignment.shift.shift_date, assignment.shift.shift_type.value)
+            if key not in shift_map:
+                shift_map[key] = []
+            shift_map[key].append(assignment.staff_identifier)
+
+        # 2. Build rows
+        calendar_rows = []
+        for d in unique_dates:
+            row = {"Datum": d.strftime("%d.%m.%Y (%a)")}
+            # Only populate columns relevant for this day to avoid sparse mess? 
+            # Actually having fixed columns is better for eyes.
+            # We iterate all potential shift types found in schedule
+            for s_name in unique_shifts:
+                staff_ids = shift_map.get((d, s_name), [])
+                if staff_ids:
+                    row[s_name] = " + ".join(staff_ids)
+                else:
+                    # Leave empty or specific marker if shift didn't exist that day?
+                    # Ideally pandas NaN, displayed as empty
+                    pass
+            calendar_rows.append(row)
+
+        if calendar_rows:
+            df_calendar = pd.DataFrame(calendar_rows)
+            df_calendar.set_index("Datum", inplace=True)
+            # Reorder columns: Sat first, then Sun, then Nights? 
+            # Or just alpha sorted, or sorted by ShiftType definition order if possible.
+            # For now, alpha sorted columns are enough.
+            df_calendar = df_calendar.reindex(sorted(df_calendar.columns), axis=1)
+            
+            st.dataframe(
+                df_calendar, 
+                height=700, 
+                use_container_width=True,
+                column_config={
+                    "Datum": st.column_config.TextColumn("Datum")
+                }
+            )
         else:
-            st.error(f"❌ Plan verletzt {len(validation.hard_violations)} Hard Constraints")
-            with st.expander("Constraint-Verletzungen anzeigen"):
-                for violation in validation.hard_violations[:20]:
-                    st.text(f"• {violation}")
+            st.info("Keine Einträge.")
 
-    # Statistics
-    st.markdown("### Statistik")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Zuweisungen gesamt", len(schedule.assignments))
-    with col2:
-        weekend_count = sum(1 for a in schedule.assignments if a.shift.is_weekend_shift())
-        st.metric("Wochenend-Schichten", weekend_count)
-    with col3:
-        night_count = sum(1 for a in schedule.assignments if a.shift.is_night_shift())
-        st.metric("Nachtdienste", night_count)
-    with col4:
-        st.metric("Zeitraum", f"{(schedule.quarter_end - schedule.quarter_start).days} Tage")
+    # --- TAB 2: STATISTICS & FAIRNESS ---
+    with tab_stats:
+        st.markdown("### Fairness-Analyse (FTE skalierte Metriken)")
+        st.markdown(r"Die Metriken sind auf `40h` Vollzeit skaliert: $\text{FTE-Score} = \frac{\text{Anzahl}}{\text{Stunden}} \times 40$")
+        
+        if staff_list:
+            staff_stats = []
+            for staff in staff_list:
+                # Raw counts
+                weekends = schedule.count_weekend_shifts(staff.identifier)
+                effective_nights = schedule.count_effective_nights(staff.identifier)
+                
+                # FTE Scaling
+                if staff.hours > 0:
+                    weekend_fte = (weekends / staff.hours) * 40
+                    night_fte = (effective_nights / staff.hours) * 40
+                else:
+                    weekend_fte = 0
+                    night_fte = 0
+                
+                staff_stats.append(
+                    {
+                        "Name": staff.name,
+                        "Beruf": staff.beruf.value,
+                        "Stunden": staff.hours,
+                        # Raw
+                        "Wochenenden (Abs)": weekends,
+                        "Nächte (Eff)": effective_nights,
+                        # FTE Normalized
+                        "WE / 40h": round(weekend_fte, 2),
+                        "Nacht / 40h": round(night_fte, 2),
+                    }
+                )
 
-    # Per-staff counters
-    st.markdown("---")
-    st.markdown("### Notdienste pro Mitarbeiter")
+            df_stats = pd.DataFrame(staff_stats)
+            
+            # 1. Detailed Table with Heatmap
+            st.markdown("#### Detailansicht")
+            st.dataframe(
+                df_stats.style.background_gradient(subset=["WE / 40h", "Nacht / 40h"], cmap="YlOrRd"), 
+                use_container_width=True, 
+                height=400
+            )
 
-    staff_stats = []
-    for staff in staff_list:
-        weekends = schedule.count_weekend_shifts(staff.identifier)
-        effective_nights = schedule.count_effective_nights(staff.identifier)
-        total = weekends + effective_nights
+            # 2. Grouped Summary
+            st.markdown("#### Gruppen-Vergleich (Metriken skalierte auf 40h)")
+            
+            summary_dfs = []
+            for metric in ["WE / 40h", "Nacht / 40h"]:
+                try:
+                    # Select specific metric and group
+                    grouped_series = df_stats.groupby("Beruf")[metric]
+                    summary = grouped_series.agg(["count", "mean", "std", "min", "max"])
+                    summary["range"] = summary["max"] - summary["min"]
+                    # Rename columns for clarity
+                    summary.columns = [f"{c} ({metric})" for c in summary.columns]
+                    summary_dfs.append(summary)
+                except Exception as e:
+                    st.error(f"Fehler bei Berechnung der Statistiken für {metric}: {e}")
+            
+            if summary_dfs:
+                st.dataframe(pd.concat(summary_dfs, axis=1), use_container_width=True)
 
-        staff_stats.append(
-            {
-                "Name": staff.name,
-                "Kürzel": staff.identifier,
-                "Beruf": staff.beruf.value,
-                "Stunden": staff.hours,
-                "Wochenenden": weekends,
-                "Effective Nächte": f"{effective_nights:.1f}",
-                "Gesamt": f"{total:.1f}",
+    # --- TAB 3: VALIDATION ---
+    with tab_validation:
+        st.markdown("### Validierung & constraints")
+        
+        if validation_result:
+            if validation_result.is_valid():
+                st.success(f"✅ Plan ist valide! (Soft Penalty Score: {validation_result.soft_penalty:.2f})")
+            else:
+                st.error(f"❌ {len(validation_result.hard_violations)} harte Regelverstöße gefunden.")
+
+            st.markdown("#### Harte Constraints (Muss-Regeln)")
+            
+            # Map Constraint Name -> Description
+            known_constraints = {
+                "Minor Sunday Ban": "Keine Minderjährigen am Sonntag",
+                "TA Weekend Ban": "Keine Tierärzte am Wochenende",
+                "Azubi Night Pairing": "Azubi Nachtdienst nur mit Partner (außer mit TA)",
+                "Night Pairing Required": "Mitarbeiter ohne 'nd_alone' nur im Team",
+                "Night/Day Conflict": "Ruhezeiten: Kein Tagdienst an/nach Nachtdienst",
+                "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
+                "ND Exception Weekday": "Beachtung blockierter Wochentage (nd_exceptions)",
+                "Shift Eligibility": "Qualifikation für Schicht",
+                "Shift Coverage": "Mindestbesetzung (Nachts)",
             }
-        )
 
-    df_stats = pd.DataFrame(staff_stats)
-    st.dataframe(df_stats, use_container_width=True, height=400)
+            # Map violations
+            violations_map = {}
+            for v in validation_result.hard_violations:
+                if v.constraint_name not in violations_map:
+                    violations_map[v.constraint_name] = []
+                violations_map[v.constraint_name].append(v.description)
 
-    # Assignment table
-    st.markdown("---")
-    st.markdown("### Alle Zuweisungen")
+            # Check known constraints
+            col_a, col_b = st.columns(2)
+            
+            items = list(known_constraints.items())
+            mid = (len(items) + 1) // 2
+            
+            for i, (name, display_name) in enumerate(items):
+                target_col = col_a if i < mid else col_b
+                
+                with target_col:
+                    if name in violations_map:
+                        st.error(f"❌ {display_name}")
+                        with st.expander(f"Details ({len(violations_map[name])})"):
+                            for msg in violations_map[name]:
+                                st.write(f"- {msg}")
+                    else:
+                        st.success(f"✅ {display_name}")
 
-    assignment_data = []
-    for assignment in sorted(schedule.assignments, key=lambda a: a.shift.shift_date):
-        assignment_data.append(
-            {
-                "Datum": assignment.shift.shift_date.strftime("%d.%m.%Y"),
-                "Schicht": assignment.shift.shift_type.value,
-                "Mitarbeiter": assignment.staff_identifier,
-                "Paar": "Ja" if assignment.is_paired else "Nein",
-            }
-        )
+            # Unknown violations
+            active_known = set(known_constraints.keys())
+            unknown_violations = [v for v in validation_result.hard_violations if v.constraint_name not in active_known]
+            if unknown_violations:
+                st.warning(f"⚠️ Sonstige Fehler ({len(unknown_violations)})")
+                for v in unknown_violations:
+                    st.write(f"- [{v.constraint_name}] {v.description}")
 
-    df_assignments = pd.DataFrame(assignment_data)
-    st.dataframe(df_assignments, use_container_width=True, height=600)
+            st.markdown("---")
+            st.info(f"ℹ️ **Soft Penalty Score**: {validation_result.soft_penalty:.1f} (Niedriger ist fairer)")
 
-    # Manual override placeholder
-    st.markdown("---")
-    st.markdown("### Manuelle Anpassungen")
-    st.info("ℹ️ Manuelle Überarbeitung wird in einer zukünftigen Version verfügbar sein.")
+        else:
+            st.info("Bitte Plan validieren.")
 
 
 def page_export() -> None:
@@ -431,7 +544,7 @@ def page_export() -> None:
             data=csv_data,
             file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="content",
         )
 
     with col2:
@@ -445,13 +558,13 @@ def page_export() -> None:
             data=excel_data,
             file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="content",
         )
 
     # Preview
     st.markdown("---")
     st.markdown("### Vorschau")
-    st.dataframe(df_export, use_container_width=True, height=600)
+    st.dataframe(df_export, width="content", height=600)
 
 
 if __name__ == "__main__":
