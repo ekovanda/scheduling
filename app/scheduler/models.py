@@ -86,10 +86,9 @@ class Staff(BaseModel):
             weekday = shift_date.isoweekday()  # 1=Mon, 7=Sun
             if weekday in self.nd_exceptions:
                 return False
-            # nd_alone=True staff cannot work Sun-Mon or Mon-Tue (TA present)
-            if self.nd_alone and self.beruf != Beruf.TA:
-                if shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE):
-                    return False
+            # Note: nd_alone is handled at the solver constraint level, not here.
+            # nd_alone=True can work Sun-Mon/Mon-Tue (single slot with TA on-site)
+            # nd_alone=True cannot be paired with nd_alone=False on regular nights
 
         # Saturday 10-19 must be Azubi with reception=False
         if shift_type == ShiftType.SATURDAY_10_19:

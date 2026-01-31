@@ -172,25 +172,27 @@ def page_regeln() -> None:
     - **Sonntag 8-20:30**: Nur erwachsene Azubis (≥18 Jahre)
     - **Minderjährige**: Dürfen **nicht** sonntags arbeiten
     - **TAs**: Arbeiten **nie** am Wochenende
+    - **Max. 1 Schicht/Tag**: Jede Person kann max. 1 Schicht pro Tag haben
 
     ### Nachtdienste
-    - **Sonntag→Montag**: 1 TFA (TA vor Ort)
-    - **Montag→Dienstag**: 1 TFA (TA vor Ort)
+    - **Sonntag→Montag**: Genau 1 TFA (TA vor Ort, zählt als volle Nacht)
+    - **Montag→Dienstag**: Genau 1 TFA (TA vor Ort, zählt als volle Nacht)
     - **Andere Nächte**: 1-2 TFA
-    - **Azubis**: Arbeiten **nie** alleine nachts
-    - **Pairing**: Mitarbeiter mit `nd_alone=False` müssen paarweise arbeiten (außer So→Mo, Mo→Di mit TA)
-    - **TAs**: Arbeiten 2 Nächte/Monat (alleine, So→Mo & Mo→Di)
+    - **Azubis**: Arbeiten **nie** alleine nachts (außer So→Mo, Mo→Di mit TA)
+    - **nd_alone=False**: Mitarbeiter müssen paarweise arbeiten (außer So→Mo, Mo→Di)
+    - **nd_alone=True**: Mitarbeiter müssen **alleine** arbeiten (keine Paarung mit nd_alone=False)
+    - **TAs**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
 
     ### Zeitliche Constraints
-    - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster (entspannt von 3 Wochen aus Kapazitätsgründen)
+    - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster
     - **Nacht/Tag-Konflikt**: Kein Tagdienst am selben oder nächsten Tag nach Nachtschicht
     - **nd_exceptions**: Keine Nächte an Wochentagen in `nd_exceptions` (1=Mo, 7=So)
 
     ## Soft Constraints (Optimierungsziele)
 
-    - **nd_count**: Anzahl aufeinanderfolgender Nächte soll idealerweise `nd_count` entsprechen (jetzt Soft Constraint, um Lösungen zu ermöglichen)
+    - **nd_count**: Anzahl aufeinanderfolgender Nächte soll idealerweise `nd_count` entsprechen
     - **Faire Verteilung**: Notdienste proportional zu Wochenstunden
-    - **Effective Nights**: Paar-Nächte zählen 0,5× pro Person
+    - **Effective Nights**: Paar-Nächte zählen 0,5× pro Person, Solo-Nächte 1,0×
     - **Gruppen-Fairness**: Minimale Abweichung innerhalb TFA/Azubi/TA
     - **Minderjährige**: Erhalten mehr Samstage (Ausgleich für keine Sonntage)
 

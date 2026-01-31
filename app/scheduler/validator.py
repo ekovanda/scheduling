@@ -47,7 +47,9 @@ def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> Validation
     violations.extend(_check_minor_sunday_constraint(schedule, staff_dict))
     violations.extend(_check_ta_weekend_constraint(schedule, staff_dict))
     violations.extend(_check_night_pairing_constraint(schedule, staff_dict))
-    violations.extend(_check_nd_alone_ta_nights_constraint(schedule, staff_dict))
+    violations.extend(_check_nd_alone_improper_pairing(schedule, staff_dict))
+    violations.extend(_check_same_day_double_booking(schedule))
+    violations.extend(_check_ta_night_capacity(schedule))
     violations.extend(_check_same_day_next_day_constraint(schedule))
     violations.extend(_check_three_week_block_constraint(schedule))
     # violations.extend(_check_nd_count_constraint(schedule, staff_dict))  # Relaxed AND MOVED TO SOFT
@@ -80,29 +82,102 @@ def _check_minor_sunday_constraint(
     return violations
 
 
-def _check_nd_alone_ta_nights_constraint(
+def _check_same_day_double_booking(schedule: Schedule) -> list[ConstraintViolation]:
+    """Check that no person has more than 1 shift on the same day."""
+    violations: list[ConstraintViolation] = []
+
+    # Group assignments by (staff, date)
+    assignments_by_staff_date: dict[tuple[str, Any], list[Assignment]] = defaultdict(list)
+    for assignment in schedule.assignments:
+        key = (assignment.staff_identifier, assignment.shift.shift_date)
+        assignments_by_staff_date[key].append(assignment)
+
+    for (staff_id, shift_date), assignments in assignments_by_staff_date.items():
+        if len(assignments) > 1:
+            shift_types = [a.shift.shift_type.value for a in assignments]
+            violations.append(
+                ConstraintViolation(
+                    "Same Day Double Booking",
+                    f"{staff_id} assigned to multiple shifts on "
+                    f"{shift_date.strftime('%d.%m.%Y')}: {', '.join(shift_types)}",
+                )
+            )
+
+    return violations
+
+
+def _check_nd_alone_improper_pairing(
     schedule: Schedule, staff_dict: dict[str, Staff]
 ) -> list[ConstraintViolation]:
-    """Staff with nd_alone=True must NOT work Sun-Mon or Mon-Tue nights (TA present).
-    
-    On these nights, a TA is already present (scheduled separately), so the staff
-    would effectively be paired. Staff who prefer to work alone (nd_alone=True)
-    should not be assigned to these nights.
+    """Staff with nd_alone=True must work alone on regular nights (not Sun-Mon, Mon-Tue).
+
+    They cannot be paired with nd_alone=False staff on these nights.
+    Sun-Mon and Mon-Tue nights are single-capacity slots where TA is on-site externally.
     """
     violations: list[ConstraintViolation] = []
     ta_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
 
+    # Group night assignments by (date, shift_type)
+    night_assignments_by_shift: dict[tuple[Any, ShiftType], list[Assignment]] = defaultdict(list)
     for assignment in schedule.assignments:
-        if assignment.shift.shift_type in ta_present_types:
-            staff = staff_dict.get(assignment.staff_identifier)
-            if staff and staff.nd_alone and staff.beruf != Beruf.TA:
-                violations.append(
-                    ConstraintViolation(
-                        "ND Alone TA Night Conflict",
-                        f"{staff.name} (nd_alone=True) assigned to {assignment.shift.shift_type.value} on "
-                        f"{assignment.shift.shift_date.strftime('%d.%m.%Y')} where TA is present",
-                    )
+        if assignment.shift.is_night_shift():
+            key = (assignment.shift.shift_date, assignment.shift.shift_type)
+            night_assignments_by_shift[key].append(assignment)
+
+    for (shift_date, shift_type), assignments in night_assignments_by_shift.items():
+        # Skip TA-present nights (these are single-capacity, handled separately)
+        if shift_type in ta_present_types:
+            continue
+
+        if len(assignments) < 2:
+            continue
+
+        # Check if any nd_alone=True staff is paired with nd_alone=False staff
+        nd_alone_true = []
+        nd_alone_false = []
+        for a in assignments:
+            staff = staff_dict.get(a.staff_identifier)
+            if staff:
+                if staff.nd_alone:
+                    nd_alone_true.append(staff.name)
+                else:
+                    nd_alone_false.append(staff.name)
+
+        if nd_alone_true and nd_alone_false:
+            violations.append(
+                ConstraintViolation(
+                    "ND Alone Improper Pairing",
+                    f"Staff with nd_alone=True ({', '.join(nd_alone_true)}) paired with "
+                    f"nd_alone=False ({', '.join(nd_alone_false)}) on "
+                    f"{shift_date.strftime('%d.%m.%Y')} {shift_type.value}",
                 )
+            )
+
+    return violations
+
+
+def _check_ta_night_capacity(schedule: Schedule) -> list[ConstraintViolation]:
+    """Sun-Mon and Mon-Tue nights have capacity for exactly 1 person (TA is on-site externally)."""
+    violations: list[ConstraintViolation] = []
+    ta_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
+
+    # Group assignments by (date, shift_type)
+    night_assignments_by_shift: dict[tuple[Any, ShiftType], list[Assignment]] = defaultdict(list)
+    for assignment in schedule.assignments:
+        if assignment.shift.is_night_shift():
+            key = (assignment.shift.shift_date, assignment.shift.shift_type)
+            night_assignments_by_shift[key].append(assignment)
+
+    for (shift_date, shift_type), assignments in night_assignments_by_shift.items():
+        if shift_type in ta_present_types and len(assignments) > 1:
+            staff_names = [a.staff_identifier for a in assignments]
+            violations.append(
+                ConstraintViolation(
+                    "TA Night Over Capacity",
+                    f"Sun-Mon/Mon-Tue night on {shift_date.strftime('%d.%m.%Y')} has "
+                    f"{len(assignments)} people ({', '.join(staff_names)}), max is 1",
+                )
+            )
 
     return violations
 

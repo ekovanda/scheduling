@@ -111,6 +111,21 @@ def generate_schedule_cpsat(
     # HARD CONSTRAINTS
     # =========================================================================
 
+    # 0. Max 1 shift per person per day (prevents double-booking on same day)
+    shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
+    for s in shifts:
+        shifts_by_date[s.shift_date].append(s)
+    
+    for staff in staff_list:
+        for d, day_shifts in shifts_by_date.items():
+            vars_for_day = [
+                x[(staff.identifier, s.shift_date, s.shift_type)]
+                for s in day_shifts
+                if (staff.identifier, s.shift_date, s.shift_type) in x
+            ]
+            if len(vars_for_day) > 1:
+                model.Add(sum(vars_for_day) <= 1)
+
     # 1. Weekend shift coverage: exactly 1 person per shift
     for shift in weekend_shifts:
         staff_for_shift = [
@@ -121,7 +136,9 @@ def generate_schedule_cpsat(
         if staff_for_shift:
             model.Add(sum(staff_for_shift) == 1)
 
-    # 2. Night shift coverage: 1-2 people per night
+    # 2. Night shift coverage:
+    #    - Sun-Mon and Mon-Tue: exactly 1 person (TA is already on-site)
+    #    - Other nights: 1-2 people
     for shift in night_shifts:
         staff_for_shift = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
@@ -131,44 +148,75 @@ def generate_schedule_cpsat(
         if staff_for_shift:
             coverage_sum = sum(staff_for_shift)
             model.Add(coverage_sum >= 1)
-            model.Add(coverage_sum <= 2)
+            
+            # TA-present nights (Sun-Mon, Mon-Tue) have capacity for exactly 1
+            if shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE):
+                model.Add(coverage_sum == 1)
+                # These are always "solo" from scheduler perspective (TA handled externally)
+                # No is_paired linking needed - they're never paired in this model
+            else:
+                model.Add(coverage_sum <= 2)
+                
+                # Link is_paired variable: paired iff 2 people assigned (only for regular nights)
+                # Create sum_is_two variable ONCE per shift (outside staff loop)
+                sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
+                model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
+                model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
+                
+                for s in staff_list:
+                    key = (s.identifier, shift.shift_date, shift.shift_type)
+                    pair_key = (s.identifier, shift.shift_date)
+                    if key in x and pair_key in is_paired:
+                        # is_paired = sum_is_two AND assigned
+                        model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
+                        model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
+                            is_paired[pair_key].Not()
+                        )
 
-            # Link is_paired variable: paired iff 2 people assigned
-            for s in staff_list:
-                key = (s.identifier, shift.shift_date, shift.shift_type)
-                pair_key = (s.identifier, shift.shift_date)
-                if key in x and pair_key in is_paired:
-                    # is_paired[s,d] = 1 iff sum >= 2 AND x[s,d,t] = 1
-                    # Simplified: is_paired = (sum == 2) AND assigned
-                    sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}")
-                    model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
-                    model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
-                    # is_paired = sum_is_two AND x
-                    model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
-                    model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
-                        is_paired[pair_key].Not()
-                    )
-
-    # 3. nd_alone=False staff must be paired on regular nights (TA not present)
+    # 3. nd_alone constraints for regular nights (where TA is NOT present):
+    #    - nd_alone=False staff must be paired (cannot work alone)
+    #    - nd_alone=True staff must work ALONE (cannot be paired with anyone)
+    #    
+    #    This means on a regular night:
+    #    - Either 2 people with nd_alone=False work together
+    #    - OR 1 person with nd_alone=True works alone
+    #    - NEVER mix nd_alone=True with anyone else
+    
     for shift in regular_nights:
+        # Get all staff variables for this shift
+        nd_alone_true_vars = []  # Staff who MUST work alone
+        nd_alone_false_vars = []  # Staff who MUST be paired
+        
         for staff in staff_list:
-            if not staff.nd_alone:
-                key = (staff.identifier, shift.shift_date, shift.shift_type)
-                pair_key = (staff.identifier, shift.shift_date)
-                if key in x and pair_key in is_paired:
-                    # If assigned, must be paired
-                    model.AddImplication(x[key], is_paired[pair_key])
+            key = (staff.identifier, shift.shift_date, shift.shift_type)
+            if key not in x:
+                continue
+            if staff.nd_alone:
+                nd_alone_true_vars.append((staff, x[key]))
+            else:
+                nd_alone_false_vars.append((staff, x[key]))
+        
+        # Constraint: If ANY nd_alone=True staff is assigned, total coverage must be 1
+        # (they work alone, no pairing allowed)
+        for staff, var in nd_alone_true_vars:
+            # Sum of all other assignments on this shift
+            other_vars = [
+                v for (s, v) in nd_alone_true_vars + nd_alone_false_vars 
+                if s.identifier != staff.identifier
+            ]
+            if other_vars:
+                # If this nd_alone=True person is assigned, no one else can be assigned
+                for other_var in other_vars:
+                    model.Add(var + other_var <= 1)
+        
+        # Constraint: nd_alone=False staff must be paired (exactly 2 people)
+        for staff, var in nd_alone_false_vars:
+            pair_key = (staff.identifier, shift.shift_date)
+            if pair_key in is_paired:
+                # If assigned, must be paired (sum == 2)
+                model.AddImplication(var, is_paired[pair_key])
 
-    # 4. nd_alone=True staff must NOT work TA-present nights (Sun-Mon, Mon-Tue)
-    # They don't need pairing, but these nights have a TA present making them "paired"
-    for shift in ta_present_nights:
-        for staff in staff_list:
-            if staff.nd_alone and staff.beruf != Beruf.TA:
-                key = (staff.identifier, shift.shift_date, shift.shift_type)
-                if key in x:
-                    model.Add(x[key] == 0)
-
-    # 5. TA night cap: max 6 nights per quarter (2/month)
+    # 4. TA night cap: 6-9 nights per quarter (2-3/month)
     for staff in staff_list:
         if staff.beruf == Beruf.TA:
             ta_night_vars = [
@@ -177,7 +225,8 @@ def generate_schedule_cpsat(
                 if (staff.identifier, s.shift_date, s.shift_type) in x
             ]
             if ta_night_vars:
-                model.Add(sum(ta_night_vars) <= 6)
+                model.Add(sum(ta_night_vars) >= 6)
+                model.Add(sum(ta_night_vars) <= 9)
 
     # 6. Night/Day conflict: no day shift same day or next day after night shift
     for staff in staff_list:
@@ -539,12 +588,13 @@ def _extract_schedule(
                 if solver.Value(var) == 1:
                     assigned_staff.append(staff_id)
 
-        # Determine if paired (2 people on same night)
+        # Determine if paired (2 people on same regular night)
         paired = len(assigned_staff) >= 2 and shift.is_night_shift()
 
-        # Also mark as paired for TA-present nights (Sun-Mon, Mon-Tue)
+        # Sun-Mon and Mon-Tue nights are SOLO shifts (TA is external, not in this schedule)
+        # These count as full nights (is_paired=False) for fairness calculations
         if shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE):
-            paired = True  # Always paired with TA
+            paired = False
 
         for staff_id in assigned_staff:
             assignments.append(
