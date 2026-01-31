@@ -116,7 +116,16 @@ def page_personal() -> None:
 
     staff_list: list[Staff] = st.session_state.staff_list
 
+    # Search box for name/identifier
+    st.markdown("### 🔍 Mitarbeiter suchen")
+    search_query = st.text_input(
+        "Name oder Kürzel eingeben",
+        placeholder="z.B. 'Müller' oder 'MM'",
+        help="Suche nach Name oder Identifier (Groß-/Kleinschreibung wird ignoriert)",
+    )
+
     # Filters
+    st.markdown("### Filter")
     col1, col2, col3 = st.columns(3)
     with col1:
         role_filter = st.multiselect(
@@ -129,6 +138,15 @@ def page_personal() -> None:
 
     # Apply filters
     filtered = staff_list
+    
+    # Text search filter (name or identifier)
+    if search_query:
+        query_lower = search_query.lower()
+        filtered = [
+            s for s in filtered 
+            if query_lower in s.name.lower() or query_lower in s.identifier.lower()
+        ]
+    
     if role_filter:
         filtered = [s for s in filtered if s.beruf.value in role_filter]
     if adult_filter == "Erwachsene":
@@ -347,6 +365,16 @@ def page_plan_anzeigen() -> None:
     with tab_calendar:
         st.markdown("### Kompaktansicht")
         
+        # Toggle between identifier and full name display
+        show_names = st.toggle(
+            "Volle Namen anzeigen",
+            value=False,
+            help="Umschalten zwischen Kürzeln (z.B. 'MM') und vollen Namen (z.B. 'Max Müller')",
+        )
+        
+        # Build lookup map: identifier -> name
+        id_to_name = {s.identifier: s.name for s in staff_list}
+        
         # New descriptive labels for weekend shifts
         SHIFT_DISPLAY_LABELS = {
             ShiftType.SATURDAY_10_21: "Sa 10-21: Anmeldung/Ruf",
@@ -385,7 +413,13 @@ def page_plan_anzeigen() -> None:
             key = (assignment.shift.shift_date, assignment.shift.shift_type)
             if key not in shift_map:
                 shift_map[key] = []
-            shift_map[key].append(assignment.staff_identifier)
+            # Use name or identifier based on toggle
+            display_value = (
+                id_to_name.get(assignment.staff_identifier, assignment.staff_identifier)
+                if show_names
+                else assignment.staff_identifier
+            )
+            shift_map[key].append(display_value)
 
         # 2. Build rows
         calendar_rows = []
@@ -423,70 +457,126 @@ def page_plan_anzeigen() -> None:
 
     # --- TAB 2: STATISTICS & FAIRNESS ---
     with tab_stats:
-        st.markdown("### Fairness-Analyse (FTE skalierte Metriken)")
-        st.markdown(r"Die Metriken sind auf `40h` Vollzeit skaliert: $\text{FTE-Score} = \frac{\text{Anzahl}}{\text{Stunden}} \times 40$")
+        st.markdown("### Fairness-Analyse")
         
         if staff_list:
+            # Compute all statistics
             staff_stats = []
             for staff in staff_list:
-                # Raw counts
                 weekends = schedule.count_weekend_shifts(staff.identifier)
                 effective_nights = schedule.count_effective_nights(staff.identifier)
+                total_notdienst = weekends + effective_nights  # Combined metric
                 
-                # FTE Scaling
+                # FTE Scaling (normalized to 40h)
                 if staff.hours > 0:
-                    weekend_fte = (weekends / staff.hours) * 40
-                    night_fte = (effective_nights / staff.hours) * 40
+                    total_notdienst_fte = (total_notdienst / staff.hours) * 40
                 else:
-                    weekend_fte = 0
-                    night_fte = 0
+                    total_notdienst_fte = 0.0
                 
-                staff_stats.append(
-                    {
-                        "Name": staff.name,
-                        "Beruf": staff.beruf.value,
-                        "Stunden": staff.hours,
-                        "ND möglich": staff.nd_possible,  # Track eligibility
-                        # Raw
-                        "Wochenenden (Abs)": weekends,
-                        "Nächte (Eff)": effective_nights,
-                        # FTE Normalized
-                        "WE / 40h": round(weekend_fte, 2),
-                        "Nacht / 40h": round(night_fte, 2) if staff.nd_possible else None,  # Exclude ineligible
-                    }
-                )
-
+                staff_stats.append({
+                    "Name": staff.name,
+                    "Kürzel": staff.identifier,
+                    "Beruf": staff.beruf.value,
+                    "Stunden": staff.hours,
+                    "ND möglich": "✅" if staff.nd_possible else "❌",
+                    "WE (Abs)": weekends,
+                    "Nächte (Eff)": effective_nights,
+                    "Notdienst Gesamt": total_notdienst,
+                    "Notdienst / 40h": round(total_notdienst_fte, 2),
+                })
+            
             df_stats = pd.DataFrame(staff_stats)
             
-            # 1. Detailed Table with Heatmap
-            st.markdown("#### Detailansicht")
-            st.caption("💡 Mitarbeiter mit `ND möglich = False` werden bei der Nacht-Fairness nicht gewertet (vertragliche Regelung).")
-            st.dataframe(
-                df_stats.style.background_gradient(subset=["WE / 40h", "Nacht / 40h"], cmap="YlOrRd"), 
-                use_container_width=True, 
-                height=400
-            )
-
-            # 2. Grouped Summary - SEPARATE for weekends and nights
-            st.markdown("#### Gruppen-Vergleich (FTE-normalisiert)")
+            # ========== KEY METRICS ==========
+            st.markdown("#### 📊 Übersicht")
             
-            # Weekend stats: Include everyone
-            st.markdown("**Wochenenden** (alle Mitarbeiter)")
-            weekend_grouped = df_stats.groupby("Beruf")["WE / 40h"]
-            weekend_summary = weekend_grouped.agg(["count", "mean", "std", "min", "max"])
-            weekend_summary["range"] = weekend_summary["max"] - weekend_summary["min"]
-            st.dataframe(weekend_summary, use_container_width=True)
+            # Fairness KPIs
+            notdienst_values = df_stats["Notdienst / 40h"].values
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("Ø Notdienst / 40h", f"{notdienst_values.mean():.2f}")
+            with col_m2:
+                st.metric("Std. Abweichung", f"{notdienst_values.std():.2f}", help="Niedriger = fairer")
+            with col_m3:
+                st.metric("Min", f"{notdienst_values.min():.2f}")
+            with col_m4:
+                st.metric("Max", f"{notdienst_values.max():.2f}")
             
-            # Night stats: Only include staff with nd_possible=True
-            st.markdown("**Nachtdienste** (nur Mitarbeiter mit `ND möglich = True`)")
-            df_nd_eligible = df_stats[df_stats["ND möglich"] == True].copy()
-            if not df_nd_eligible.empty:
-                night_grouped = df_nd_eligible.groupby("Beruf")["Nacht / 40h"]
-                night_summary = night_grouped.agg(["count", "mean", "std", "min", "max"])
-                night_summary["range"] = night_summary["max"] - night_summary["min"]
-                st.dataframe(night_summary, use_container_width=True)
+            # Fairness indicator bar
+            fairness_range = notdienst_values.max() - notdienst_values.min()
+            if fairness_range <= 1.5:
+                st.success(f"✅ Sehr faire Verteilung (Spread: {fairness_range:.2f})")
+            elif fairness_range <= 3.0:
+                st.warning(f"⚠️ Akzeptable Verteilung (Spread: {fairness_range:.2f})")
             else:
-                st.info("Keine Mitarbeiter mit Nachtdienst-Berechtigung.")
+                st.error(f"❌ Ungleiche Verteilung (Spread: {fairness_range:.2f}) - Überprüfung empfohlen")
+
+            # ========== DETAILED TABLE ==========
+            st.markdown("---")
+            st.markdown("#### 📋 Detailansicht")
+            st.caption("Sortierbar durch Klick auf Spaltenüberschrift. 'Notdienst Gesamt' = Wochenenden + effektive Nächte (Paar = 0.5, Solo = 1.0)")
+            
+            # Style the dataframe with gradient on key metric
+            styled_df = df_stats.style.background_gradient(
+                subset=["Notdienst / 40h"], cmap="RdYlGn_r"
+            ).format({"Nächte (Eff)": "{:.1f}", "Notdienst Gesamt": "{:.1f}"})
+            st.dataframe(styled_df, use_container_width=True, height=400)
+
+            # ========== GROUP COMPARISON ==========
+            st.markdown("---")
+            st.markdown("#### 👥 Gruppen-Vergleich")
+            
+            group_stats = df_stats.groupby("Beruf").agg({
+                "Notdienst / 40h": ["count", "mean", "std", "min", "max"],
+                "WE (Abs)": "sum",
+                "Nächte (Eff)": "sum",
+            }).round(2)
+            
+            # Flatten column names
+            group_stats.columns = [
+                "Anzahl MA", "Ø Notdienst/40h", "Std.Abw.", "Min", "Max",
+                "WE Gesamt", "Nächte Gesamt"
+            ]
+            group_stats["Spread"] = group_stats["Max"] - group_stats["Min"]
+            
+            st.dataframe(group_stats, use_container_width=True)
+            
+            # ========== OUTLIERS / ACTIONABLE INSIGHTS ==========
+            st.markdown("---")
+            st.markdown("#### 🎯 Handlungsempfehlungen")
+            
+            mean_notdienst = notdienst_values.mean()
+            std_notdienst = notdienst_values.std()
+            
+            # Find outliers (>1.5 std from mean)
+            df_outliers_high = df_stats[df_stats["Notdienst / 40h"] > mean_notdienst + 1.5 * std_notdienst]
+            df_outliers_low = df_stats[df_stats["Notdienst / 40h"] < mean_notdienst - 1.5 * std_notdienst]
+            
+            if not df_outliers_high.empty:
+                st.warning("**Überdurchschnittlich belastet:**")
+                for _, row in df_outliers_high.iterrows():
+                    st.write(f"- {row['Name']} ({row['Kürzel']}): {row['Notdienst / 40h']:.2f} Notdienst/40h")
+            
+            if not df_outliers_low.empty:
+                st.info("**Unterdurchschnittlich eingeteilt:**")
+                for _, row in df_outliers_low.iterrows():
+                    st.write(f"- {row['Name']} ({row['Kürzel']}): {row['Notdienst / 40h']:.2f} Notdienst/40h")
+            
+            if df_outliers_high.empty and df_outliers_low.empty:
+                st.success("✅ Keine signifikanten Ausreißer - Verteilung ist ausgewogen.")
+            
+            # Breakdown explanation
+            with st.expander("ℹ️ Berechnungslogik"):
+                st.markdown(r"""
+                **Notdienst Gesamt** = Wochenend-Schichten + Effektive Nächte
+                
+                - **Wochenend-Schichten**: Jede WE-Schicht zählt 1×
+                - **Effektive Nächte**: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
+                
+                **FTE-Normalisierung**: $\frac{\text{Notdienst Gesamt}}{\text{Vertragsstunden}} \times 40$
+                
+                Dies ermöglicht fairen Vergleich zwischen Vollzeit (40h) und Teilzeit.
+                """)
 
     # --- TAB 3: VALIDATION ---
     with tab_validation:
