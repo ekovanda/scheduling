@@ -63,6 +63,37 @@ def _calculate_fte_load(
     return (count / staff.hours) * 40
 
 
+def _select_fairest_staff(
+    eligible: list[Staff],
+    staff_assignments: dict[str, list[Assignment]],
+    load_type: str = "all",
+) -> Staff:
+    """Select staff member with lowest load, with randomized tie-breaking.
+    
+    Args:
+        eligible: List of eligible staff members
+        staff_assignments: Current assignment map
+        load_type: Type of load to consider ("all", "night", "weekend")
+    
+    Returns:
+        Selected staff member (fairest choice with random tie-break)
+    """
+    if not eligible:
+        raise ValueError("No eligible staff to select from")
+    
+    # Calculate load for each eligible staff
+    loads = [(s, _calculate_fte_load(s, staff_assignments, load_type)) for s in eligible]
+    
+    # Find minimum load
+    min_load = min(load for _, load in loads)
+    
+    # Get all staff with minimum load (ties)
+    tied_staff = [s for s, load in loads if abs(load - min_load) < 0.001]
+    
+    # Randomized tie-breaking to avoid CSV order bias
+    return random.choice(tied_staff)
+
+
 def generate_schedule(
     staff_list: list[Staff],
     quarter_start: date,
@@ -244,8 +275,9 @@ def _greedy_assignment(
             if minors:
                 eligible = minors
 
-        # Pick staff with LOWEST FTE-normalized weekend load (fairness)
-        selected = min(eligible, key=lambda s: _calculate_fte_load(s, staff_assignments, "weekend"))
+        # Pick staff with LOWEST WEEKEND FTE load for weekend-specific fairness
+        # Use randomized tie-breaking to avoid CSV order bias
+        selected = _select_fairest_staff(eligible, staff_assignments, "weekend")
         assignment = Assignment(shift=shift, staff_identifier=selected.identifier)
         schedule.assignments.append(assignment)
         staff_assignments[selected.identifier].append(assignment)
@@ -264,8 +296,8 @@ def _greedy_assignment(
         if not eligible:
             continue
 
-        # Pick staff with LOWEST FTE-normalized weekend load (fairness)
-        selected = min(eligible, key=lambda s: _calculate_fte_load(s, staff_assignments, "weekend"))
+        # Pick staff with LOWEST WEEKEND FTE load for weekend-specific fairness
+        selected = _select_fairest_staff(eligible, staff_assignments, "weekend")
         assignment = Assignment(shift=shift, staff_identifier=selected.identifier)
         schedule.assignments.append(assignment)
         staff_assignments[selected.identifier].append(assignment)
@@ -289,94 +321,119 @@ def _greedy_assignment(
 
         ta_present = shift.shift_type in [ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE]
 
-        # Identify candidates from active blocks
-        candidates_must = []
-        candidates_can = []
-        
-        # Check active blocks from prev day
+        # Cleanup stale blocks (only keep blocks from prev day)
         prev_day = d - timedelta(days=1)
-        
-        # Cleanup stale blocks
         active_blocks = {
             sid: val for sid, val in active_blocks.items() 
             if val[1] == prev_day
         }
 
-        for sid, (length, _) in active_blocks.items():
-            staff_matches = [s for s in staff_list if s.identifier == sid]
-            if not staff_matches: continue
-            staff = staff_matches[0]
+        # Build list of ALL eligible staff for today
+        def is_eligible_for_night(staff: Staff) -> bool:
+            return (
+                staff.can_work_shift(shift.shift_type, d)
+                and not _has_conflict_on_date(staff.identifier, d, staff_assignments)
+                and not _has_conflict_on_date(staff.identifier, d + timedelta(days=1), staff_assignments)
+                and _is_block_compatible(staff.identifier, d, staff_assignments)
+                and not _has_reached_ta_night_cap(staff, staff_assignments)
+            )
 
-            # Check eligibility for TODAY
-            if not staff.can_work_shift(shift.shift_type, d):
+        all_eligible = [s for s in staff_list if is_eligible_for_night(s)]
+        
+        # Separate by nd_alone status
+        solo_capable = [s for s in all_eligible if s.nd_alone]  # Can work alone
+        pair_required = [s for s in all_eligible if not s.nd_alone]  # Must be paired
+
+        # Check active blocks that need to continue
+        candidates_must_solo = []
+        candidates_must_pair = []
+        candidates_can_solo = []
+        candidates_can_pair = []
+
+        for sid, (length, _) in active_blocks.items():
+            staff_matches = [s for s in all_eligible if s.identifier == sid]
+            if not staff_matches:
                 continue
-            if _has_conflict_on_date(sid, d, staff_assignments):
-                continue
-            # Check conflict for TOMORROW (Night/Day conflict avoidance)
-            if _has_conflict_on_date(sid, d + timedelta(days=1), staff_assignments):
-                continue
-            
-            # Allow day check: cannot work if has day shift tomorrow?
-            # Greedy heuristic: just check conflict on 'd'. 
-            # (Sunday shift handled previously, but Monday day shift? usually not assigned yet or separate)
+            staff = staff_matches[0]
 
             min_len = min(staff.nd_count) if staff.nd_count else 1
             max_len = max(staff.nd_count) if staff.nd_count else 1
 
             if length < min_len:
-                candidates_must.append(staff)
+                if staff.nd_alone:
+                    candidates_must_solo.append(staff)
+                else:
+                    candidates_must_pair.append(staff)
             elif length < max_len:
-                candidates_can.append(staff)
-        
-        # Decision Logic
-        assigned_staff = []
+                if staff.nd_alone:
+                    candidates_can_solo.append(staff)
+                else:
+                    candidates_can_pair.append(staff)
 
-        # 1. Force MUST continues
-        for s in candidates_must:
-            if s not in assigned_staff:
+        # NEW eligible (not in active blocks)
+        new_solo = [s for s in solo_capable if s.identifier not in active_blocks]
+        new_pair = [s for s in pair_required if s.identifier not in active_blocks]
+
+        # Sort new candidates by fairness
+        new_solo.sort(key=lambda s: (_calculate_fte_load(s, staff_assignments, "night"), random.random()))
+        new_pair.sort(key=lambda s: (_calculate_fte_load(s, staff_assignments, "night"), random.random()))
+
+        assigned_staff: list[Staff] = []
+
+        # === SELECTION LOGIC ===
+        # Priority: Continue existing blocks, then start new ones
+        # Rule: nd_alone=True works solo, nd_alone=False must be paired
+
+        # 1. Handle MUST continues first
+        # Solo MUST continues can always be added (they work alone)
+        for s in candidates_must_solo:
+            if not assigned_staff:  # Only 1 solo person needed
                 assigned_staff.append(s)
+                break
 
-        # Helper to check if unsatisfied
-        def needs_more_people(assigned: list[Staff]) -> bool:
-            if ta_present:
-                return len(assigned) < 1
-            
-            # Need 1 solo OR 2 paired
-            has_solo = any(s.nd_alone for s in assigned)
-            if has_solo: return False
-            return len(assigned) < 2
+        # If we have a solo person, we're done
+        if assigned_staff and assigned_staff[0].nd_alone:
+            pass  # Solo coverage achieved
+        else:
+            # No solo assigned yet - try pair MUST continues
+            # Only add pair-required if we can find 2 people
+            if len(candidates_must_pair) >= 2:
+                assigned_staff = candidates_must_pair[:2]
+            elif len(candidates_must_pair) == 1:
+                # Need to find a partner from CAN or NEW
+                partner_pool = candidates_can_pair + candidates_can_solo + new_pair + new_solo
+                if partner_pool:
+                    assigned_staff = [candidates_must_pair[0], partner_pool[0]]
+                # else: MUST pair person cannot continue - capacity issue
 
-        # 2. Fill if needed with CAN continue
-        if needs_more_people(assigned_staff):
-            for s in candidates_can:
-                if s not in assigned_staff:
-                    assigned_staff.append(s)
-                    if not needs_more_people(assigned_staff):
-                        break
-        
-        # 3. Fill if needed with NEW
-        if needs_more_people(assigned_staff):
-            eligible_new = [
-                s for s in staff_list 
-                if s.can_work_shift(shift.shift_type, d)
-                and s.identifier not in active_blocks # Not currently blocking (redundant with cleanup but safe)
-                and not _has_conflict_on_date(s.identifier, d, staff_assignments)
-                and not _has_conflict_on_date(s.identifier, d + timedelta(days=1), staff_assignments) # Check next day conflict
-                # BLOCK COMPATIBILITY CHECK
-                and _is_block_compatible(s.identifier, d, staff_assignments)
-            ]
-            
-            # Sort by FTE-normalized night load (fairness)
-            eligible_new.sort(key=lambda s: _calculate_fte_load(s, staff_assignments, "night"))
-            
-            for s in eligible_new:
-                if s not in assigned_staff:
-                    assigned_staff.append(s)
-                    if not needs_more_people(assigned_staff):
-                        break
+        # 2. If still no assignment, try CAN continues
+        if not assigned_staff:
+            if candidates_can_solo:
+                assigned_staff = [candidates_can_solo[0]]
+            elif len(candidates_can_pair) >= 2:
+                assigned_staff = candidates_can_pair[:2]
+            elif len(candidates_can_pair) == 1:
+                partner_pool = new_pair + new_solo
+                if partner_pool:
+                    assigned_staff = [candidates_can_pair[0], partner_pool[0]]
+
+        # 3. If still no assignment, start NEW block
+        if not assigned_staff:
+            if new_solo:
+                assigned_staff = [new_solo[0]]
+            elif len(new_pair) >= 2:
+                assigned_staff = new_pair[:2]
+            # else: No valid assignment possible - capacity issue
+
+        # 4. For TA-present nights (Sun-Mon, Mon-Tue), 1 person is enough even if nd_alone=False
+        if not assigned_staff and ta_present:
+            # Anyone can work since TA is present
+            all_candidates = candidates_must_solo + candidates_must_pair + candidates_can_solo + candidates_can_pair + new_solo + new_pair
+            if all_candidates:
+                assigned_staff = [all_candidates[0]]
 
         # Register assignments
-        actual_paired = (len(assigned_staff) > 1) and (not ta_present)
+        actual_paired = len(assigned_staff) > 1
         
         for s in assigned_staff:
             assign = Assignment(
@@ -402,6 +459,24 @@ def _has_conflict_on_date(
         if assignment.shift.shift_date == check_date:
             return True
     return False
+
+
+def _has_reached_ta_night_cap(
+    staff: Staff, staff_assignments: dict[str, list[Assignment]], cap: int = 6
+) -> bool:
+    """Check if a TA has reached their quarterly night cap.
+    
+    TAs should work max 2 nights/month = 6 nights/quarter.
+    Non-TAs always return False (no cap).
+    """
+    if staff.beruf != Beruf.TA:
+        return False
+    
+    night_count = sum(
+        1 for a in staff_assignments.get(staff.identifier, [])
+        if a.shift.is_night_shift()
+    )
+    return night_count >= cap
 
 
 def _try_swap_move(schedule: Schedule, staff_list: list[Staff]) -> Schedule | None:

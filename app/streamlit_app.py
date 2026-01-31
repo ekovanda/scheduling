@@ -400,12 +400,13 @@ def page_plan_anzeigen() -> None:
                         "Name": staff.name,
                         "Beruf": staff.beruf.value,
                         "Stunden": staff.hours,
+                        "ND möglich": staff.nd_possible,  # Track eligibility
                         # Raw
                         "Wochenenden (Abs)": weekends,
                         "Nächte (Eff)": effective_nights,
                         # FTE Normalized
                         "WE / 40h": round(weekend_fte, 2),
-                        "Nacht / 40h": round(night_fte, 2),
+                        "Nacht / 40h": round(night_fte, 2) if staff.nd_possible else None,  # Exclude ineligible
                     }
                 )
 
@@ -413,30 +414,33 @@ def page_plan_anzeigen() -> None:
             
             # 1. Detailed Table with Heatmap
             st.markdown("#### Detailansicht")
+            st.caption("💡 Mitarbeiter mit `ND möglich = False` werden bei der Nacht-Fairness nicht gewertet (vertragliche Regelung).")
             st.dataframe(
                 df_stats.style.background_gradient(subset=["WE / 40h", "Nacht / 40h"], cmap="YlOrRd"), 
-                width="stretch", 
+                use_container_width=True, 
                 height=400
             )
 
-            # 2. Grouped Summary
-            st.markdown("#### Gruppen-Vergleich (Metriken skalierte auf 40h)")
+            # 2. Grouped Summary - SEPARATE for weekends and nights
+            st.markdown("#### Gruppen-Vergleich (FTE-normalisiert)")
             
-            summary_dfs = []
-            for metric in ["WE / 40h", "Nacht / 40h"]:
-                try:
-                    # Select specific metric and group
-                    grouped_series = df_stats.groupby("Beruf")[metric]
-                    summary = grouped_series.agg(["count", "mean", "std", "min", "max"])
-                    summary["range"] = summary["max"] - summary["min"]
-                    # Rename columns for clarity
-                    summary.columns = [f"{c} ({metric})" for c in summary.columns]
-                    summary_dfs.append(summary)
-                except Exception as e:
-                    st.error(f"Fehler bei Berechnung der Statistiken für {metric}: {e}")
+            # Weekend stats: Include everyone
+            st.markdown("**Wochenenden** (alle Mitarbeiter)")
+            weekend_grouped = df_stats.groupby("Beruf")["WE / 40h"]
+            weekend_summary = weekend_grouped.agg(["count", "mean", "std", "min", "max"])
+            weekend_summary["range"] = weekend_summary["max"] - weekend_summary["min"]
+            st.dataframe(weekend_summary, use_container_width=True)
             
-            if summary_dfs:
-                st.dataframe(pd.concat(summary_dfs, axis=1), width="stretch")
+            # Night stats: Only include staff with nd_possible=True
+            st.markdown("**Nachtdienste** (nur Mitarbeiter mit `ND möglich = True`)")
+            df_nd_eligible = df_stats[df_stats["ND möglich"] == True].copy()
+            if not df_nd_eligible.empty:
+                night_grouped = df_nd_eligible.groupby("Beruf")["Nacht / 40h"]
+                night_summary = night_grouped.agg(["count", "mean", "std", "min", "max"])
+                night_summary["range"] = night_summary["max"] - night_summary["min"]
+                st.dataframe(night_summary, use_container_width=True)
+            else:
+                st.info("Keine Mitarbeiter mit Nachtdienst-Berechtigung.")
 
     # --- TAB 3: VALIDATION ---
     with tab_validation:
