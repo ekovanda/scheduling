@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from scheduler.models import Beruf, Staff, load_staff_from_csv
-from scheduler.solver import generate_schedule
+from scheduler.solver import SolverBackend, generate_schedule
 from scheduler.validator import validate_schedule
 
 # Page config
@@ -235,11 +235,27 @@ def page_plan_erstellen() -> None:
     # Solver parameters
     st.markdown("---")
     st.markdown("### Solver-Einstellungen")
+    
+    # Solver backend selection
+    solver_backend = st.selectbox(
+        "Solver-Backend",
+        options=[SolverBackend.CPSAT, SolverBackend.HEURISTIC],
+        format_func=lambda x: "CP-SAT (OR-Tools) - empfohlen" if x == SolverBackend.CPSAT else "Heuristik (Greedy + Local Search)",
+        index=0,
+        help="CP-SAT garantiert optimale Fairness, Heuristik ist schneller aber weniger fair",
+    )
+    
     col1, col2 = st.columns(2)
     with col1:
-        max_iterations = st.number_input(
-            "Max. Iterationen", min_value=100, max_value=10000, value=2000, step=100
-        )
+        if solver_backend == SolverBackend.CPSAT:
+            max_time = st.number_input(
+                "Max. Lösungszeit (Sekunden)", min_value=30, max_value=600, value=120, step=30
+            )
+            max_iterations = max_time * 20  # Convert to iterations scale
+        else:
+            max_iterations = st.number_input(
+                "Max. Iterationen", min_value=100, max_value=10000, value=2000, step=100
+            )
     with col2:
         random_seed = st.number_input(
             "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
@@ -248,7 +264,8 @@ def page_plan_erstellen() -> None:
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary", width="content"):
-        with st.spinner("⏳ Generiere Dienstplan..."):
+        spinner_msg = "⏳ Generiere Dienstplan mit CP-SAT..." if solver_backend == SolverBackend.CPSAT else "⏳ Generiere Dienstplan..."
+        with st.spinner(spinner_msg):
             try:
                 staff_list: list[Staff] = st.session_state.staff_list
                 result = generate_schedule(
@@ -256,6 +273,7 @@ def page_plan_erstellen() -> None:
                     quarter_start,
                     max_iterations=max_iterations,
                     random_seed=random_seed,
+                    backend=solver_backend,
                 )
 
                 if result.success:

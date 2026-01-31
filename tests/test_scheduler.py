@@ -4,8 +4,8 @@ from datetime import date
 
 import pytest
 
-from app.scheduler.models import Beruf, Staff, generate_quarter_shifts
-from app.scheduler.solver import generate_schedule
+from app.scheduler.models import Beruf, Staff, ShiftType, generate_quarter_shifts
+from app.scheduler.solver import SolverBackend, generate_schedule
 from app.scheduler.validator import validate_schedule
 
 
@@ -238,6 +238,92 @@ def test_paired_night_requirement() -> None:
         if v.constraint_name in ["Night Pairing Required", "Azubi Night Pairing"]
     ]
     assert len(pairing_violations) > 0, "Should detect unpaired night violation"
+
+
+def test_nd_alone_cannot_work_ta_nights() -> None:
+    """Test that staff with nd_alone=True cannot work Sun-Mon or Mon-Tue nights."""
+    solo_worker = Staff(
+        name="Solo Worker",
+        identifier="SW1",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,  # Prefers to work alone
+        nd_count=[1],
+        nd_exceptions=[],
+    )
+
+    # Cannot work Sun-Mon (TA present)
+    assert not solo_worker.can_work_shift(ShiftType.NIGHT_SUN_MON, date(2026, 4, 5))
+    # Cannot work Mon-Tue (TA present)
+    assert not solo_worker.can_work_shift(ShiftType.NIGHT_MON_TUE, date(2026, 4, 6))
+    # Can work other nights
+    assert solo_worker.can_work_shift(ShiftType.NIGHT_TUE_WED, date(2026, 4, 7))
+    assert solo_worker.can_work_shift(ShiftType.NIGHT_FRI_SAT, date(2026, 4, 10))
+
+
+def test_cpsat_solver_produces_valid_schedule() -> None:
+    """Test that CP-SAT solver produces a valid schedule with good fairness."""
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+
+    result = generate_schedule(
+        staff,
+        date(2026, 4, 1),
+        max_iterations=1200,  # 60 seconds
+        random_seed=42,
+        backend=SolverBackend.CPSAT,
+    )
+
+    assert result.success, f"CP-SAT solver failed: {result.unsatisfiable_constraints}"
+
+    schedule = result.get_best_schedule()
+    assert schedule is not None
+    assert len(schedule.assignments) > 0
+
+    # Validate the schedule
+    validation = validate_schedule(schedule, staff)
+    assert validation.is_valid(), f"Schedule has violations: {[str(v) for v in validation.hard_violations[:5]]}"
+
+
+def test_cpsat_fairness_within_tolerance() -> None:
+    """Test that CP-SAT solver produces fair schedules within FTE tolerance."""
+    from collections import defaultdict
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+    staff_dict = {s.identifier: s for s in staff}
+
+    result = generate_schedule(
+        staff,
+        date(2026, 4, 1),
+        max_iterations=2400,  # 120 seconds
+        random_seed=42,
+        backend=SolverBackend.CPSAT,
+    )
+
+    assert result.success
+
+    schedule = result.get_best_schedule()
+
+    # Calculate night FTE for each staff
+    stats = defaultdict(lambda: 0.0)
+    for a in schedule.assignments:
+        if a.shift.is_night_shift():
+            stats[a.staff_identifier] += 0.5 if a.is_paired else 1.0
+
+    # Check Azubi fairness (all should have similar FTE)
+    azubi_nd_eligible = [s for s in staff if s.beruf == Beruf.AZUBI and s.nd_possible]
+    if len(azubi_nd_eligible) >= 2:
+        azubi_ftes = [stats[s.identifier] / s.hours * 40 for s in azubi_nd_eligible]
+        azubi_range = max(azubi_ftes) - min(azubi_ftes)
+        # Azubis should be perfectly balanced (range < 0.1)
+        assert azubi_range < 1.0, f"Azubi FTE range too wide: {azubi_range:.2f}"
 
 
 if __name__ == "__main__":

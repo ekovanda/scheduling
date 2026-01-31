@@ -1,135 +1,71 @@
 # Dienstplan Generator
 
-Quarterly Notdienst (weekend + night shift) scheduling app built with Streamlit, using a pure-Python heuristic solver (greedy + local search).
+Quarterly Notdienst (weekend + night shift) scheduling app for veterinary clinics. Uses **OR-Tools CP-SAT** constraint programming for optimal fair schedules.
 
 ## Features
 
-- **CSV Import**: Load staff data with role, availability, and constraint preferences
-- **Constraint Validation**: Enforces hard constraints (age restrictions, pairing rules, 3-week block limits) and optimizes soft constraints (proportional distribution, fairness)
-- **Heuristic Solver**: Greedy assignment + simulated annealing local search
-- **German UI**: 6-page Streamlit interface with schedule visualization and export
-- **Effective Nights**: Paired night shifts count as 0.5× per person for fair workload distribution
+- **Constraint Programming**: Guaranteed optimal fairness within hard constraints
+- **German UI**: 6-page Streamlit interface
+- **Fair Distribution**: FTE-normalized workload balancing within role groups
+- **Effective Nights**: Paired shifts count 0.5× per person
+- **Full Validation**: Hard constraints enforced, soft constraints optimized
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.11+
-- Dependencies: `streamlit`, `pandas`, `pydantic`, `python-dateutil`, `xlsxwriter`
-
-### Installation
-
 ```powershell
-# Clone/navigate to project directory
-cd "g:\Meine Ablage\Creative Projects\Programming\Dienstplan"
+# Navigate to project
+cd C:\Users\Elliot\Desktop\Coding\scheduling
 
-# Install dependencies
-python -m pip install streamlit pandas pydantic python-dateutil xlsxwriter
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1
 
-# For development
-python -m pip install pytest ruff pylint mypy
+# Run app
+streamlit run app/streamlit_app.py
 ```
 
-### Run App
+Open `http://localhost:8501` in your browser.
 
-```powershell
-python -m streamlit run app/streamlit_app.py
-```
+## Usage
 
-The app will launch at `http://localhost:8501`.
-
-### Run Tests
-
-```powershell
-python -m pytest tests/ -v
-```
-
-## Usage Workflow
-
-1. **Laden / CSV**: Upload `data/staff_sample.csv` (39 staff members included)
-2. **Personal**: View and filter staff by role, age, night shift capability
-3. **Regeln**: Review hard and soft constraints
-4. **Plan erstellen**: Select Q2/2026, configure solver (default 2000 iterations), generate schedule
-5. **Plan anzeigen**: View assignments, per-staff counters, validation results
+1. **Laden / CSV**: Upload staff data (use `data/staff_sample.csv`)
+2. **Personal**: View and filter staff
+3. **Regeln**: Review constraint rules
+4. **Plan erstellen**: Select quarter, choose CP-SAT solver, generate
+5. **Plan anzeigen**: View calendar, fairness stats, validation
 6. **Export**: Download CSV or Excel
 
-## Data Format
+## Documentation
 
-### Staff CSV Columns
+| File | Purpose |
+|------|---------|
+| [PROBLEM_DESCRIPTION.md](documentation/PROBLEM_DESCRIPTION.md) | Business requirements & project spec |
+| [ARCHITECTURE.md](documentation/ARCHITECTURE.md) | Technical documentation |
+| [CONSTRAINTS.md](documentation/CONSTRAINTS.md) | Business rules & stakeholder analysis |
+| [DEVELOPMENT.md](documentation/DEVELOPMENT.md) | Developer setup guide |
 
-- `name`: Full name
-- `identifier`: Short code (e.g., "Jul", "AA")
-- `adult`: `true` if ≥18 years
-- `hours`: Weekly contracted hours
-- `beruf`: `TFA`, `Azubi`, or `TA`
-- `reception`: Can work reception/Anmeldung
-- `nd_possible`: Can do night shifts
-- `nd_alone`: Can work nights solo
-- `nd_count`: JSON array of allowed consecutive night lengths (e.g., `[1,2]`)
-- `nd_exceptions`: JSON array of weekdays (1=Mon, 7=Sun) excluded from nights
+## Tests
 
-## Constraints
-
-### Hard Constraints (Must Satisfy)
-
-- Minors cannot work Sundays
-- TAs never work weekends
-- Azubis never work nights alone (except with TA present)
-- Max 1 consecutive shift block per rolling 3-week window
-- No day shift on same/next day after night shift
-- `nd_count` and `nd_exceptions` respected
-
-### Soft Constraints (Optimized)
-
-- Notdienste proportional to contracted hours
-- Paired nights count 0.5× per person
-- Minimal deviation within role groups (TFA/Azubi/TA)
+```powershell
+pytest tests/ -v
+```
 
 ## Project Structure
 
 ```
-.
-├── app/
-│   ├── streamlit_app.py       # Streamlit UI (6 pages)
-│   └── scheduler/
-│       ├── models.py           # Pydantic models (Staff, Shift, Schedule)
-│       ├── validator.py        # Constraint validation
-│       └── solver.py           # Greedy + local search solver
-├── data/
-│   └── staff_sample.csv        # Sample staff data (39 members)
-├── tests/
-│   └── test_scheduler.py       # Unit tests
-├── pyproject.toml              # Dependencies & tooling config
-└── README.md
+├── app/streamlit_app.py       # Streamlit UI
+├── app/scheduler/             # Core logic (models, solver, validator)
+├── data/staff_sample.csv      # Sample data (39 employees)
+├── documentation/             # All documentation
+└── tests/                     # Unit tests
 ```
 
-## Development
+## Solver Options
 
-### Linting & Formatting
-
-```powershell
-# Format code
-ruff format .
-
-# Lint
-pylint app/ --disable=fixme
-
-# Type check
-mypy app/ --strict
-```
-
-### Configuration
-
-- **Ruff**: Line length 100, Python 3.11+, PEP 8 rules
-- **Mypy**: Strict mode with type hints enforced
-- **Pylint**: Max line 100, disabled C0111, R0913-15, W0511
-
-## Known Limitations
-
-- Vacation/availability import is a placeholder (not yet implemented)
-- Manual schedule overrides planned for future release
-- Azubi school-day constraint not enforced (out of MVP scope)
+| Backend | Time | Use Case |
+|---------|------|----------|
+| **CP-SAT** (default) | 60-120s | Production - optimal fairness |
+| Heuristic | 2-5s | Development - quick iterations |
 
 ## License
 
-Hobby project for internal use.
+Internal use only.

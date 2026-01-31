@@ -47,6 +47,7 @@ def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> Validation
     violations.extend(_check_minor_sunday_constraint(schedule, staff_dict))
     violations.extend(_check_ta_weekend_constraint(schedule, staff_dict))
     violations.extend(_check_night_pairing_constraint(schedule, staff_dict))
+    violations.extend(_check_nd_alone_ta_nights_constraint(schedule, staff_dict))
     violations.extend(_check_same_day_next_day_constraint(schedule))
     violations.extend(_check_three_week_block_constraint(schedule))
     # violations.extend(_check_nd_count_constraint(schedule, staff_dict))  # Relaxed AND MOVED TO SOFT
@@ -76,6 +77,33 @@ def _check_minor_sunday_constraint(
                         f"{assignment.shift.shift_date.strftime('%d.%m.%Y')}",
                     )
                 )
+    return violations
+
+
+def _check_nd_alone_ta_nights_constraint(
+    schedule: Schedule, staff_dict: dict[str, Staff]
+) -> list[ConstraintViolation]:
+    """Staff with nd_alone=True must NOT work Sun-Mon or Mon-Tue nights (TA present).
+    
+    On these nights, a TA is already present (scheduled separately), so the staff
+    would effectively be paired. Staff who prefer to work alone (nd_alone=True)
+    should not be assigned to these nights.
+    """
+    violations: list[ConstraintViolation] = []
+    ta_present_types = {ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE}
+
+    for assignment in schedule.assignments:
+        if assignment.shift.shift_type in ta_present_types:
+            staff = staff_dict.get(assignment.staff_identifier)
+            if staff and staff.nd_alone and staff.beruf != Beruf.TA:
+                violations.append(
+                    ConstraintViolation(
+                        "ND Alone TA Night Conflict",
+                        f"{staff.name} (nd_alone=True) assigned to {assignment.shift.shift_type.value} on "
+                        f"{assignment.shift.shift_date.strftime('%d.%m.%Y')} where TA is present",
+                    )
+                )
+
     return violations
 
 

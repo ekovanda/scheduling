@@ -4,9 +4,17 @@ import random
 from collections import defaultdict
 from copy import deepcopy
 from datetime import date, timedelta
+from enum import Enum
 
 from .models import Assignment, Beruf, Schedule, Shift, ShiftType, Staff, generate_quarter_shifts
 from .validator import validate_schedule
+
+
+class SolverBackend(str, Enum):
+    """Available solver backends."""
+
+    HEURISTIC = "heuristic"
+    CPSAT = "cpsat"
 
 
 class SolverResult:
@@ -99,18 +107,31 @@ def generate_schedule(
     quarter_start: date,
     max_iterations: int = 2000,
     random_seed: int | None = None,
+    backend: SolverBackend = SolverBackend.HEURISTIC,
 ) -> SolverResult:
-    """Generate schedule using greedy + local search.
+    """Generate schedule using the specified backend.
 
     Args:
         staff_list: List of staff members
         quarter_start: Start date of quarter (e.g., April 1, 2026)
-        max_iterations: Max local search iterations
+        max_iterations: Max local search iterations (heuristic) or solve time seconds (cpsat)
         random_seed: Random seed for reproducibility
+        backend: Which solver to use (heuristic or cpsat)
 
     Returns:
         SolverResult with best schedules or unsatisfiable constraints
     """
+    if backend == SolverBackend.CPSAT:
+        from .solver_cpsat import generate_schedule_cpsat
+
+        return generate_schedule_cpsat(
+            staff_list,
+            quarter_start,
+            max_solve_time_seconds=max(60, max_iterations // 20),  # Scale iterations to time
+            random_seed=random_seed,
+        )
+
+    # Default: heuristic solver
     if random_seed is not None:
         random.seed(random_seed)
 
