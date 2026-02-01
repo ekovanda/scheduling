@@ -6,33 +6,37 @@
 
 | ID | Constraint | Rationale | Implemented |
 |----|------------|-----------|-------------|
-| H1 | Minors cannot work Sundays | German labor law | ✅ |
-| H2 | Interns never work weekends | Contract/role definition | ✅ |
-| H3 | Azubis must pair with non-Azubi on nights | Safety requirement | ✅ |
-| H4 | Two Azubis can never pair on nights | Supervision requirement | ✅ |
-| H5 | nd_alone=False must be paired (regular nights) | Employee capability | ✅ |
-| H6 | nd_alone=True must work **completely alone** (regular nights) | Employee preference | ✅ |
-| H7 | Non-Azubis min 2 consecutive nights | Block scheduling | ✅ |
-| H8 | Max 1 block per 21-day window (3 weeks) | Workload distribution | ✅ |
-| H9 | No day shift after night shift | Rest requirement | ✅ |
-| H10 | Respect nd_exceptions | Employee availability | ✅ |
-| H11 | All shifts must be covered | Operational requirement | ✅ |
-| H12 | At least 1 non-Azubi per night | Supervision requirement | ✅ |
-| H13 | Max 1 shift per person per day | Workload limit | ✅ |
-| H14 | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional Azubi | Vet on-site requirement | ✅ |
-| H15 | Weekend shifts isolated (not in blocks) | Prevents fatigue | ✅ |
-| H16 | Sa 10-22, So 8-20, So 10-22: TFA only | Role eligibility | ✅ |
-| H17 | Abteilung (op/station) cannot work same night | Capacity protection | ✅ |
-| H18 | Abteilung (op/station) cannot work consecutive nights | Capacity protection | ✅ |
+| H1 | Minors cannot work Sundays | German labor law |  |
+| H2 | Interns never work weekends | Contract/role definition |  |
+| H3 | Azubis must pair with non-Azubi on nights | Safety requirement |  |
+| H4 | Two Azubis can never pair on nights | Supervision requirement |  |
+| H5 | nd_alone=False must be paired (regular nights) | Employee capability |  |
+| H6 | nd_alone=True must work **completely alone** (regular nights) | Employee preference |  |
+| H7 | Min consecutive nights per employee (nd_min_consecutive) | Block scheduling |  |
+| H8 | Max 1 block per 21-day window (3 weeks) | Workload distribution |  |
+| H9 | No day shift after night shift | Rest requirement |  |
+| H10 | Respect nd_exceptions | Employee availability |  |
+| H11 | All shifts must be covered | Operational requirement |  |
+| H12 | At least 1 non-Azubi per night | Supervision requirement |  |
+| H13 | Max 1 shift per person per day | Workload limit |  |
+| H14 | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional Azubi | Vet on-site requirement |  |
+| H15 | Weekend shifts isolated (not in blocks) | Prevents fatigue |  |
+| H16 | Sa 10-22, So 8-20, So 10-22: TFA only | Role eligibility |  |
+| H17 | Abteilung (op/station) cannot work same night | Capacity protection |  |
+| H18 | Abteilung (op/station) cannot work consecutive nights | Capacity protection |  |
+| H19 | Vacation dates block all shift types | Planned absence |  |
+| H20 | Eligible staff must work 1 weekend shift per quarter | Participation fairness |  |
+| H21 | Night-eligible staff must work 1 night shift per quarter | Participation fairness |  |
 
 ### Soft Constraints (Optimized)
 
 | ID | Constraint | Weight | Implemented |
 |----|------------|--------|-------------|
-| S1 | Proportional to hours | FTE-normalized | ✅ |
-| S2 | Within-group fairness (combined Notdienste) | **Hard**: max 1.5 FTE-deviation; **Soft**: minimize range | ✅ |
-| S3 | Effective nights (TFA/Intern: paired=0.5, Azubi: always 1.0) | Built into counting | ✅ |
-| S4 | nd_max_consecutive not exceeded | 100 per violation | ✅ |
+| S1 | Proportional to hours AND presence (vacation-adjusted) | FTE-normalized |  |
+| S2 | Within-group fairness (combined Notdienste) | **Hard**: max 1.5 FTE-deviation; **Soft**: minimize range |  |
+| S3 | Effective nights (TFA/Intern: paired=0.5, Azubi: always 1.0) | Built into counting |  |
+| S4 | nd_max_consecutive not exceeded | 100 per violation |  |
+| S5 | Type balance (nights vs weekends) within groups | Secondary objective |  |
 
 ---
 
@@ -42,24 +46,51 @@
 class Staff:
     name: str              # Full name
     identifier: str        # Short code (e.g., "Jul", "AA")
-    adult: bool            # True if ≥18 years
+    adult: bool            # True if 18 years
     hours: int             # Weekly contracted hours (18-40)
     beruf: Beruf           # TFA, Azubi, or Intern
-    abteilung: Abteilung   # station, op, or other (NEW)
+    abteilung: Abteilung   # station, op, or other
     reception: bool        # Can work reception/Anmeldung
     nd_possible: bool      # Can do night shifts at all
     nd_alone: bool         # Must work alone on regular nights
     nd_max_consecutive: int | None  # Max consecutive nights (soft limit)
+    nd_min_consecutive: int  # Min consecutive nights required (default: 2, Azubis: 1)
     nd_exceptions: list[int]  # Weekdays excluded (1=Mon, 7=Sun)
 ```
 
-### Abteilung Enum
+### nd_min_consecutive Field
 
-| Value | Description | Constraint |
-|-------|-------------|------------|
-| `station` | Station/Ward staff | Cannot pair with other station staff on nights |
-| `op` | Operating room staff | Cannot pair with other OP staff on nights |
-| `other` | General/unassigned | **Exempt** from abteilung constraints |
+| Beruf | Default Value | Description |
+|-------|---------------|-------------|
+| Azubi | 1 | Single nights allowed (always paired anyway) |
+| TFA | 2 | Must work at least 2 consecutive nights |
+| Intern | 2 | Must work at least 2 consecutive nights |
+| Special (e.g., Anika Alles) | 3 | Must work at least 3 consecutive nights |
+
+---
+
+## Vacation / Unavailability
+
+### Data Format
+
+Vacation data is stored in a separate CSV file (`data/vacations.csv`):
+
+```csv
+identifier,start_date,end_date
+AA,2026-04-13,2026-04-24
+Jul,2026-05-18,2026-05-22
+```
+
+- **identifier**: Staff member short code (must match staff_sample.csv)
+- **start_date**: First day of vacation (YYYY-MM-DD format)
+- **end_date**: Last day of vacation, inclusive (YYYY-MM-DD format)
+
+### Behavior
+
+1. **Shift Blocking**: Staff on vacation cannot be assigned to ANY shift on vacation dates
+2. **Fairness Adjustment**: Expected Notdienste are scaled by presence ratio:
+   - `expected_shifts = base_shifts * (hours/40) * (available_days/total_days)`
+3. **Solver Failure**: If vacation makes coverage impossible, the solver fails with diagnostic info
 
 ---
 
@@ -67,82 +98,75 @@ class Staff:
 
 ### nd_alone Behavior
 
-- **nd_alone=True**: Staff MUST work **completely alone** on regular nights (Tue-Wed through Sat-Sun). No pairing allowed.
-- **nd_alone=False**: Staff MUST be paired with another person on regular nights.
-- **Sun-Mon / Mon-Tue**: Vet is on-site, so nd_alone rules don't apply. Exactly 1 non-Azubi required, optional Azubi.
+- **nd_alone=True**: Staff MUST work **completely alone** on regular nights (Tue-Wed through Sat-Sun)
+- **nd_alone=False**: Staff MUST be paired with another person on regular nights
+- **Sun-Mon / Mon-Tue**: Vet is on-site, so nd_alone rules do not apply
 
-### Azubi Effective Nights
+### Minimum Participation (H20, H21)
 
-Azubis **always count as 1.0 effective night**, even when paired. This ensures fairness tracking reflects their full participation, since they cannot lead a shift.
+To prevent scenarios where some employees do all nights and others do all weekends:
 
-### Weekend Isolation
+- **Weekend Participation**: All TFA and Azubi must work at least 1 weekend shift per quarter
+- **Night Participation**: All staff with nd_possible=True must work at least 1 night shift per quarter
+  - **Exception**: Staff with fewer available night types than their nd_min_consecutive are exempt
 
-Weekend shifts (Sa/So) must always be **single-shift blocks** — they cannot be adjacent to any other shift for the same person. This prevents weekend shifts from being part of multi-day fatigue blocks.
+### Type Balance Objective (S5)
+
+Secondary soft objective that minimizes the variance in night shift counts among night-eligible staff within each group (TFA, Azubi). This encourages more even distribution of nights vs weekends.
 
 ### Abteilung Night Constraint
 
 To prevent capacity shortages in specialized departments:
-1. **Same night**: Two staff from the same `abteilung` (op or station) cannot work the same night shift
-2. **Consecutive nights**: Two staff from the same `abteilung` cannot work on consecutive calendar days (e.g., if Alice from OP works Monday night, Bob from OP cannot work Tuesday night)
+1. **Same night**: Two staff from the same abteilung (op or station) cannot work the same night
+2. **Consecutive nights**: Two staff from same abteilung cannot work consecutive calendar days
 
-**Exempt**: Staff with `abteilung=other` are not subject to these constraints.
-
----
-
-## Stakeholder Analysis: Fairness Limitations
-
-### Fairness Calculation
-
-Fairness is now calculated **per job group** (TFA, Azubi, Intern) rather than globally:
-- Threshold for unfair: ≥2 normalized shifts deviation from group mean
-- Color coding: Green (underburdened), Yellow (normal), Red (overburdened)
-
-### Root Cause: Restrictive Individual Constraints
-
-High FTE variance within groups is often caused by:
-1. **nd_exceptions**: Employees available only on certain weekdays
-2. **Part-time hours**: Same absolute shifts = higher FTE-normalized count
-3. **nd_alone restrictions**: Solo workers have fewer pairing options
+**Exempt**: Staff with abteilung=other are not subject to these constraints.
 
 ---
 
-## Recommendations for Business Stakeholders
+## Fairness Calculation
 
-### Option A: Accept Current Constraints (Recommended)
+### Presence-Adjusted FTE Normalization
 
-**Accept that perfect fairness is impossible** given individual employee contracts and preferences.
+Fairness is calculated **per job group** (TFA, Azubi, Intern) with adjustments for:
 
-### Option B: Exempt Restricted Employees
+1. **Working Hours**: 20h employee expected to do half the shifts of a 40h employee
+2. **Vacation/Presence**: Employee with 2 weeks vacation expected to do ~85% of normal shifts
 
-Exclude employees with <4/7 night availability from fairness metrics.
+Formula: `FTE_adjusted = count * (40/hours) * (total_days/available_days)`
 
-### Option C: Use Absolute Counts
+### Eligibility Exemptions
 
-Display absolute shift counts instead of FTE-normalized values for part-timers.
+Staff may be exempt from certain participation requirements:
+
+| Condition | Weekend Exempt | Night Exempt |
+|-----------|----------------|--------------|
+| Intern |  |  |
+| nd_possible=False |  |  |
+| Available night types < nd_min_consecutive |  |  |
 
 ---
 
 ## Appendix: Constraint Violation Examples
 
-### Abteilung Same Night Violation
+### Vacation Conflict
 ```
-Staff: SH (Sabrina Hafer, abteilung=op)
-Staff: JH (Jacqueline Hülsmann, abteilung=op)
-Shift: N_Di-Mi on 2026-04-07
-→ VIOLATION (two OP staff on same night)
-```
-
-### Abteilung Consecutive Days Violation
-```
-Staff: LB (Lisanne Bayerl, abteilung=station) on N_Di-Mi (2026-04-07)
-Staff: SG (Stefanie Gelhardt, abteilung=station) on N_Mi-Do (2026-04-08)
-→ VIOLATION (two station staff on consecutive nights)
+Staff: AA (Anika Alles)
+Vacation: 2026-04-13 to 2026-04-24
+Attempted Assignment: N_Di-Mi on 2026-04-14
+ BLOCKED (staff on vacation)
 ```
 
-### nd_alone Improper Pairing Violation
+### nd_min_consecutive Violation
 ```
-Employee: Jul (Julia Hausmann, nd_alone=True)
-Shift: N_Di-Mi on 2026-04-07
-Assigned with: AA (Anika Alles)
-→ VIOLATION (nd_alone=True must work completely alone on regular nights)
+Staff: AA (Anika Alles, nd_min_consecutive=3)
+Assigned: N_Di-Mi (2026-04-07), N_Mi-Do (2026-04-08)
+ VIOLATION (only 2 consecutive, requires 3)
+```
+
+### Minimum Participation Violation
+```
+Staff: CB (Caroline Bauer, nd_possible=True)
+Quarter assignments: 5 weekend shifts, 0 night shifts
+ VIOLATION (must work at least 1 night shift)
 ```

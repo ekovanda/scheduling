@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 from enum import Enum
 
-from .models import Assignment, Beruf, Schedule, Shift, ShiftType, Staff, generate_quarter_shifts
+from .models import Assignment, Beruf, Schedule, Shift, ShiftType, Staff, Vacation, generate_quarter_shifts
 from .validator import validate_schedule
 
 
@@ -105,6 +105,7 @@ def _select_fairest_staff(
 def generate_schedule(
     staff_list: list[Staff],
     quarter_start: date,
+    vacations: list[Vacation] | None = None,
     max_iterations: int = 2000,
     random_seed: int | None = None,
     backend: SolverBackend = SolverBackend.HEURISTIC,
@@ -114,6 +115,7 @@ def generate_schedule(
     Args:
         staff_list: List of staff members
         quarter_start: Start date of quarter (e.g., April 1, 2026)
+        vacations: List of vacation periods (staff unavailability)
         max_iterations: Max local search iterations (heuristic) or solve time seconds (cpsat)
         random_seed: Random seed for reproducibility
         backend: Which solver to use (heuristic or cpsat)
@@ -121,12 +123,16 @@ def generate_schedule(
     Returns:
         SolverResult with best schedules or unsatisfiable constraints
     """
+    if vacations is None:
+        vacations = []
+    
     if backend == SolverBackend.CPSAT:
         from .solver_cpsat import generate_schedule_cpsat
 
         return generate_schedule_cpsat(
             staff_list,
             quarter_start,
+            vacations=vacations,
             max_solve_time_seconds=max(60, max_iterations // 20),  # Scale iterations to time
             random_seed=random_seed,
         )

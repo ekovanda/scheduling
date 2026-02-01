@@ -1,12 +1,19 @@
 """Streamlit app for Notdienst scheduling."""
 
 import io
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from scheduler.models import Beruf, ShiftType, Staff, load_staff_from_csv
+from scheduler.models import (
+    Beruf,
+    ShiftType,
+    Staff,
+    Vacation,
+    load_staff_from_csv,
+    load_vacations_from_csv,
+)
 from scheduler.solver import SolverBackend, generate_schedule
 from scheduler.validator import validate_schedule
 
@@ -19,6 +26,8 @@ def main() -> None:
     # Initialize session state
     if "staff_list" not in st.session_state:
         st.session_state.staff_list = None
+    if "vacations" not in st.session_state:
+        st.session_state.vacations = None
     if "schedule" not in st.session_state:
         st.session_state.schedule = None
     if "validation_result" not in st.session_state:
@@ -31,6 +40,7 @@ def main() -> None:
         [
             "Laden / CSV",
             "Personal",
+            "Urlaub",
             "Regeln",
             "Plan erstellen",
             "Plan anzeigen",
@@ -43,6 +53,8 @@ def main() -> None:
         page_load_csv()
     elif page == "Personal":
         page_personal()
+    elif page == "Urlaub":
+        page_urlaub()
     elif page == "Regeln":
         page_regeln()
     elif page == "Plan erstellen":
@@ -87,23 +99,201 @@ def page_load_csv() -> None:
         except Exception as e:
             st.error(f"❌ Fehler beim Laden der CSV: {e}")
 
-    # Placeholder for vacation data
+    # Vacation data upload
     st.markdown("---")
     st.markdown("### Urlaub / Verfügbarkeit hochladen")
-    st.file_uploader(
+    vacation_file = st.file_uploader(
         "CSV-Datei mit Urlaubsdaten (optional)",
         type=["csv"],
         key="vacation_upload",
-        disabled=True,
+        help="Erwartet: identifier, start_date, end_date (Datumsformat: YYYY-MM-DD)",
     )
-    st.info("ℹ️ Diese Funktion wird in einer zukünftigen Version verfügbar sein.")
+    
+    if vacation_file is not None:
+        try:
+            temp_path = Path("temp_vacations.csv")
+            with temp_path.open("wb") as f:
+                f.write(vacation_file.getvalue())
+            
+            vacations = load_vacations_from_csv(temp_path)
+            st.session_state.vacations = vacations
+            
+            st.success(f"✅ {len(vacations)} Urlaubseinträge erfolgreich geladen!")
+            
+            # Show preview
+            st.markdown("### Vorschau")
+            df = pd.DataFrame([v.model_dump() for v in vacations])
+            st.dataframe(df, width="content")
+            
+            temp_path.unlink(missing_ok=True)
+            
+        except Exception as e:
+            st.error(f"❌ Fehler beim Laden der Urlaubsdaten: {e}")
 
     # Show current status
     st.markdown("---")
-    if st.session_state.staff_list:
-        st.success(f"📊 Status: {len(st.session_state.staff_list)} Mitarbeiter geladen")
+    st.markdown("### 📊 Aktueller Status")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state.staff_list:
+            st.success(f"✅ {len(st.session_state.staff_list)} Mitarbeiter geladen")
+        else:
+            st.warning("⚠️ Noch keine Personaldaten geladen")
+    with col2:
+        if st.session_state.vacations:
+            st.success(f"✅ {len(st.session_state.vacations)} Urlaubseinträge geladen")
+        else:
+            st.info("ℹ️ Keine Urlaubsdaten geladen (optional)")
+
+
+def page_urlaub() -> None:
+    """Page: View vacation calendar."""
+    st.title("🏖️ Urlaub / Abwesenheit")
+    
+    if st.session_state.vacations is None or len(st.session_state.vacations) == 0:
+        st.warning("⚠️ Keine Urlaubsdaten geladen. Bitte zuerst auf 'Laden / CSV' Urlaubsdaten hochladen.")
+        return
+    
+    vacations: list[Vacation] = st.session_state.vacations
+    staff_list: list[Staff] | None = st.session_state.staff_list
+    
+    # Create staff lookup for names
+    staff_names = {}
+    if staff_list:
+        staff_names = {s.identifier: s.name for s in staff_list}
+    
+    # View selection
+    view_type = st.radio(
+        "Ansicht wählen",
+        ["📅 Kalender (nach Datum)", "👤 Liste (nach Mitarbeiter)"],
+        horizontal=True,
+    )
+    
+    if view_type == "📅 Kalender (nach Datum)":
+        _show_vacation_calendar(vacations, staff_names)
     else:
-        st.warning("⚠️ Noch keine Personaldaten geladen")
+        _show_vacation_by_employee(vacations, staff_names)
+
+
+def _show_vacation_calendar(vacations: list[Vacation], staff_names: dict[str, str]) -> None:
+    """Display vacation data as a calendar view sorted by date."""
+    # Find date range
+    all_dates: set[date] = set()
+    for v in vacations:
+        current = v.start_date
+        while current <= v.end_date:
+            all_dates.add(current)
+            current += timedelta(days=1)
+    
+    if not all_dates:
+        st.info("Keine Urlaubstage gefunden.")
+        return
+    
+    min_date = min(all_dates)
+    max_date = max(all_dates)
+    
+    # Date range filter
+    st.markdown("### Zeitraum filtern")
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_start = st.date_input("Von", value=min_date, min_value=min_date, max_value=max_date)
+    with col2:
+        filter_end = st.date_input("Bis", value=max_date, min_value=min_date, max_value=max_date)
+    
+    # Build calendar data: date -> list of absent employees
+    calendar_data: dict[date, list[str]] = {}
+    current = filter_start
+    while current <= filter_end:
+        absent = []
+        for v in vacations:
+            if v.start_date <= current <= v.end_date:
+                name = staff_names.get(v.identifier, v.identifier)
+                absent.append(name)
+        if absent:
+            calendar_data[current] = sorted(absent)
+        current += timedelta(days=1)
+    
+    # Display as table
+    st.markdown("### 📅 Abwesenheitskalender")
+    st.caption("Zeigt alle Mitarbeiter, die an einem bestimmten Tag abwesend sind.")
+    
+    if not calendar_data:
+        st.info("Keine Abwesenheiten im gewählten Zeitraum.")
+        return
+    
+    rows = []
+    for d in sorted(calendar_data.keys()):
+        weekday = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
+        rows.append({
+            "Datum": d.strftime("%Y-%m-%d"),
+            "Wochentag": weekday,
+            "Abwesend": ", ".join(calendar_data[d]),
+            "Anzahl": len(calendar_data[d]),
+        })
+    
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, height=500)
+    
+    # Summary statistics
+    st.markdown("### 📊 Zusammenfassung")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Tage mit Abwesenheit", len(calendar_data))
+    with col2:
+        max_absent = max(len(v) for v in calendar_data.values()) if calendar_data else 0
+        st.metric("Max. gleichzeitig abwesend", max_absent)
+    with col3:
+        unique_employees = set()
+        for absent_list in calendar_data.values():
+            unique_employees.update(absent_list)
+        st.metric("Mitarbeiter mit Urlaub", len(unique_employees))
+
+
+def _show_vacation_by_employee(vacations: list[Vacation], staff_names: dict[str, str]) -> None:
+    """Display vacation data grouped by employee."""
+    # Group by employee
+    by_employee: dict[str, list[Vacation]] = {}
+    for v in vacations:
+        if v.identifier not in by_employee:
+            by_employee[v.identifier] = []
+        by_employee[v.identifier].append(v)
+    
+    st.markdown("### 👤 Urlaub nach Mitarbeiter")
+    
+    rows = []
+    for identifier, vac_list in sorted(by_employee.items()):
+        name = staff_names.get(identifier, identifier)
+        total_days = sum(v.duration_days() for v in vac_list)
+        periods = []
+        for v in sorted(vac_list, key=lambda x: x.start_date):
+            if v.start_date == v.end_date:
+                periods.append(v.start_date.strftime("%d.%m."))
+            else:
+                periods.append(f"{v.start_date.strftime('%d.%m.')}-{v.end_date.strftime('%d.%m.')}")
+        
+        rows.append({
+            "Kürzel": identifier,
+            "Name": name,
+            "Urlaubstage": total_days,
+            "Zeiträume": ", ".join(periods),
+            "Anzahl Perioden": len(vac_list),
+        })
+    
+    df = pd.DataFrame(rows)
+    df = df.sort_values("Urlaubstage", ascending=False)
+    st.dataframe(df, use_container_width=True, height=500)
+    
+    # Summary
+    st.markdown("### 📊 Zusammenfassung")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Mitarbeiter mit Urlaub", len(by_employee))
+    with col2:
+        total = sum(sum(v.duration_days() for v in vl) for vl in by_employee.values())
+        st.metric("Urlaubstage gesamt", total)
+    with col3:
+        avg = total / len(by_employee) if by_employee else 0
+        st.metric("Ø Urlaubstage/Person", f"{avg:.1f}")
 
 
 def page_personal() -> None:
@@ -262,6 +452,13 @@ def page_plan_erstellen() -> None:
     quarter_start = quarter_starts[quarter]
 
     st.info(f"📅 Zeitraum: {quarter_start.strftime('%d.%m.%Y')} - ca. 91 Tage")
+    
+    # Show vacation status
+    vacations = st.session_state.vacations or []
+    if vacations:
+        st.success(f"✅ {len(vacations)} Urlaubseinträge werden berücksichtigt")
+    else:
+        st.info("ℹ️ Keine Urlaubsdaten geladen - alle Mitarbeiter gelten als verfügbar")
 
     # Solver parameters
     st.markdown("---")
@@ -292,9 +489,26 @@ def page_plan_erstellen() -> None:
             "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
         )
 
+    # Show eligibility information
+    st.markdown("---")
+    with st.expander("ℹ️ Mindestschicht-Anforderungen (Eligibility-Logik)", expanded=False):
+        st.markdown("""
+        **Neue Regel:** Jeder berechtigte Mitarbeiter muss mindestens **1 Wochenend-Schicht** 
+        und **1 Nacht-Schicht** pro Quartal übernehmen.
+        
+        **Ausnahmen:**
+        - **Interns**: Arbeiten nie am Wochenende (nur Nachtdienste)
+        - **Mitarbeiter ohne `nd_possible`**: Keine Nachtdienst-Pflicht
+        - **Eingeschränkte Verfügbarkeit**: Mitarbeiter mit weniger als `nd_min_consecutive` 
+          verfügbaren Nachttypen sind von der Nacht-Pflicht befreit
+        
+        **Fairness-Berechnung:** Die Anzahl der erwarteten Notdienste wird jetzt sowohl nach 
+        **Arbeitsstunden** als auch nach **Anwesenheitstagen** (abzgl. Urlaub) normalisiert.
+        """)
+
     # Generate button
     st.markdown("---")
-    if st.button("🚀 Plan generieren", type="primary", width="content"):
+    if st.button("🚀 Plan generieren", type="primary"):
         spinner_msg = "⏳ Generiere Dienstplan mit CP-SAT..." if solver_backend == SolverBackend.CPSAT else "⏳ Generiere Dienstplan..."
         with st.spinner(spinner_msg):
             try:
@@ -302,6 +516,7 @@ def page_plan_erstellen() -> None:
                 result = generate_schedule(
                     staff_list,
                     quarter_start,
+                    vacations=vacations,
                     max_iterations=max_iterations,
                     random_seed=random_seed,
                     backend=solver_backend,

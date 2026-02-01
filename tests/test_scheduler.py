@@ -698,5 +698,220 @@ def test_abteilung_cross_department_allowed() -> None:
     assert len(abt_violations) == 0, "Different abteilungen should be allowed to work together"
 
 
+# =============================================================================
+# VACATION AND ND_MIN_CONSECUTIVE TESTS
+# =============================================================================
+
+
+def test_vacation_model() -> None:
+    """Test Vacation model functionality."""
+    from app.scheduler.models import Vacation
+    
+    vacation = Vacation(
+        identifier="AA",
+        start_date=date(2026, 4, 13),
+        end_date=date(2026, 4, 15),
+    )
+    
+    # Test contains
+    assert vacation.contains(date(2026, 4, 13))
+    assert vacation.contains(date(2026, 4, 14))
+    assert vacation.contains(date(2026, 4, 15))
+    assert not vacation.contains(date(2026, 4, 12))
+    assert not vacation.contains(date(2026, 4, 16))
+    
+    # Test get_dates
+    dates = vacation.get_dates()
+    assert len(dates) == 3
+    assert date(2026, 4, 13) in dates
+    assert date(2026, 4, 14) in dates
+    assert date(2026, 4, 15) in dates
+    
+    # Test duration_days
+    assert vacation.duration_days() == 3
+
+
+def test_vacation_csv_loading() -> None:
+    """Test loading vacations from CSV."""
+    from pathlib import Path
+    import tempfile
+    from app.scheduler.models import load_vacations_from_csv
+    
+    csv_content = """identifier,start_date,end_date
+AA,2026-04-13,2026-04-15
+Jul,2026-05-01,2026-05-03
+"""
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write(csv_content)
+        temp_path = Path(f.name)
+    
+    try:
+        vacations = load_vacations_from_csv(temp_path)
+        assert len(vacations) == 2
+        assert vacations[0].identifier == "AA"
+        assert vacations[0].start_date == date(2026, 4, 13)
+        assert vacations[0].end_date == date(2026, 4, 15)
+        assert vacations[1].identifier == "Jul"
+    finally:
+        temp_path.unlink()
+
+
+def test_staff_unavailable_dates() -> None:
+    """Test getting unavailable dates for a staff member."""
+    from app.scheduler.models import Vacation, get_staff_unavailable_dates
+    
+    vacations = [
+        Vacation(identifier="AA", start_date=date(2026, 4, 13), end_date=date(2026, 4, 15)),
+        Vacation(identifier="AA", start_date=date(2026, 5, 1), end_date=date(2026, 5, 2)),
+        Vacation(identifier="Jul", start_date=date(2026, 4, 20), end_date=date(2026, 4, 21)),
+    ]
+    
+    aa_dates = get_staff_unavailable_dates(vacations, "AA")
+    assert len(aa_dates) == 5  # 3 + 2 days
+    assert date(2026, 4, 13) in aa_dates
+    assert date(2026, 5, 1) in aa_dates
+    assert date(2026, 4, 20) not in aa_dates  # Jul's vacation
+    
+    jul_dates = get_staff_unavailable_dates(vacations, "Jul")
+    assert len(jul_dates) == 2
+
+
+def test_calculate_available_days() -> None:
+    """Test calculating available days in a quarter."""
+    from app.scheduler.models import Vacation, calculate_available_days
+    
+    quarter_start = date(2026, 4, 1)
+    quarter_end = date(2026, 6, 30)
+    total_days = (quarter_end - quarter_start).days + 1  # 91 days
+    
+    vacations = [
+        Vacation(identifier="AA", start_date=date(2026, 4, 13), end_date=date(2026, 4, 22)),  # 10 days
+    ]
+    
+    available = calculate_available_days("AA", vacations, quarter_start, quarter_end)
+    assert available == total_days - 10
+    
+    # Staff with no vacation
+    available_all = calculate_available_days("Jul", vacations, quarter_start, quarter_end)
+    assert available_all == total_days
+
+
+def test_nd_min_consecutive_parsing() -> None:
+    """Test that nd_min_consecutive is parsed correctly from CSV."""
+    staff_default = Staff(
+        name="Test Default",
+        identifier="TD",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+    assert staff_default.nd_min_consecutive == 2  # Default value
+    
+    staff_custom = Staff(
+        name="Test Custom",
+        identifier="TC",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_min_consecutive=3,
+        nd_exceptions=[],
+    )
+    assert staff_custom.nd_min_consecutive == 3
+    
+    staff_azubi = Staff(
+        name="Test Azubi",
+        identifier="TA",
+        adult=True,
+        hours=40,
+        beruf=Beruf.AZUBI,
+        reception=False,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_min_consecutive=1,
+        nd_exceptions=[],
+    )
+    assert staff_azubi.nd_min_consecutive == 1
+
+
+def test_vacation_blocks_shifts() -> None:
+    """Test that vacation dates are blocked in the solver."""
+    from app.scheduler.models import Vacation
+    
+    staff_list = [
+        Staff(
+            name="Test TFA 1",
+            identifier="TFA1",
+            adult=True,
+            hours=40,
+            beruf=Beruf.TFA,
+            reception=True,
+            nd_possible=True,
+            nd_alone=True,
+            nd_max_consecutive=3,
+            nd_min_consecutive=2,
+            nd_exceptions=[],
+        ),
+        Staff(
+            name="Test TFA 2",
+            identifier="TFA2",
+            adult=True,
+            hours=40,
+            beruf=Beruf.TFA,
+            reception=True,
+            nd_possible=True,
+            nd_alone=True,
+            nd_max_consecutive=3,
+            nd_min_consecutive=2,
+            nd_exceptions=[],
+        ),
+        Staff(
+            name="Test Azubi",
+            identifier="AZ1",
+            adult=True,
+            hours=40,
+            beruf=Beruf.AZUBI,
+            reception=True,
+            nd_possible=True,
+            nd_alone=False,
+            nd_max_consecutive=2,
+            nd_min_consecutive=1,
+            nd_exceptions=[],
+        ),
+    ]
+    
+    # TFA1 on vacation for first week of April
+    vacations = [
+        Vacation(identifier="TFA1", start_date=date(2026, 4, 1), end_date=date(2026, 4, 7)),
+    ]
+    
+    quarter_start = date(2026, 4, 1)
+    result = generate_schedule(
+        staff_list, quarter_start, vacations=vacations, 
+        max_iterations=500, random_seed=42, backend=SolverBackend.CPSAT
+    )
+    
+    if result.success:
+        schedule = result.get_best_schedule()
+        
+        # Check that TFA1 has no assignments during vacation
+        tfa1_assignments = schedule.get_staff_assignments("TFA1")
+        vacation_assignments = [
+            a for a in tfa1_assignments 
+            if date(2026, 4, 1) <= a.shift.shift_date <= date(2026, 4, 7)
+        ]
+        assert len(vacation_assignments) == 0, "TFA1 should have no shifts during vacation"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

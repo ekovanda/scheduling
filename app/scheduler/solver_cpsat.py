@@ -17,7 +17,10 @@ from .models import (
     Shift,
     ShiftType,
     Staff,
+    Vacation,
+    calculate_available_days,
     generate_quarter_shifts,
+    get_staff_unavailable_dates,
 )
 from .validator import validate_schedule
 
@@ -45,6 +48,7 @@ class SolverResult:
 def generate_schedule_cpsat(
     staff_list: list[Staff],
     quarter_start: date,
+    vacations: list[Vacation] | None = None,
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
 ) -> SolverResult:
@@ -53,12 +57,16 @@ def generate_schedule_cpsat(
     Args:
         staff_list: List of staff members
         quarter_start: Start date of quarter (e.g., April 1, 2026)
+        vacations: List of vacation periods (staff unavailability)
         max_solve_time_seconds: Maximum solver time in seconds
         random_seed: Random seed for reproducibility
 
     Returns:
         SolverResult with best schedule or unsatisfiable constraints
     """
+    if vacations is None:
+        vacations = []
+    
     model = cp_model.CpModel()
 
     # Generate all shifts for the quarter
@@ -68,6 +76,12 @@ def generate_schedule_cpsat(
     # Index mappings
     staff_by_id = {s.identifier: s for s in staff_list}
     shift_index = {(s.shift_date, s.shift_type): i for i, s in enumerate(shifts)}
+
+    # Pre-compute vacation dates per staff for efficient lookup
+    staff_vacation_dates: dict[str, set[date]] = {
+        s.identifier: get_staff_unavailable_dates(vacations, s.identifier)
+        for s in staff_list
+    }
 
     # Separate shifts by category
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
@@ -88,9 +102,14 @@ def generate_schedule_cpsat(
     # =========================================================================
 
     # x[s, d, t] = 1 if staff s is assigned to shift (d, t)
+    # Staff on vacation are excluded from consideration for that date
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar] = {}
     for staff in staff_list:
+        vacation_dates = staff_vacation_dates[staff.identifier]
         for shift in shifts:
+            # Skip if staff is on vacation on this date
+            if shift.shift_date in vacation_dates:
+                continue
             if staff.can_work_shift(shift.shift_type, shift.shift_date):
                 key = (staff.identifier, shift.shift_date, shift.shift_type)
                 x[key] = model.NewBoolVar(f"x_{staff.identifier}_{shift.shift_date}_{shift.shift_type.value}")
@@ -304,12 +323,32 @@ def generate_schedule_cpsat(
     # night shifts together or on consecutive days (prevents capacity shortages)
     _add_abteilung_night_constraints(model, x, staff_list, night_shifts)
 
+    # 11. Minimum shift participation: eligible staff must work at least 1 night and 1 weekend
+    # This ensures better type balance and prevents "0 nights, all weekends" scenarios
+    min_participation_info = _add_min_participation_constraints(
+        model, x, staff_list, weekend_shifts, night_shifts
+    )
+
     # =========================================================================
     # FAIRNESS OBJECTIVE
     # =========================================================================
 
     # Goal: minimize max FTE-deviation of combined Notdienste within each role group
     # Notdienste = weekends + effective_nights (paired nights = 0.5 per person)
+    # ADJUSTED FOR PRESENCE: FTE is scaled by (available_days / total_quarter_days)
+    
+    # Calculate total quarter days for presence adjustment
+    total_quarter_days = (quarter_end - quarter_start).days + 1
+    
+    # Pre-compute presence factor per staff (available_days / total_days)
+    # We'll use integer arithmetic: presence_factor_scaled = available_days * 1000 / total_days
+    presence_factors: dict[str, int] = {}
+    for staff in staff_list:
+        available_days = calculate_available_days(
+            staff.identifier, vacations, quarter_start, quarter_end
+        )
+        # Scale by 1000 to maintain precision in integer arithmetic
+        presence_factors[staff.identifier] = (available_days * 1000) // total_quarter_days
     
     # To handle the 0.5 weight for paired nights, we count in half-units:
     # - Weekend shift = 2 half-units
@@ -319,8 +358,14 @@ def generate_schedule_cpsat(
     # Combined Notdienste count (in half-units) per staff
     notdienst_half_counts: dict[str, cp_model.LinearExpr] = {}
     
+    # Also track separate counts for secondary type-balance objective
+    weekend_half_counts: dict[str, cp_model.LinearExpr] = {}
+    night_half_counts: dict[str, cp_model.LinearExpr] = {}
+    
     for staff in staff_list:
         terms: list[cp_model.LinearExpr] = []
+        weekend_terms: list[cp_model.LinearExpr] = []
+        night_terms: list[cp_model.LinearExpr] = []
         
         # Weekend shifts: each counts as 2 half-units
         for shift in weekend_shifts:
@@ -328,6 +373,7 @@ def generate_schedule_cpsat(
             if key in x:
                 # 2 * x (2 half-units per weekend)
                 terms.append(2 * x[key])
+                weekend_terms.append(2 * x[key])
         
         # Night shifts: count depends on pairing and role
         if staff.nd_possible:
@@ -338,6 +384,7 @@ def generate_schedule_cpsat(
                     if staff.beruf == Beruf.AZUBI:
                         # Azubis always get full credit (2 half-units = 1.0 effective)
                         terms.append(2 * x[key])
+                        night_terms.append(2 * x[key])
                     else:
                         # Non-Azubis: paired = 1 half-unit (0.5), solo = 2 half-units (1.0)
                         # Formula: contribution = 2*assigned - paired_and_assigned
@@ -356,19 +403,27 @@ def generate_schedule_cpsat(
                             )
                             # contribution = 2*x - paired_assigned
                             terms.append(2 * x[key] - paired_assigned)
+                            night_terms.append(2 * x[key] - paired_assigned)
                         else:
                             # No pairing info available (shouldn't happen for night-capable staff)
                             # Fall back to solo counting (2 half-units)
                             terms.append(2 * x[key])
+                            night_terms.append(2 * x[key])
         
         if terms:
             notdienst_half_counts[staff.identifier] = sum(terms)
         else:
             notdienst_half_counts[staff.identifier] = 0
+        
+        # Store separate counts for type balance
+        weekend_half_counts[staff.identifier] = sum(weekend_terms) if weekend_terms else 0
+        night_half_counts[staff.identifier] = sum(night_terms) if night_terms else 0
 
-    # FTE-scaled counts (multiplied by 40/hours to normalize)
+    # FTE-scaled counts (multiplied by 40/hours AND adjusted for presence)
     # To avoid fractions in CP, we multiply everything by a common factor
+    # SCALE = 40 * 10 * 1000 (extra 1000 for presence factor precision)
     SCALE = 40 * 10  # Scale factor for integer arithmetic
+    PRESENCE_SCALE = 1000  # Matches presence_factors scaling
 
     # Calculate scaled fairness by group
     objective_terms = []
@@ -388,17 +443,36 @@ def generate_schedule_cpsat(
         if group_name == "Intern":
             nd_eligible = [s for s in group if s.nd_possible]
             if len(nd_eligible) >= 2:
-                _add_group_fairness_objective(
-                    model, objective_terms, notdienst_half_counts, nd_eligible, SCALE, f"ND_{group_name}"
+                _add_group_fairness_objective_with_presence(
+                    model, objective_terms, notdienst_half_counts, nd_eligible, 
+                    SCALE, presence_factors, f"ND_{group_name}"
                 )
         else:
             # TFA and Azubi: combined weekends + nights
             if len(group) >= 2:
-                _add_group_fairness_objective(
-                    model, objective_terms, notdienst_half_counts, group, SCALE, f"ND_{group_name}"
+                _add_group_fairness_objective_with_presence(
+                    model, objective_terms, notdienst_half_counts, group, 
+                    SCALE, presence_factors, f"ND_{group_name}"
                 )
 
-    # Minimize total fairness deviation
+    # =========================================================================
+    # SECONDARY OBJECTIVE: Type balance (nights vs weekends) within groups
+    # =========================================================================
+    # For TFA and Azubi: add soft objective to balance night counts among night-eligible
+    # This is weighted lower than the primary objective (total Notdienste fairness)
+    
+    TYPE_BALANCE_WEIGHT = 1  # Lower weight than primary fairness (which uses range directly)
+    
+    for group_name, group in [("TFA", tfa_staff), ("Azubi", azubi_staff)]:
+        # Only apply type balance to night-eligible staff in the group
+        nd_eligible = [s for s in group if s.nd_possible]
+        if len(nd_eligible) >= 2:
+            _add_type_balance_objective(
+                model, objective_terms, night_half_counts, nd_eligible,
+                SCALE, presence_factors, f"NightBal_{group_name}", TYPE_BALANCE_WEIGHT
+            )
+
+    # Minimize total fairness deviation (primary + secondary objectives)
     if objective_terms:
         model.Minimize(sum(objective_terms))
 
@@ -429,7 +503,9 @@ def generate_schedule_cpsat(
         )
     else:
         # Infeasible or timeout
-        unsatisfiable = _diagnose_infeasibility(model, staff_list, shifts)
+        unsatisfiable = _diagnose_infeasibility(
+            model, staff_list, shifts, min_participation_info
+        )
         return SolverResult(
             success=False,
             schedules=[],
@@ -619,16 +695,26 @@ def _add_min_consecutive_nights_constraints(
     staff_list: list[Staff],
     night_shifts: list[Shift],
 ) -> None:
-    """Enforce minimum 2 consecutive nights for non-Azubi staff (TFA, Intern).
+    """Enforce minimum consecutive nights based on staff.nd_min_consecutive.
     
-    This constraint ensures that if a non-Azubi works any nights, they work
-    at least 2 consecutive nights (no single-night assignments).
+    Each staff member has an nd_min_consecutive value:
+    - Azubis: typically 1 (no minimum consecutive requirement)
+    - TFA/Intern: typically 2 (must work at least 2 consecutive nights)
+    - Special cases like Anika Alles: 3 (must work at least 3 consecutive nights)
+    
+    This constraint ensures that if a staff member works any nights, they work
+    at least nd_min_consecutive consecutive nights.
     """
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
     
     for staff in staff_list:
-        # Only applies to non-Azubi staff
-        if staff.beruf == Beruf.AZUBI or not staff.nd_possible:
+        if not staff.nd_possible:
+            continue
+        
+        min_consecutive = staff.nd_min_consecutive
+        
+        # If min_consecutive is 1, no constraint needed (single nights allowed)
+        if min_consecutive <= 1:
             continue
         
         # Get this staff's night variables in order
@@ -638,34 +724,42 @@ def _add_min_consecutive_nights_constraints(
             if key in x:
                 staff_night_vars.append((shift.shift_date, x[key]))
         
-        if len(staff_night_vars) < 2:
+        if len(staff_night_vars) < min_consecutive:
             continue
         
-        # For each night, if assigned, at least one adjacent night must also be assigned
-        # This prevents single-night assignments
-        for i, (d, var) in enumerate(staff_night_vars):
-            adjacent_vars = []
-            
-            # Check previous day
-            if i > 0:
-                prev_d, prev_var = staff_night_vars[i - 1]
-                if (d - prev_d).days == 1:
-                    adjacent_vars.append(prev_var)
-            
-            # Check next day
-            if i < len(staff_night_vars) - 1:
-                next_d, next_var = staff_night_vars[i + 1]
-                if (next_d - d).days == 1:
-                    adjacent_vars.append(next_var)
-            
-            # If this night is assigned, at least one adjacent night must be assigned
-            if adjacent_vars:
-                # var => OR(adjacent_vars)
-                model.Add(sum(adjacent_vars) >= 1).OnlyEnforceIf(var)
-            else:
-                # No adjacent nights available - this non-Azubi cannot work this night
-                # (would result in isolated single night)
-                model.Add(var == 0)
+        # For min_consecutive=2: each assigned night needs at least 1 adjacent night
+        # For min_consecutive=3: each assigned night needs to be part of a 3+ block
+        # General approach: for each night, if assigned, there must be (min_consecutive-1)
+        # other nights within the same contiguous block
+        
+        if min_consecutive == 2:
+            # Simple case: each night needs at least one adjacent night
+            for i, (d, var) in enumerate(staff_night_vars):
+                adjacent_vars = []
+                
+                # Check previous day
+                if i > 0:
+                    prev_d, prev_var = staff_night_vars[i - 1]
+                    if (d - prev_d).days == 1:
+                        adjacent_vars.append(prev_var)
+                
+                # Check next day
+                if i < len(staff_night_vars) - 1:
+                    next_d, next_var = staff_night_vars[i + 1]
+                    if (next_d - d).days == 1:
+                        adjacent_vars.append(next_var)
+                
+                if adjacent_vars:
+                    # var => OR(adjacent_vars)
+                    model.Add(sum(adjacent_vars) >= 1).OnlyEnforceIf(var)
+                else:
+                    # No adjacent nights available - cannot work this night
+                    model.Add(var == 0)
+        else:
+            # General case for min_consecutive >= 3
+            # For each night, if assigned, it must be part of a block of at least min_consecutive
+            # This is more complex: we need to ensure the block extends in either direction
+            _add_min_block_constraint(model, staff_night_vars, min_consecutive)
 
 
 def _add_abteilung_night_constraints(
@@ -801,6 +895,225 @@ def _add_group_fairness_objective(
     objective_terms.append(range_var)
 
 
+def _add_group_fairness_objective_with_presence(
+    model: cp_model.CpModel,
+    objective_terms: list,
+    counts: dict[str, cp_model.LinearExpr],
+    group: list[Staff],
+    scale: int,
+    presence_factors: dict[str, int],
+    prefix: str,
+    max_fte_deviation: float = 1.5,
+) -> None:
+    """Add min-max fairness objective with presence (vacation) adjustment.
+
+    Similar to _add_group_fairness_objective but scales by presence factor
+    so employees with vacation are expected to do proportionally fewer shifts.
+    
+    The effective FTE multiplier becomes: (40 / hours) * (1000 / presence_factor)
+    where presence_factor = available_days * 1000 / total_days
+    """
+    if len(group) < 2:
+        return
+
+    PRESENCE_SCALE = 1000  # Matches presence_factors scaling
+    
+    scaled_counts = []
+    for staff in group:
+        count_expr = counts.get(staff.identifier, 0)
+        presence = presence_factors.get(staff.identifier, PRESENCE_SCALE)
+        # Avoid division by zero if someone has no available days
+        if presence == 0:
+            presence = 1
+        
+        if isinstance(count_expr, int) and count_expr == 0:
+            scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
+        else:
+            # scaled = count * (scale / hours) * (PRESENCE_SCALE / presence)
+            # = count * scale * PRESENCE_SCALE / (hours * presence)
+            # Simplified: we multiply by hours_multiplier and presence_multiplier
+            hours_multiplier = scale // staff.hours
+            # presence_multiplier = PRESENCE_SCALE * 10 // presence (extra 10 for precision)
+            presence_multiplier = (PRESENCE_SCALE * 10) // presence
+            combined_multiplier = hours_multiplier * presence_multiplier // 10
+            
+            max_possible = 100 * combined_multiplier
+            scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
+            model.Add(scaled_var == count_expr * combined_multiplier)
+        scaled_counts.append(scaled_var)
+
+    max_var = model.NewIntVar(0, 100000, f"{prefix}_max")
+    min_var = model.NewIntVar(0, 100000, f"{prefix}_min")
+    model.AddMaxEquality(max_var, scaled_counts)
+    model.AddMinEquality(min_var, scaled_counts)
+
+    range_var = model.NewIntVar(0, 100000, f"{prefix}_range")
+    model.Add(range_var == max_var - min_var)
+
+    # Hard constraint threshold (adjusted for presence scaling)
+    threshold_scaled = int(max_fte_deviation * 2 * (scale // 40) * (PRESENCE_SCALE // 100))
+    model.Add(range_var <= threshold_scaled)
+
+    objective_terms.append(range_var)
+
+
+def _add_type_balance_objective(
+    model: cp_model.CpModel,
+    objective_terms: list,
+    night_counts: dict[str, cp_model.LinearExpr],
+    group: list[Staff],
+    scale: int,
+    presence_factors: dict[str, int],
+    prefix: str,
+    weight: int = 1,
+) -> None:
+    """Add secondary objective to balance night shift counts within a group.
+    
+    This encourages more even distribution of night shifts specifically,
+    preventing scenarios where one person does 0 nights and many weekends.
+    """
+    if len(group) < 2:
+        return
+
+    PRESENCE_SCALE = 1000
+    
+    scaled_counts = []
+    for staff in group:
+        count_expr = night_counts.get(staff.identifier, 0)
+        presence = presence_factors.get(staff.identifier, PRESENCE_SCALE)
+        if presence == 0:
+            presence = 1
+        
+        if isinstance(count_expr, int) and count_expr == 0:
+            scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
+        else:
+            hours_multiplier = scale // staff.hours
+            presence_multiplier = (PRESENCE_SCALE * 10) // presence
+            combined_multiplier = hours_multiplier * presence_multiplier // 10
+            
+            max_possible = 50 * combined_multiplier  # Nights only, so lower max
+            scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
+            model.Add(scaled_var == count_expr * combined_multiplier)
+        scaled_counts.append(scaled_var)
+
+    max_var = model.NewIntVar(0, 50000, f"{prefix}_max")
+    min_var = model.NewIntVar(0, 50000, f"{prefix}_min")
+    model.AddMaxEquality(max_var, scaled_counts)
+    model.AddMinEquality(min_var, scaled_counts)
+
+    range_var = model.NewIntVar(0, 50000, f"{prefix}_range")
+    model.Add(range_var == max_var - min_var)
+
+    # Add weighted to objective (no hard constraint, just soft optimization)
+    objective_terms.append(weight * range_var)
+
+
+def _add_min_block_constraint(
+    model: cp_model.CpModel,
+    staff_night_vars: list[tuple[date, cp_model.IntVar]],
+    min_consecutive: int,
+) -> None:
+    """Add constraint that any assigned night must be part of a block of min_consecutive.
+    
+    For min_consecutive=3: if night i is assigned, then either:
+    - nights i-2, i-1, i are all assigned (block ends at i), OR
+    - nights i-1, i, i+1 are all assigned (i is in middle), OR
+    - nights i, i+1, i+2 are all assigned (block starts at i)
+    
+    This generalizes to any min_consecutive value.
+    """
+    n = len(staff_night_vars)
+    
+    for i, (d, var) in enumerate(staff_night_vars):
+        # Find all possible blocks of min_consecutive that include position i
+        valid_block_indicators = []
+        
+        for block_start in range(max(0, i - min_consecutive + 1), min(n - min_consecutive + 1, i + 1)):
+            block_end = block_start + min_consecutive
+            
+            # Check if this is a valid contiguous block (consecutive dates)
+            block_vars = []
+            is_contiguous = True
+            for j in range(block_start, block_end):
+                if j > block_start:
+                    prev_date = staff_night_vars[j - 1][0]
+                    curr_date = staff_night_vars[j][0]
+                    if (curr_date - prev_date).days != 1:
+                        is_contiguous = False
+                        break
+                block_vars.append(staff_night_vars[j][1])
+            
+            if is_contiguous and len(block_vars) == min_consecutive:
+                # Create indicator for "all vars in block are assigned"
+                block_indicator = model.NewBoolVar(f"block_{d}_{block_start}")
+                # block_indicator = 1 iff all block_vars = 1
+                model.Add(sum(block_vars) == min_consecutive).OnlyEnforceIf(block_indicator)
+                model.Add(sum(block_vars) < min_consecutive).OnlyEnforceIf(block_indicator.Not())
+                valid_block_indicators.append(block_indicator)
+        
+        if valid_block_indicators:
+            # If var is assigned, at least one valid block must be active
+            model.Add(sum(valid_block_indicators) >= 1).OnlyEnforceIf(var)
+        else:
+            # No valid blocks include this position - cannot be assigned
+            model.Add(var == 0)
+
+
+def _add_min_participation_constraints(
+    model: cp_model.CpModel,
+    x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
+    staff_list: list[Staff],
+    weekend_shifts: list[Shift],
+    night_shifts: list[Shift],
+) -> dict[str, dict[str, bool]]:
+    """Add hard constraints for minimum shift participation.
+    
+    Eligible staff must work at least:
+    - 1 weekend shift (if eligible for any weekend shift type)
+    - 1 night shift (if nd_possible=True AND has sufficient availability)
+    
+    Returns dict tracking which constraints were applied per staff for diagnostics.
+    """
+    participation_info: dict[str, dict[str, bool]] = {}
+    
+    for staff in staff_list:
+        info: dict[str, bool] = {"weekend_required": False, "night_required": False}
+        
+        # Weekend participation: TFA and Azubi who can work any weekend shift
+        weekend_vars = [
+            x[(staff.identifier, s.shift_date, s.shift_type)]
+            for s in weekend_shifts
+            if (staff.identifier, s.shift_date, s.shift_type) in x
+        ]
+        
+        if weekend_vars and staff.beruf != Beruf.INTERN:
+            # Require at least 1 weekend shift
+            model.Add(sum(weekend_vars) >= 1)
+            info["weekend_required"] = True
+        
+        # Night participation: staff with nd_possible=True
+        if staff.nd_possible:
+            night_vars = [
+                x[(staff.identifier, s.shift_date, s.shift_type)]
+                for s in night_shifts
+                if (staff.identifier, s.shift_date, s.shift_type) in x
+            ]
+            
+            # Only require if they have enough availability for min_consecutive requirement
+            # Count available consecutive night opportunities
+            min_consec = staff.nd_min_consecutive
+            available_night_types = 7 - len(staff.nd_exceptions)
+            
+            # Heuristic: if available types >= min_consecutive, they can likely form a block
+            if night_vars and available_night_types >= min_consec:
+                model.Add(sum(night_vars) >= 1)
+                info["night_required"] = True
+        
+        participation_info[staff.identifier] = info
+    
+    return participation_info
+
+
 def _extract_schedule(
     solver: cp_model.CpSolver,
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
@@ -842,6 +1155,7 @@ def _diagnose_infeasibility(
     model: cp_model.CpModel,
     staff_list: list[Staff],
     shifts: list[Shift],
+    participation_info: dict[str, dict[str, bool]] | None = None,
 ) -> list[str]:
     """Attempt to diagnose why the model is infeasible."""
     issues = []
@@ -869,16 +1183,29 @@ def _diagnose_infeasibility(
     if len(non_azubi_nd_eligible) < 1:
         issues.append("Insufficient non-Azubi night-capable staff. Need at least 1 TFA or Intern per night.")
     
-    # Check for min 2 consecutive nights constraint feasibility
-    # Non-Azubis with limited availability may not be able to do 2+ consecutive
-    for staff in non_azubi_nd_eligible:
-        if len(staff.nd_exceptions) >= 6:  # Can only work 1 night type
+    # Check for min consecutive nights constraint feasibility
+    for staff in staff_list:
+        if not staff.nd_possible:
+            continue
+        min_consec = staff.nd_min_consecutive
+        available_nights = 7 - len(staff.nd_exceptions)
+        if available_nights < min_consec and available_nights > 0:
             issues.append(
-                f"{staff.name} ({staff.beruf.value}) has too many nd_exceptions to work "
-                f"2 consecutive nights (min required for non-Azubis)."
+                f"{staff.name} ({staff.beruf.value}) has only {available_nights} available night types "
+                f"but requires {min_consec} consecutive nights. Consider reducing nd_min_consecutive."
             )
+    
+    # Check participation constraints vs vacation/availability
+    if participation_info:
+        for staff in staff_list:
+            info = participation_info.get(staff.identifier, {})
+            if info.get("night_required") and len(staff.nd_exceptions) >= 5:
+                issues.append(
+                    f"{staff.name} requires 1+ night shifts but has limited availability "
+                    f"({7 - len(staff.nd_exceptions)} night types). May conflict with vacation."
+                )
 
     if not issues:
-        issues.append("Model infeasible. Check constraint interactions or increase solve time.")
+        issues.append("Model infeasible. Check constraint interactions, vacation conflicts, or increase solve time.")
 
     return issues

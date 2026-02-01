@@ -57,6 +57,7 @@ class Staff(BaseModel):
     nd_possible: bool  # Can do night shifts at all
     nd_alone: bool  # Can work nights solo (False = must pair)
     nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
+    nd_min_consecutive: int = 2  # Min consecutive nights required (Azubis=1, most TFA/Intern=2)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
 
     @field_validator("abteilung", mode="before")
@@ -75,6 +76,14 @@ class Staff(BaseModel):
         """Parse nd_max_consecutive from CSV (handles empty strings)."""
         if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
             return None
+        return int(v)
+
+    @field_validator("nd_min_consecutive", mode="before")
+    @classmethod
+    def parse_nd_min_consecutive(cls, v: Any) -> int:
+        """Parse nd_min_consecutive from CSV (handles empty strings, defaults to 2)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return 2
         return int(v)
 
     @field_validator("nd_exceptions", mode="before")
@@ -286,3 +295,75 @@ def generate_quarter_shifts(quarter_start: date) -> list[Shift]:
         current_date += timedelta(days=1)
 
     return shifts
+
+
+class Vacation(BaseModel):
+    """Vacation/unavailability period for a staff member."""
+
+    identifier: str  # Staff identifier
+    start_date: date
+    end_date: date  # Inclusive
+
+    def contains(self, check_date: date) -> bool:
+        """Check if a date falls within this vacation period."""
+        return self.start_date <= check_date <= self.end_date
+
+    def get_dates(self) -> list[date]:
+        """Get all dates in this vacation period."""
+        dates = []
+        current = self.start_date
+        while current <= self.end_date:
+            dates.append(current)
+            current += timedelta(days=1)
+        return dates
+
+    def duration_days(self) -> int:
+        """Get the number of days in this vacation period."""
+        return (self.end_date - self.start_date).days + 1
+
+
+def load_vacations_from_csv(csv_path: Path) -> list[Vacation]:
+    """Load vacation data from CSV file.
+
+    Expected format: identifier,start_date,end_date
+    Dates should be in ISO format (YYYY-MM-DD).
+    """
+    vacations: list[Vacation] = []
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            vacations.append(
+                Vacation(
+                    identifier=row["identifier"].strip(),
+                    start_date=date.fromisoformat(row["start_date"].strip()),
+                    end_date=date.fromisoformat(row["end_date"].strip()),
+                )
+            )
+    return vacations
+
+
+def get_staff_unavailable_dates(
+    vacations: list[Vacation], staff_identifier: str
+) -> set[date]:
+    """Get all dates a staff member is unavailable due to vacation."""
+    unavailable: set[date] = set()
+    for v in vacations:
+        if v.identifier == staff_identifier:
+            unavailable.update(v.get_dates())
+    return unavailable
+
+
+def calculate_available_days(
+    staff_identifier: str,
+    vacations: list[Vacation],
+    quarter_start: date,
+    quarter_end: date,
+) -> int:
+    """Calculate number of available (non-vacation) days in the quarter."""
+    total_days = (quarter_end - quarter_start).days + 1
+    unavailable = get_staff_unavailable_dates(vacations, staff_identifier)
+    # Only count vacation days that fall within the quarter
+    vacation_days_in_quarter = sum(
+        1 for d in unavailable if quarter_start <= d <= quarter_end
+    )
+    return total_days - vacation_days_in_quarter
