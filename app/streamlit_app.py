@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import hashlib
+import os
 from scheduler.models import (
     Beruf,
     ShiftType,
@@ -23,17 +25,50 @@ st.set_page_config(page_title="Dienstplan Generator", page_icon="📅", layout="
 
 def main() -> None:
     """Main app entry point."""
-    # Initialize session state
-    if "staff_list" not in st.session_state:
-        st.session_state.staff_list = None
-    if "vacations" not in st.session_state:
-        st.session_state.vacations = None
-    if "schedule" not in st.session_state:
-        st.session_state.schedule = None
-    if "validation_result" not in st.session_state:
-        st.session_state.validation_result = None
+    # Simple authentication: checks hashed password in Streamlit secrets or env var
+    def _get_stored_password_hash() -> str | None:
+        # Prefer Streamlit secrets (deployed on Streamlit Cloud)
+        try:
+            pw = st.secrets.get("password_hash") if hasattr(st, "secrets") else None
+        except Exception:
+            pw = None
+        if not pw:
+            pw = os.environ.get("PASSWORD_HASH")
+        return pw
 
-    # Sidebar navigation
+    def _verify_password(input_pw: str) -> bool:
+        stored = _get_stored_password_hash()
+        if not stored:
+            # No password configured: allow access but show an informational note
+            return True
+        h = hashlib.sha256(input_pw.encode("utf-8")).hexdigest()
+        return h == stored
+
+    # Check authentication status BEFORE showing any UI
+    stored_hash = _get_stored_password_hash()
+    
+    # Initialize authentication state
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    
+    # If password is configured and user is not authenticated, show ONLY login form
+    if stored_hash and not st.session_state.authenticated:
+        st.title("🔐 Dienstplan Generator - Login")
+        st.markdown("---")
+        pw = st.text_input("Passwort eingeben:", type="password", key="login_pw")
+        if st.button("Anmelden", type="primary"):
+            if _verify_password(pw):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ Falsches Passwort. Bitte versuchen Sie es erneut.")
+        return
+    
+    # If no password configured, show info message once
+    if not stored_hash:
+        st.sidebar.info("ℹ️ Kein Passwort konfiguriert. Setzen Sie `password_hash` in Streamlit Secrets für Passwortschutz.")
+    
+    # User is authenticated (or no password required) - show full app
     st.sidebar.title("📅 Dienstplan Generator")
     page = st.sidebar.radio(
         "Navigation",
@@ -47,6 +82,16 @@ def main() -> None:
             "Export",
         ],
     )
+
+    # Initialize session state
+    if "staff_list" not in st.session_state:
+        st.session_state.staff_list = None
+    if "vacations" not in st.session_state:
+        st.session_state.vacations = None
+    if "schedule" not in st.session_state:
+        st.session_state.schedule = None
+    if "validation_result" not in st.session_state:
+        st.session_state.validation_result = None
 
     # Route to pages
     if page == "Laden / CSV":
