@@ -537,23 +537,6 @@ def page_plan_erstellen() -> None:
         "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
     )
 
-    # Show eligibility information
-    st.markdown("---")
-    with st.expander("ℹ️ Mindestschicht-Anforderungen (Eligibility-Logik)", expanded=False):
-        st.markdown("""
-        **Neue Regel:** Jeder berechtigte Mitarbeiter muss mindestens **1 Wochenend-Schicht** 
-        und **1 Nacht-Schicht** pro Quartal übernehmen.
-        
-        **Ausnahmen:**
-        - **Interns**: Arbeiten nie am Wochenende (nur Nachtdienste)
-        - **Mitarbeiter ohne `nd_possible`**: Keine Nachtdienst-Pflicht
-        - **Eingeschränkte Verfügbarkeit**: Mitarbeiter mit weniger als `nd_min_consecutive` 
-          verfügbaren Nachttypen sind von der Nacht-Pflicht befreit
-        
-        **Fairness-Berechnung:** Die Anzahl der erwarteten Notdienste wird jetzt sowohl nach 
-        **Arbeitsstunden** als auch nach **Anwesenheitstagen** (abzgl. Urlaub) normalisiert.
-        """)
-
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary"):
@@ -641,19 +624,8 @@ def page_plan_anzeigen() -> None:
         # Build lookup map: identifier -> name
         id_to_name = {s.identifier: s.name for s in staff_list}
         
-        # New descriptive labels for weekend shifts
-        SHIFT_DISPLAY_LABELS = {
-            ShiftType.SATURDAY_10_21: "Sa 10-21: Anmeldung/Ruf",
-            ShiftType.SATURDAY_10_22: "Sa 10-22: Rufbereitschaft",
-            ShiftType.SATURDAY_10_19: "Sa 10-19: Azubidienst",
-            ShiftType.SUNDAY_8_20: "So 08-20: Dienst",
-            ShiftType.SUNDAY_10_22: "So 10-22: Rufbereitschaft",
-            ShiftType.SUNDAY_8_2030: "So 08-20:30: Azubi/Ruf",
-        }
-
-        # Logical week order for columns: Nights first, then Weekends
-        WEEK_ORDER = [
-            # Night shifts
+        # Night shift types (one per day)
+        NIGHT_SHIFTS = frozenset({
             ShiftType.NIGHT_MON_TUE,
             ShiftType.NIGHT_TUE_WED,
             ShiftType.NIGHT_WED_THU,
@@ -661,25 +633,27 @@ def page_plan_anzeigen() -> None:
             ShiftType.NIGHT_FRI_SAT,
             ShiftType.NIGHT_SAT_SUN,
             ShiftType.NIGHT_SUN_MON,
-            # Weekend shifts
-            ShiftType.SATURDAY_10_19,
-            ShiftType.SATURDAY_10_21,
-            ShiftType.SATURDAY_10_22,
-            ShiftType.SUNDAY_8_20,
-            ShiftType.SUNDAY_10_22,
-            ShiftType.SUNDAY_8_2030,
+        })
+
+        # Column labels
+        NIGHT_COL = "🌙 Nacht"
+        WE_COLS = [
+            (ShiftType.SATURDAY_10_19, "☀️ Sa 10-19: Azubidienst"),
+            (ShiftType.SATURDAY_10_21, "☀️ Sa 10-21: Anmeldung/Ruf"),
+            (ShiftType.SATURDAY_10_22, "☀️ Sa 10-22: Rufbereitschaft"),
+            (ShiftType.SUNDAY_8_20, "☀️ So 08-20: Dienst"),
+            (ShiftType.SUNDAY_10_22, "☀️ So 10-22: Rufbereitschaft"),
+            (ShiftType.SUNDAY_8_2030, "☀️ So 08-20:30: Azubi/Ruf"),
         ]
 
-        # Matrix: Date x ShiftType -> Staff
-        # 1. Map (Date, Shift) -> [Staff1, Staff2]
-        shift_map = {}
-        unique_dates = sorted(list(set(a.shift.shift_date for a in schedule.assignments)))
-        
+        # Map (Date, Shift) -> [Staff1, Staff2]
+        shift_map: dict[tuple, list[str]] = {}
+        unique_dates = sorted({a.shift.shift_date for a in schedule.assignments})
+
         for assignment in schedule.assignments:
             key = (assignment.shift.shift_date, assignment.shift.shift_type)
             if key not in shift_map:
                 shift_map[key] = []
-            # Use name or identifier based on toggle
             display_value = (
                 id_to_name.get(assignment.staff_identifier, assignment.staff_identifier)
                 if show_names
@@ -687,36 +661,64 @@ def page_plan_anzeigen() -> None:
             )
             shift_map[key].append(display_value)
 
-        # 2. Build rows
+        # Build rows: Date | 🌙 Nacht | 6× ☀️ Weekend
+        all_cols = [NIGHT_COL] + [label for _, label in WE_COLS]
         calendar_rows = []
         for d in unique_dates:
-            row = {"Datum": d.strftime("%d.%m.%Y (%a)")}
-            for s_type in WEEK_ORDER:
+            weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
+            row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.')} {weekday_str}"}
+
+            # Single night column: find the night shift for this date
+            for ns in NIGHT_SHIFTS:
+                staff_ids = shift_map.get((d, ns), [])
+                if staff_ids:
+                    row[NIGHT_COL] = " + ".join(staff_ids)
+                    break
+
+            # Weekend columns
+            for s_type, col_label in WE_COLS:
                 staff_ids = shift_map.get((d, s_type), [])
                 if staff_ids:
-                    col_name = SHIFT_DISPLAY_LABELS.get(s_type, s_type.value)
-                    row[col_name] = " + ".join(staff_ids)
+                    row[col_label] = " + ".join(staff_ids)
+
             calendar_rows.append(row)
 
         if calendar_rows:
-            df_calendar = pd.DataFrame(calendar_rows)
-            df_calendar.set_index("Datum", inplace=True)
-            
-            # Reindex to ensure strictly logical column order (only present columns)
-            ordered_cols = [
-                SHIFT_DISPLAY_LABELS.get(s, s.value) 
-                for s in WEEK_ORDER 
-                if SHIFT_DISPLAY_LABELS.get(s, s.value) in df_calendar.columns
-            ]
-            df_calendar = df_calendar.reindex(columns=ordered_cols)
-            
+            df_calendar = pd.DataFrame(calendar_rows).set_index("Datum")
+            # Ensure all columns exist in correct order, fill blanks
+            for col in all_cols:
+                if col not in df_calendar.columns:
+                    df_calendar[col] = ""
+            df_calendar = df_calendar[all_cols].fillna("")
+
+            # Style: different backgrounds for night vs weekend columns
+            we_col_names = [label for _, label in WE_COLS]
+
+            def highlight_columns(df: pd.DataFrame) -> pd.DataFrame:
+                styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                if NIGHT_COL in df.columns:
+                    styles[NIGHT_COL] = "background-color: #e8e0f0"
+                for col in we_col_names:
+                    if col in df.columns:
+                        styles[col] = "background-color: #fff3e0"
+                return styles
+
+            styled_calendar = df_calendar.style.apply(
+                highlight_columns, axis=None
+            )
+
+            col_cfg: dict = {
+                "Datum": st.column_config.TextColumn("Datum", width="small"),
+                NIGHT_COL: st.column_config.TextColumn(NIGHT_COL, width="medium"),
+            }
+            for _, we_label in WE_COLS:
+                col_cfg[we_label] = st.column_config.TextColumn(we_label, width="medium")
+
             st.dataframe(
-                df_calendar, 
-                height=700, 
-                width="stretch",
-                column_config={
-                    "Datum": st.column_config.TextColumn("Datum")
-                }
+                styled_calendar,
+                height=700,
+                use_container_width=False,
+                column_config=col_cfg,
             )
         else:
             st.info("Keine Einträge.")
@@ -758,7 +760,7 @@ def page_plan_anzeigen() -> None:
                     "Beruf": staff.beruf.value,
                     "Std.": staff.hours,
                     "Urlaub": vacation_days,
-                    "Verfügbar": avail_days,
+                    "Nacht": "✅" if staff.nd_possible else "❌",
                     "WE": weekends,
                     "Nächte": round(effective_nights, 1),
                     "Gesamt": round(total_notdienst, 1),
@@ -824,7 +826,8 @@ def page_plan_anzeigen() -> None:
             ]):
                 group_df = df_stats[df_stats["Beruf"] == beruf.value]
                 with group_metrics_cols[idx]:
-                    st.markdown(f"**{icon} {label}** ({len(group_df)} MA)")
+                    st.markdown(f"### {icon} {label}")
+                    st.caption(f"{len(group_df)} Mitarbeiter")
                     if len(group_df) >= 2:
                         g_vals = group_df["Norm./40h"]
                         spread = g_vals.max() - g_vals.min()
@@ -845,23 +848,24 @@ def page_plan_anzeigen() -> None:
             st.markdown("---")
             st.markdown("#### 📋 Detailansicht nach Berufsgruppe")
             st.caption(
-                "Farbkodierung (Norm./40h): 🟢 ≥1.5 unter Ø, 🟡 innerhalb ±1.5, 🔴 ≥1.5 über Ø  —  "
+                "Farbkodierung (Norm./40h): 🟢 innerhalb ±1.0 vom Ø (fair), "
+                "🟡 ±1.0–2.0 (leichte Abweichung), 🔴 >±2.0 (signifikant)  —  "
                 "Normalisierung: Notdienst ÷ Vertragsstd. ÷ Anwesenheitsfaktor × 40"
             )
             
             # Columns to display in detail tables (condensed)
-            detail_cols = ["Name", "Kürzel", "Std.", "Urlaub", "Verfügbar", "WE", "Nächte", "Gesamt", "Norm./40h"]
+            detail_cols = ["Name", "Kürzel", "Std.", "Urlaub", "Nacht", "WE", "Nächte", "Gesamt", "Norm./40h"]
             
             def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.io.formats.style.Styler:
-                """Apply red/yellow/green styling based on deviation from group mean."""
+                """Apply green/yellow/red styling based on absolute deviation from group mean."""
                 def color_notdienst(val: float) -> str:
-                    deviation = val - group_mean
-                    if deviation >= 1.5:
-                        return "background-color: #ffcccc"
-                    elif deviation <= -1.5:
-                        return "background-color: #ccffcc"
+                    abs_dev = abs(val - group_mean)
+                    if abs_dev <= 1.0:
+                        return "background-color: #ccffcc"  # green – fair
+                    elif abs_dev <= 2.0:
+                        return "background-color: #ffffcc"  # yellow – slight deviation
                     else:
-                        return "background-color: #ffffcc"
+                        return "background-color: #ffcccc"  # red – significant
                 
                 return df.style.applymap(
                     color_notdienst, subset=["Norm./40h"]
@@ -958,7 +962,7 @@ def page_plan_anzeigen() -> None:
                 
                 **Spalten in der Detailansicht:**
                 - **Urlaub**: Urlaubstage im Quartal
-                - **Verfügbar**: Quartalstage − Urlaub (= planbare Tage)
+                - **Nacht**: Ob Nachtdienst möglich ist (✅/❌)
                 - **WE / Nächte**: Absolute Anzahl zugewiesener Schichten
                 - **Gesamt**: WE + Eff. Nächte
                 - **Norm./40h**: Normalisierter Fairness-Wert (Vergleichswert)
@@ -966,9 +970,9 @@ def page_plan_anzeigen() -> None:
                 **Fairness-Schwellwert**: ≥2.0 Abweichung vom Gruppendurchschnitt = unfair.
                 
                 **Farbkodierung** (relativ zur Berufsgruppe):
-                - 🔴 Rot: ≥1.5 über Ø
-                - 🟡 Gelb: Innerhalb ±1.5
-                - 🟢 Grün: ≥1.5 unter Ø
+                - � Grün: Innerhalb ±1.0 vom Ø (fair)
+                - 🟡 Gelb: ±1.0–2.0 vom Ø (leichte Abweichung)
+                - 🔴 Rot: >±2.0 vom Ø (signifikante Abweichung)
                 """)
 
     # --- TAB 3: VALIDATION ---
