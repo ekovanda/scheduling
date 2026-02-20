@@ -49,7 +49,7 @@ Schedule.count_effective_nights(staff_id, staff) -> float  # Sum of weighted nig
 | `_check_night_pairing_constraint` | Azubis must pair with non-Azubi |
 | `_check_nd_alone_improper_pairing` | nd_alone=True must work **completely alone** on regular nights |
 | `_check_intern_night_capacity` | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional 0-1 Azubi |
-| `_check_min_consecutive_nights_constraint` | Non-Azubis must work 2+ consecutive nights |
+| `_check_min_consecutive_nights_constraint` | Per-staff nd_min_consecutive: blocks of fewer nights than the minimum are flagged |
 | `_check_same_day_next_day_constraint` | No day shift after night shift |
 | `_check_three_week_block_constraint` | Max 1 block per 14-day window |
 | `_check_weekend_isolation_constraint` | Weekend shifts cannot be adjacent to other shifts |

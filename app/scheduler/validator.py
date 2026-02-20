@@ -476,7 +476,10 @@ def _find_consecutive_blocks(sorted_assignments: list[Assignment]) -> list[list[
 def _check_min_consecutive_nights_constraint(
     schedule: Schedule, staff_dict: dict[str, Staff]
 ) -> list[ConstraintViolation]:
-    """Non-Azubi staff (TFA, Intern) must work at least 2 consecutive nights."""
+    """Staff must work at least nd_min_consecutive consecutive nights per block.
+
+    Skips staff where nd_min_consecutive <= 1 (e.g. Azubis or special TFA cases).
+    """
     violations: list[ConstraintViolation] = []
 
     # Group night assignments by staff
@@ -487,8 +490,12 @@ def _check_min_consecutive_nights_constraint(
 
     for staff_id, night_assignments in staff_night_assignments.items():
         staff = staff_dict.get(staff_id)
-        if not staff or staff.beruf == Beruf.AZUBI:
-            continue  # Azubis can do single nights
+        if not staff:
+            continue
+
+        min_consecutive = staff.nd_min_consecutive
+        if min_consecutive <= 1:
+            continue  # Single nights allowed — no constraint to enforce
 
         # Sort by date
         sorted_nights = sorted(night_assignments, key=lambda a: a.shift.shift_date)
@@ -498,14 +505,14 @@ def _check_min_consecutive_nights_constraint(
 
         for block in consecutive_blocks:
             block_length = len(block)
-            if block_length < 2:
+            if block_length < min_consecutive:
                 violations.append(
                     ConstraintViolation(
                         "Min Consecutive Nights",
                         f"{staff.name} ({staff.beruf.value}) working only {block_length} "
                         f"consecutive night(s) starting "
                         f"{block[0].shift.shift_date.strftime('%d.%m.%Y')}, "
-                        f"minimum is 2 for non-Azubi staff",
+                        f"minimum is {min_consecutive} (nd_min_consecutive)",
                     )
                 )
 

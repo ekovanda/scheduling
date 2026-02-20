@@ -448,7 +448,7 @@ def page_regeln() -> None:
     - **Zwei Azubis**: Können **nie** zusammen Nachtdienst machen
     - **nd_alone=False**: Mitarbeiter müssen paarweise arbeiten (außer So→Mo, Mo→Di)
     - **nd_alone=True**: Mitarbeiter arbeiten **komplett alleine** (keine Paarung erlaubt)
-    - **Min. 2 Nächte**: TFA und Interns müssen mind. 2 aufeinanderfolgende Nächte arbeiten
+    - **Min. aufeinanderfolgende Nächte**: Individuelle Einstellung per `nd_min_consecutive` (Standard 2 für TFA/Intern; 1 für Azubis und Ausnahme-TFA)
     - **Interns**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
 
     ### Abteilungs-Constraint
@@ -519,7 +519,20 @@ def page_plan_erstellen() -> None:
     # Solver parameters
     st.markdown("---")
     st.markdown("### Solver-Einstellungen")
-    
+
+    solve_mode = st.radio(
+        "Berechnungstiefe",
+        options=["Schnell (~1 Min.)", "Gründlich (~10 Min.)"],
+        index=0,
+        horizontal=True,
+        help=(
+            "Schnell: 60 Sekunden Zeitlimit — gut für erste Ergebnisse.\n"
+            "Gründlich: 600 Sekunden — mehr Zeit für den Solver, die Fairness weiter zu optimieren.\n"
+            "Der Solver kann auch früher abbrechen, sobald die optimale Lösung bewiesen ist."
+        ),
+    )
+    max_solve_time_seconds = 60 if solve_mode == "Schnell (~1 Min.)" else 600
+
     random_seed = st.number_input(
         "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
     )
@@ -544,13 +557,14 @@ def page_plan_erstellen() -> None:
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary"):
-        with st.spinner("⏳ Generiere Dienstplan mit CP-SAT..."):
+        with st.spinner(f"⏳ Generiere Dienstplan mit CP-SAT (max. {max_solve_time_seconds}s)..."):
             try:
                 staff_list: list[Staff] = st.session_state.staff_list
                 result = generate_schedule(
                     staff_list,
                     quarter_start,
                     vacations=vacations,
+                    max_solve_time_seconds=max_solve_time_seconds,
                     random_seed=random_seed,
                 )
 
@@ -978,7 +992,7 @@ def page_plan_anzeigen() -> None:
                 "Intern Night No Non-Azubi": "Mind. 1 TFA/Intern pro Nacht (So-Mo, Mo-Di)",
                 "Night Pairing Required": "Mitarbeiter ohne 'nd_alone' nur im Team",
                 "ND Alone Improper Pairing": "nd_alone=True muss alleine arbeiten",
-                "Min Consecutive Nights": "TFA/Interns: mind. 2 aufeinanderfolgende Nächte",
+                "Min Consecutive Nights": "Min. aufeinanderfolgende Nächte (nd_min_consecutive)",
                 "Night/Day Conflict": "Ruhezeiten: Kein Tagdienst an/nach Nachtdienst",
                 "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
                 "Weekend Isolation": "Wochenend-Schichten nicht in Blöcken",

@@ -911,5 +911,71 @@ def test_vacation_blocks_shifts() -> None:
         assert len(vacation_assignments) == 0, "TFA1 should have no shifts during vacation"
 
 
+def test_min_consecutive_uses_per_staff_value() -> None:
+    """Validator must respect nd_min_consecutive per staff, not a hard-coded 2."""
+    from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+
+    # TFA with nd_min_consecutive=1 (e.g. Julia H) — single night must NOT violate
+    tfa_single_ok = Staff(
+        name="Julia H",
+        identifier="Jul",
+        adult=True,
+        hours=20,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_min_consecutive=1,
+        nd_exceptions=[],
+    )
+
+    # TFA with default nd_min_consecutive=2 — single night SHOULD violate
+    tfa_needs_two = Staff(
+        name="Regular TFA",
+        identifier="RTFA",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=True,
+        nd_min_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 3),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="Jul",
+                is_paired=False,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_TUE_WED, shift_date=date(2026, 4, 1)),
+                staff_identifier="RTFA",
+                is_paired=True,
+            ),
+        ],
+    )
+
+    validation = validate_schedule(schedule, [tfa_single_ok, tfa_needs_two])
+    min_violations = [
+        v for v in validation.hard_violations if v.constraint_name == "Min Consecutive Nights"
+    ]
+
+    violated_ids = [v.description for v in min_violations]
+
+    # Julia H (nd_min_consecutive=1) must NOT appear in violations
+    assert not any("Jul" in d for d in violated_ids), (
+        "TFA with nd_min_consecutive=1 must not trigger min-consecutive violation"
+    )
+    # RTFA (nd_min_consecutive=2) single night MUST appear
+    assert any("RTFA" in d or "Regular TFA" in d for d in violated_ids), (
+        "TFA with nd_min_consecutive=2 working a single night must trigger a violation"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
