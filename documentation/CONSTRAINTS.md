@@ -25,8 +25,9 @@
 | H17 | Abteilung (op/station) cannot work same night | Capacity protection |  |
 | H18 | Abteilung (op/station) cannot work consecutive nights | Capacity protection |  |
 | H19 | Vacation dates block all shift types | Planned absence |  |
-| H20 | Eligible staff must work 1 weekend shift per quarter | Participation fairness |  |
-| H21 | Night-eligible staff must work 1 night shift per quarter | Participation fairness |  |
+| H20 | Birthday blocks all shift types | Employee wellbeing |  |
+| H21 | Eligible staff must work 1 weekend shift per quarter | Participation fairness |  |
+| H22 | Night-eligible staff must work 1 night shift per quarter | Participation fairness |  |
 
 ### Soft Constraints (Optimized)
 
@@ -56,6 +57,7 @@ class Staff:
     nd_max_consecutive: int | None  # Max consecutive nights (soft limit)
     nd_min_consecutive: int  # Min consecutive nights required (default: 2, Azubis: 1)
     nd_exceptions: list[int]  # Weekdays excluded (1=Mon, 7=Sun)
+    birthday: str | None   # Birthday in MM-DD format (no year), e.g. "04-15"
 ```
 
 ### nd_min_consecutive Field
@@ -67,11 +69,21 @@ class Staff:
 | Intern | 2 | Must work at least 2 consecutive nights |
 | Special (e.g., Anika Alles) | 3 | Must work at least 3 consecutive nights |
 
+### Vacation / Unavailability
+
+### Birthday Unavailability
+
+Each `Staff` record has an optional `birthday` field in `MM-DD` format. When set, the employee's
+birthday is treated exactly like a vacation day: no shift of any type can be assigned to them on
+that date. The year is resolved per-quarter at solve time.
+
+**Behavior matches H19**: the birthday date is injected into the per-staff blocked-date set
+before decision variables are built, so the constraint is enforced at the variable-creation
+level rather than as an explicit model constraint.
+
 ---
 
-## Vacation / Unavailability
-
-### Data Format
+### Vacation / Unavailability (CSV)
 
 Vacation data is stored in a separate CSV file (`data/vacations.csv`):
 

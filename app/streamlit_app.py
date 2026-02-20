@@ -422,6 +422,53 @@ def page_personal() -> None:
     with col4:
         st.metric("Gesamt", len(staff_list))
 
+    # Birthday overview
+    st.markdown("---")
+    st.markdown("### 🎂 Geburtstage")
+    st.caption(
+        "Mitarbeiter dürfen an ihrem Geburtstag **keine Schicht** eingeteilt werden "
+        "(wird wie ein Urlaubstag behandelt)."
+    )
+
+    month_names = {
+        1: "Januar", 2: "Februar", 3: "März", 4: "April",
+        5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
+        9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
+    }
+    month_filter_options = ["Alle Monate"] + list(month_names.values())
+    selected_month_label = st.selectbox(
+        "Monat filtern", month_filter_options, index=0
+    )
+    selected_month: int | None = None
+    if selected_month_label != "Alle Monate":
+        selected_month = next(k for k, v in month_names.items() if v == selected_month_label)
+
+    birthday_rows = []
+    for s in staff_list:
+        if s.birthday is None:
+            continue
+        month, day = (int(p) for p in s.birthday.split("-"))
+        if selected_month is not None and month != selected_month:
+            continue
+        birthday_rows.append({
+            "Name": s.name,
+            "Kürzel": s.identifier,
+            "Beruf": s.beruf.value,
+            "Geburtstag": f"{day:02d}. {month_names[month]}",
+            "MM-DD": s.birthday,
+        })
+
+    if birthday_rows:
+        birthday_rows.sort(key=lambda r: r["MM-DD"])
+        bd_df = pd.DataFrame(birthday_rows).drop(columns=["MM-DD"])
+        st.dataframe(bd_df, use_container_width=True)
+        st.caption(
+            f"{len(birthday_rows)} von {sum(1 for s in staff_list if s.birthday)} "
+            "Mitarbeitern mit eingetragenem Geburtstag."
+        )
+    else:
+        st.info("Keine Geburtstage für den gewählten Filter gefunden.")
+
 
 def page_regeln() -> None:
     """Page: Display constraint rules."""
@@ -462,6 +509,7 @@ def page_regeln() -> None:
     - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster
     - **Nacht/Tag-Konflikt**: Kein Tagdienst am selben oder nächsten Tag nach Nachtschicht
     - **nd_exceptions**: Keine Nächte an Wochentagen in `nd_exceptions` (1=Mo, 7=So)
+    - **🎂 Geburtstag**: Mitarbeiter dürfen an ihrem Geburtstag **keine Schicht** eingeteilt werden (wirkt wie Urlaub)
 
     ## Soft Constraints (Optimierungsziele)
 

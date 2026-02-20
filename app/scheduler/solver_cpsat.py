@@ -83,6 +83,13 @@ def generate_schedule_cpsat(
         for s in staff_list
     }
 
+    # Block birthdays: treat an employee's birthday like a vacation day
+    for staff in staff_list:
+        for year in {quarter_start.year, quarter_end.year}:
+            bd = staff.get_birthday_date(year)
+            if bd is not None and quarter_start <= bd <= quarter_end:
+                staff_vacation_dates[staff.identifier].add(bd)
+
     # Separate shifts by category
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
     night_shifts = [s for s in shifts if s.is_night_shift()]

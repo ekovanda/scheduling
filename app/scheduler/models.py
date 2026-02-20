@@ -59,6 +59,15 @@ class Staff(BaseModel):
     nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
     nd_min_consecutive: int = 2  # Min consecutive nights required (Azubis=1, most TFA/Intern=2)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
+    birthday: str | None = None  # Birthday in MM-DD format (no year), e.g. "04-15"
+
+    @field_validator("birthday", mode="before")
+    @classmethod
+    def parse_birthday(cls, v: Any) -> str | None:
+        """Parse birthday from CSV (handles empty strings)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return v.strip()
 
     @field_validator("abteilung", mode="before")
     @classmethod
@@ -93,6 +102,19 @@ class Staff(BaseModel):
         if isinstance(v, str):
             return json.loads(v)
         return v
+
+    def get_birthday_date(self, year: int) -> date | None:
+        """Return this employee's birthday as a date for the given year.
+
+        Returns None if birthday is unset or doesn't exist in that year (e.g. Feb 29).
+        """
+        if self.birthday is None:
+            return None
+        month, day = (int(p) for p in self.birthday.split("-"))
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None  # e.g. Feb 29 in a non-leap year
 
     def effective_nights_weight(self, is_paired: bool) -> float:
         """Calculate effective night weight for fairness.
@@ -246,6 +268,9 @@ def load_staff_from_csv(csv_path: Path) -> list[Staff]:
             row["nd_possible"] = row["nd_possible"].lower() == "true"
             row["nd_alone"] = row["nd_alone"].lower() == "true"
             row["hours"] = int(row["hours"])
+            # birthday column is optional for backwards compatibility
+            if "birthday" not in row:
+                row["birthday"] = None
             staff_list.append(Staff(**row))
     return staff_list
 

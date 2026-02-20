@@ -977,5 +977,134 @@ def test_min_consecutive_uses_per_staff_value() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Birthday tests
+# ---------------------------------------------------------------------------
+
+def _make_staff_with_birthday(birthday: str | None = None) -> Staff:
+    """Helper: minimal Staff with optional birthday."""
+    return Staff(
+        name="Test Staff",
+        identifier="TST",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+        birthday=birthday,
+    )
+
+
+def test_birthday_field_default_is_none() -> None:
+    """Staff without birthday field defaults to None."""
+    s = _make_staff_with_birthday()
+    assert s.birthday is None
+
+
+def test_birthday_empty_string_normalised_to_none() -> None:
+    """Empty string in birthday column is normalised to None."""
+    s = _make_staff_with_birthday("")
+    assert s.birthday is None
+
+
+def test_birthday_stored_as_mm_dd() -> None:
+    """Valid birthday string is stored verbatim."""
+    s = _make_staff_with_birthday("04-15")
+    assert s.birthday == "04-15"
+
+
+def test_get_birthday_date_returns_correct_date() -> None:
+    """get_birthday_date resolves correct calendar date for a given year."""
+    s = _make_staff_with_birthday("06-22")
+    bd = s.get_birthday_date(2026)
+    assert bd == date(2026, 6, 22)
+
+
+def test_get_birthday_date_none_when_no_birthday() -> None:
+    """get_birthday_date returns None when birthday is unset."""
+    s = _make_staff_with_birthday(None)
+    assert s.get_birthday_date(2026) is None
+
+
+def test_get_birthday_date_feb29_non_leap_returns_none() -> None:
+    """Feb 29 birthday returns None for non-leap years."""
+    s = _make_staff_with_birthday("02-29")
+    assert s.get_birthday_date(2026) is None  # 2026 is not a leap year
+    assert s.get_birthday_date(2024) == date(2024, 2, 29)  # 2024 is a leap year
+
+
+def test_birthday_blocks_shift_in_solver() -> None:
+    """Birthday date is treated like a vacation day — no shifts assigned on that date."""
+    from datetime import date as _date
+    from app.scheduler.solver import generate_schedule
+
+    quarter_start = _date(2026, 4, 1)
+
+    # Give one TFA staff a birthday on April 15 (falls inside Q2)
+    tfa_birthday = Staff(
+        name="Birthday TFA",
+        identifier="BTF",
+        adult=True,
+        hours=40,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_max_consecutive=3,
+        nd_min_consecutive=2,
+        nd_exceptions=[],
+        birthday="04-15",
+    )
+    # Extra TFA to keep the schedule feasible
+    filler_staff = [
+        Staff(
+            name=f"Filler {i}",
+            identifier=f"F{i}",
+            adult=True,
+            hours=40,
+            beruf=Beruf.TFA,
+            reception=True,
+            nd_possible=True,
+            nd_alone=False,
+            nd_max_consecutive=4,
+            nd_min_consecutive=2,
+            nd_exceptions=[],
+        )
+        for i in range(8)
+    ]
+    azubi_staff = [
+        Staff(
+            name=f"Azubi {i}",
+            identifier=f"AZ{i}",
+            adult=True,
+            hours=40,
+            beruf=Beruf.AZUBI,
+            reception=True,
+            nd_possible=True,
+            nd_alone=False,
+            nd_max_consecutive=2,
+            nd_min_consecutive=1,
+            nd_exceptions=[],
+        )
+        for i in range(4)
+    ]
+
+    staff_list = [tfa_birthday, *filler_staff, *azubi_staff]
+    result = generate_schedule(staff_list, quarter_start, vacations=[], max_solve_time_seconds=30)
+
+    if result.success:
+        schedule = result.get_best_schedule()
+        birthday_assignments = [
+            a for a in schedule.assignments
+            if a.staff_identifier == "BTF" and a.shift.shift_date == _date(2026, 4, 15)
+        ]
+        assert not birthday_assignments, (
+            "Staff member must not be assigned any shift on their birthday"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
