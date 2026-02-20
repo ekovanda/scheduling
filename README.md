@@ -59,12 +59,9 @@ pytest tests/ -v
 └── tests/                     # Unit tests
 ```
 
-## Solver Options
+## Solver
 
-| Backend | Time | Use Case |
-|---------|------|----------|
-| **CP-SAT** (default) | 60-120s | Production - optimal fairness |
-| Heuristic | 2-5s | Development - quick iterations |
+Uses **OR-Tools CP-SAT** constraint programming solver (60-120s) for guaranteed optimal fairness.
 
 ## License
 

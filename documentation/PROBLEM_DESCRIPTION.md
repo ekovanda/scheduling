@@ -89,16 +89,11 @@ Staff:
 
 ## Solver Requirements
 
-### Primary: CP-SAT (OR-Tools)
+### CP-SAT (OR-Tools)
 - Constraint programming for guaranteed optimal fairness
 - Models all hard constraints explicitly
 - Minimizes max FTE-deviation within role groups
-- Recommended for production use
-
-### Fallback: Heuristic
-- Greedy assignment + local search (simulated annealing)
-- Faster but cannot guarantee optimal fairness
-- Useful for quick iterations during development
+- Default time limit: 120 seconds
 
 ## UI Requirements (German)
 

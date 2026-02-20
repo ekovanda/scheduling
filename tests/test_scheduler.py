@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from app.scheduler.models import Abteilung, Beruf, Staff, ShiftType, generate_quarter_shifts
-from app.scheduler.solver import SolverBackend, generate_schedule
+from app.scheduler.solver import generate_schedule
 from app.scheduler.validator import validate_schedule
 
 
@@ -226,7 +226,7 @@ def test_three_week_block_constraint() -> None:
 
     # Generate schedule for a short period
     quarter_start = date(2026, 4, 1)
-    result = generate_schedule(staff_list, quarter_start, max_iterations=500, random_seed=42)
+    result = generate_schedule(staff_list, quarter_start, max_solve_time_seconds=60, random_seed=42)
 
     if result.success:
         schedule = result.get_best_schedule()
@@ -406,9 +406,8 @@ def test_cpsat_solver_produces_valid_schedule() -> None:
     result = generate_schedule(
         staff,
         date(2026, 4, 1),
-        max_iterations=1200,  # 60 seconds
+        max_solve_time_seconds=60,
         random_seed=42,
-        backend=SolverBackend.CPSAT,
     )
 
     assert result.success, f"CP-SAT solver failed: {result.unsatisfiable_constraints}"
@@ -434,9 +433,8 @@ def test_cpsat_fairness_within_tolerance() -> None:
     result = generate_schedule(
         staff,
         date(2026, 4, 1),
-        max_iterations=2400,  # 120 seconds
+        max_solve_time_seconds=120,
         random_seed=42,
-        backend=SolverBackend.CPSAT,
     )
 
     assert result.success
@@ -898,7 +896,7 @@ def test_vacation_blocks_shifts() -> None:
     quarter_start = date(2026, 4, 1)
     result = generate_schedule(
         staff_list, quarter_start, vacations=vacations, 
-        max_iterations=500, random_seed=42, backend=SolverBackend.CPSAT
+        max_solve_time_seconds=60, random_seed=42
     )
     
     if result.success:

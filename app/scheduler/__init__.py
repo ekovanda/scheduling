@@ -1,7 +1,7 @@
 """Dienstplan scheduler module."""
 
 from .models import Assignment, Beruf, Schedule, Shift, ShiftType, Staff
-from .solver import SolverBackend, SolverResult, generate_schedule
+from .solver import SolverResult, generate_schedule
 from .validator import ValidationResult, validate_schedule
 
 __all__ = [
@@ -11,7 +11,6 @@ __all__ = [
     "Shift",
     "ShiftType",
     "Staff",
-    "SolverBackend",
     "SolverResult",
     "generate_schedule",
     "ValidationResult",

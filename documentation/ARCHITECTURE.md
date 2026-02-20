@@ -8,12 +8,12 @@ The Dienstplan Generator uses a **constraint programming** approach (OR-Tools CP
 
 ```
 app/
-├── streamlit_app.py          # Streamlit UI (6 pages, German)
+├── streamlit_app.py          # Streamlit UI (7 pages, German)
 └── scheduler/
     ├── __init__.py           # Public exports
     ├── models.py             # Pydantic data models
     ├── validator.py          # Constraint validation engine
-    ├── solver.py             # Solver facade + heuristic implementation
+    ├── solver.py             # Solver facade (delegates to solver_cpsat)
     └── solver_cpsat.py       # OR-Tools CP-SAT implementation
 ```
 
@@ -66,18 +66,15 @@ Schedule.count_effective_nights(staff_id, staff) -> float  # Sum of weighted nig
 
 ### 3. solver.py - Solver Facade
 
-**SolverBackend Enum:**
-- `HEURISTIC`: Greedy + local search (fast, less optimal)
-- `CPSAT`: OR-Tools constraint programming (slower, optimal)
+Thin facade that delegates to the CP-SAT solver.
 
 **Main Entry Point:**
 ```python
 def generate_schedule(
     staff_list: list[Staff],
     quarter_start: date,
-    max_iterations: int = 2000,
+    max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
-    backend: SolverBackend = SolverBackend.HEURISTIC,
 ) -> SolverResult
 ```
 
@@ -116,25 +113,8 @@ Minimize `sum(range_var)` where `range_var = max_fte - min_fte` for combined Not
    - min_var = min(scaled_counts)
    - range_var = max_var - min_var
 5. Minimize sum of all range_var
-6. Solve with time limit
+6. Solve with time limit (120s default)
 7. Extract solution
-```
-
-### Heuristic Fallback
-
-```
-Phase 1 - Greedy Assignment:
-1. Sort shifts by date
-2. For each shift, select staff with lowest FTE load
-3. Track active night blocks for nd_count continuity
-
-Phase 2 - Local Search:
-1. For 2000 iterations:
-   a. 40% fairness moves (overloaded → underloaded)
-   b. 30% swap moves (exchange two assignments)
-   c. 30% shift moves (reassign single shift)
-2. Accept if valid and improves penalty
-3. Simulated annealing for exploration
 ```
 
 ## Performance Characteristics
@@ -142,7 +122,6 @@ Phase 2 - Local Search:
 | Solver | Time | Optimality | Use Case |
 |--------|------|------------|----------|
 | CP-SAT | 60-120s | Guaranteed optimal | Production |
-| Heuristic | 2-5s | Local optimum | Development/testing |
 
 ## Data Flow
 

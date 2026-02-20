@@ -162,11 +162,11 @@ Edit `data/staff_sample.csv` with columns:
 # In Python REPL
 from datetime import date
 from app.scheduler.models import load_staff_from_csv
-from app.scheduler.solver import generate_schedule, SolverBackend
+from app.scheduler.solver import generate_schedule
 from pathlib import Path
 
 staff = load_staff_from_csv(Path("data/staff_sample.csv"))
-result = generate_schedule(staff, date(2026, 4, 1), backend=SolverBackend.CPSAT)
+result = generate_schedule(staff, date(2026, 4, 1), random_seed=42)
 
 if result.success:
     print(f"Assignments: {len(result.get_best_schedule().assignments)}")

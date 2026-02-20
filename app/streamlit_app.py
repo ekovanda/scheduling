@@ -13,10 +13,11 @@ from scheduler.models import (
     ShiftType,
     Staff,
     Vacation,
+    calculate_available_days,
     load_staff_from_csv,
     load_vacations_from_csv,
 )
-from scheduler.solver import SolverBackend, generate_schedule
+from scheduler.solver import generate_schedule
 from scheduler.validator import validate_schedule
 
 # Page config
@@ -70,17 +71,27 @@ def main() -> None:
     
     # User is authenticated (or no password required) - show full app
     st.sidebar.title("📅 Dienstplan Generator")
+    
+    # Handle navigation from buttons (e.g., "Plan anzeigen" button on Plan erstellen page)
+    nav_default_index = 0
+    nav_options = [
+        "Laden / CSV",
+        "Personal",
+        "Urlaub",
+        "Regeln",
+        "Plan erstellen",
+        "Plan anzeigen",
+        "Export",
+    ]
+    if "nav_target" in st.session_state:
+        target = st.session_state.pop("nav_target")
+        if target in nav_options:
+            nav_default_index = nav_options.index(target)
+
     page = st.sidebar.radio(
         "Navigation",
-        [
-            "Laden / CSV",
-            "Personal",
-            "Urlaub",
-            "Regeln",
-            "Plan erstellen",
-            "Plan anzeigen",
-            "Export",
-        ],
+        nav_options,
+        index=nav_default_index,
     )
 
     # Initialize session state
@@ -509,30 +520,9 @@ def page_plan_erstellen() -> None:
     st.markdown("---")
     st.markdown("### Solver-Einstellungen")
     
-    # Solver backend selection
-    solver_backend = st.selectbox(
-        "Solver-Backend",
-        options=[SolverBackend.CPSAT, SolverBackend.HEURISTIC],
-        format_func=lambda x: "CP-SAT (OR-Tools) - empfohlen" if x == SolverBackend.CPSAT else "Heuristik (Greedy + Local Search)",
-        index=0,
-        help="CP-SAT garantiert optimale Fairness, Heuristik ist schneller aber weniger fair",
+    random_seed = st.number_input(
+        "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
     )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if solver_backend == SolverBackend.CPSAT:
-            max_time = st.number_input(
-                "Max. Lösungszeit (Sekunden)", min_value=30, max_value=600, value=120, step=30
-            )
-            max_iterations = max_time * 20  # Convert to iterations scale
-        else:
-            max_iterations = st.number_input(
-                "Max. Iterationen", min_value=100, max_value=10000, value=2000, step=100
-            )
-    with col2:
-        random_seed = st.number_input(
-            "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
-        )
 
     # Show eligibility information
     st.markdown("---")
@@ -554,17 +544,14 @@ def page_plan_erstellen() -> None:
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary"):
-        spinner_msg = "⏳ Generiere Dienstplan mit CP-SAT..." if solver_backend == SolverBackend.CPSAT else "⏳ Generiere Dienstplan..."
-        with st.spinner(spinner_msg):
+        with st.spinner("⏳ Generiere Dienstplan mit CP-SAT..."):
             try:
                 staff_list: list[Staff] = st.session_state.staff_list
                 result = generate_schedule(
                     staff_list,
                     quarter_start,
                     vacations=vacations,
-                    max_iterations=max_iterations,
                     random_seed=random_seed,
-                    backend=solver_backend,
                 )
 
                 if result.success:
@@ -579,14 +566,6 @@ def page_plan_erstellen() -> None:
                         f"✅ Dienstplan erfolgreich erstellt! ({len(best_schedule.assignments)} Zuweisungen)"
                     )
                     st.metric("Soft Penalty", f"{validation.soft_penalty:.2f}")
-
-                    # Show alternatives
-                    if len(result.schedules) > 1:
-                        st.markdown("### Alternative Lösungen")
-                        for i, (_sched, penalty) in enumerate(
-                            zip(result.schedules[1:], result.penalties[1:], strict=True), start=2
-                        ):
-                            st.text(f"Lösung {i}: Penalty = {penalty:.2f}")
 
                 else:
                     st.error("❌ Keine gültige Lösung gefunden!")
@@ -606,10 +585,13 @@ def page_plan_erstellen() -> None:
                 st.error(f"❌ Fehler beim Generieren: {e}")
                 st.exception(e)
 
-    # Current status
+    # Current status + navigation
     st.markdown("---")
     if st.session_state.schedule:
-        st.success("✅ Plan vorhanden - wechsle zu 'Plan anzeigen'")
+        st.success("✅ Plan vorhanden")
+        if st.button("📅 Plan anzeigen →", type="primary"):
+            st.session_state.nav_target = "Plan anzeigen"
+            st.rerun()
     else:
         st.info("ℹ️ Noch kein Plan generiert")
 
@@ -730,16 +712,29 @@ def page_plan_anzeigen() -> None:
         st.markdown("### Fairness-Analyse")
         
         if staff_list:
-            # Compute all statistics
+            # Get vacation data for available-days calculation
+            vacations: list[Vacation] = st.session_state.vacations or []
+            quarter_start = schedule.quarter_start
+            quarter_end = schedule.quarter_end
+            total_quarter_days = (quarter_end - quarter_start).days + 1
+            
+            # Compute all statistics including vacation/availability
             staff_stats = []
             for staff in staff_list:
                 weekends = schedule.count_weekend_shifts(staff.identifier)
                 effective_nights = schedule.count_effective_nights(staff.identifier, staff)
-                total_notdienst = weekends + effective_nights  # Combined metric
+                total_notdienst = weekends + effective_nights
+
+                # Vacation & availability
+                avail_days = calculate_available_days(
+                    staff.identifier, vacations, quarter_start, quarter_end
+                )
+                vacation_days = total_quarter_days - avail_days
+                presence_factor = avail_days / total_quarter_days if total_quarter_days > 0 else 1.0
                 
-                # FTE Scaling (normalized to 40h)
-                if staff.hours > 0:
-                    total_notdienst_fte = (total_notdienst / staff.hours) * 40
+                # FTE Scaling: normalize by hours AND presence
+                if staff.hours > 0 and presence_factor > 0:
+                    total_notdienst_fte = (total_notdienst / staff.hours / presence_factor) * 40
                 else:
                     total_notdienst_fte = 0.0
                 
@@ -747,40 +742,38 @@ def page_plan_anzeigen() -> None:
                     "Name": staff.name,
                     "Kürzel": staff.identifier,
                     "Beruf": staff.beruf.value,
-                    "Abteilung": staff.abteilung.value,
-                    "Stunden": staff.hours,
-                    "ND möglich": "✅" if staff.nd_possible else "❌",
-                    "WE (Abs)": weekends,
-                    "Nächte (Eff)": effective_nights,
-                    "Notdienst Gesamt": total_notdienst,
-                    "Notdienst / 40h": round(total_notdienst_fte, 2),
+                    "Std.": staff.hours,
+                    "Urlaub": vacation_days,
+                    "Verfügbar": avail_days,
+                    "WE": weekends,
+                    "Nächte": round(effective_nights, 1),
+                    "Gesamt": round(total_notdienst, 1),
+                    "Norm./40h": round(total_notdienst_fte, 2),
                 })
             
             df_stats = pd.DataFrame(staff_stats)
             
             # ========== FAIRNESS CHECK PER GROUP ==========
-            # Check for unfair distribution WITHIN each job group (threshold: 2+ normalized shifts)
             fairness_issues: list[dict] = []
             for beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
                 group_df = df_stats[df_stats["Beruf"] == beruf.value]
                 if len(group_df) < 2:
                     continue
                 
-                group_mean = group_df["Notdienst / 40h"].mean()
+                group_mean = group_df["Norm./40h"].mean()
                 for _, row in group_df.iterrows():
-                    deviation = row["Notdienst / 40h"] - group_mean
-                    if abs(deviation) >= 2.0:  # Threshold: 2+ normalized shifts
+                    deviation = row["Norm./40h"] - group_mean
+                    if abs(deviation) >= 2.0:
                         fairness_issues.append({
                             "name": row["Name"],
                             "kuerzel": row["Kürzel"],
                             "beruf": beruf.value,
-                            "value": row["Notdienst / 40h"],
+                            "value": row["Norm./40h"],
                             "group_mean": group_mean,
                             "deviation": deviation,
                             "status": "overburdened" if deviation > 0 else "underburdened",
                         })
             
-            # Display fairness warning with specific names
             if fairness_issues:
                 overburdened = [i for i in fairness_issues if i["status"] == "overburdened"]
                 underburdened = [i for i in fairness_issues if i["status"] == "underburdened"]
@@ -806,46 +799,65 @@ def page_plan_anzeigen() -> None:
             else:
                 st.success("✅ Faire Verteilung: Keine Mitarbeiter mit ≥2 Abweichung vom Gruppendurchschnitt.")
             
-            # ========== KEY METRICS ==========
-            st.markdown("#### 📊 Übersicht")
+            # ========== KEY METRICS PER GROUP ==========
+            st.markdown("#### 📊 Fairness-Kennzahlen pro Gruppe")
             
-            # Fairness KPIs
-            notdienst_values = df_stats["Notdienst / 40h"].values
-            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            with col_m1:
-                st.metric("Ø Notdienst / 40h", f"{notdienst_values.mean():.2f}")
-            with col_m2:
-                st.metric("Std. Abweichung", f"{notdienst_values.std():.2f}", help="Niedriger = fairer")
-            with col_m3:
-                st.metric("Min", f"{notdienst_values.min():.2f}")
-            with col_m4:
-                st.metric("Max", f"{notdienst_values.max():.2f}")
+            group_metrics_cols = st.columns(3)
+            for idx, (beruf, label, icon) in enumerate([
+                (Beruf.TFA, "TFA", "👩‍⚕️"),
+                (Beruf.AZUBI, "Azubi", "🎓"),
+                (Beruf.INTERN, "Intern", "🩺"),
+            ]):
+                group_df = df_stats[df_stats["Beruf"] == beruf.value]
+                with group_metrics_cols[idx]:
+                    st.markdown(f"**{icon} {label}** ({len(group_df)} MA)")
+                    if len(group_df) >= 2:
+                        g_vals = group_df["Norm./40h"]
+                        spread = g_vals.max() - g_vals.min()
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.metric("Ø Norm./40h", f"{g_vals.mean():.2f}")
+                            st.metric("Min", f"{g_vals.min():.2f}")
+                        with c2:
+                            st.metric("Spread", f"{spread:.2f}", help="Max - Min (niedriger = fairer)")
+                            st.metric("Max", f"{g_vals.max():.2f}")
+                    elif len(group_df) == 1:
+                        st.metric("Norm./40h", f"{group_df['Norm./40h'].iloc[0]:.2f}")
+                        st.caption("Nur 1 MA — kein Vergleich möglich")
+                    else:
+                        st.caption("Keine Mitarbeiter in dieser Gruppe")
 
             # ========== DETAILED TABLES BY GROUP ==========
             st.markdown("---")
             st.markdown("#### 📋 Detailansicht nach Berufsgruppe")
-            st.caption("Farbkodierung: 🟢 Grün = unterdurchschnittlich, 🟡 Gelb = durchschnittlich, 🔴 Rot = überdurchschnittlich (relativ zur Gruppe)")
+            st.caption(
+                "Farbkodierung (Norm./40h): 🟢 ≥1.5 unter Ø, 🟡 innerhalb ±1.5, 🔴 ≥1.5 über Ø  —  "
+                "Normalisierung: Notdienst ÷ Vertragsstd. ÷ Anwesenheitsfaktor × 40"
+            )
             
-            def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.DataFrame:
+            # Columns to display in detail tables (condensed)
+            detail_cols = ["Name", "Kürzel", "Std.", "Urlaub", "Verfügbar", "WE", "Nächte", "Gesamt", "Norm./40h"]
+            
+            def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.io.formats.style.Styler:
                 """Apply red/yellow/green styling based on deviation from group mean."""
                 def color_notdienst(val: float) -> str:
                     deviation = val - group_mean
                     if deviation >= 1.5:
-                        return "background-color: #ffcccc"  # Red - overburdened
+                        return "background-color: #ffcccc"
                     elif deviation <= -1.5:
-                        return "background-color: #ccffcc"  # Green - underburdened
+                        return "background-color: #ccffcc"
                     else:
-                        return "background-color: #ffffcc"  # Yellow - normal
+                        return "background-color: #ffffcc"
                 
                 return df.style.applymap(
-                    color_notdienst, subset=["Notdienst / 40h"]
-                ).format({"Nächte (Eff)": "{:.1f}", "Notdienst Gesamt": "{:.1f}"})
+                    color_notdienst, subset=["Norm./40h"]
+                ).format({"Nächte": "{:.1f}", "Gesamt": "{:.1f}"})
             
             # TFA Table
-            df_tfa = df_stats[df_stats["Beruf"] == "TFA"].copy()
+            df_tfa = df_stats[df_stats["Beruf"] == "TFA"][detail_cols].copy()
             if not df_tfa.empty:
-                tfa_mean = df_tfa["Notdienst / 40h"].mean()
-                st.markdown(f"##### 👩‍⚕️ TFA ({len(df_tfa)} Mitarbeiter, Ø {tfa_mean:.2f} Notdienst/40h)")
+                tfa_mean = df_tfa["Norm./40h"].mean()
+                st.markdown(f"##### 👩‍⚕️ TFA ({len(df_tfa)} MA, Ø {tfa_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_tfa, tfa_mean),
                     use_container_width=True,
@@ -853,10 +865,10 @@ def page_plan_anzeigen() -> None:
                 )
             
             # Azubi Table
-            df_azubi = df_stats[df_stats["Beruf"] == "Azubi"].copy()
+            df_azubi = df_stats[df_stats["Beruf"] == "Azubi"][detail_cols].copy()
             if not df_azubi.empty:
-                azubi_mean = df_azubi["Notdienst / 40h"].mean()
-                st.markdown(f"##### 🎓 Azubi ({len(df_azubi)} Mitarbeiter, Ø {azubi_mean:.2f} Notdienst/40h)")
+                azubi_mean = df_azubi["Norm./40h"].mean()
+                st.markdown(f"##### 🎓 Azubi ({len(df_azubi)} MA, Ø {azubi_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_azubi, azubi_mean),
                     use_container_width=True,
@@ -864,54 +876,32 @@ def page_plan_anzeigen() -> None:
                 )
             
             # Intern Table
-            df_intern = df_stats[df_stats["Beruf"] == "Intern"].copy()
+            df_intern = df_stats[df_stats["Beruf"] == "Intern"][detail_cols].copy()
             if not df_intern.empty:
-                intern_mean = df_intern["Notdienst / 40h"].mean()
-                st.markdown(f"##### 🩺 Intern ({len(df_intern)} Mitarbeiter, Ø {intern_mean:.2f} Notdienst/40h)")
+                intern_mean = df_intern["Norm./40h"].mean()
+                st.markdown(f"##### 🩺 Intern ({len(df_intern)} MA, Ø {intern_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_intern, intern_mean),
                     use_container_width=True,
                     height=min(400, 35 * len(df_intern) + 38),
                 )
 
-            # ========== GROUP COMPARISON ==========
-            st.markdown("---")
-            st.markdown("#### 👥 Gruppen-Vergleich")
-            
-            group_stats = df_stats.groupby("Beruf").agg({
-                "Notdienst / 40h": ["count", "mean", "std", "min", "max"],
-                "WE (Abs)": "sum",
-                "Nächte (Eff)": "sum",
-            }).round(2)
-            
-            # Flatten column names
-            group_stats.columns = [
-                "Anzahl MA", "Ø Notdienst/40h", "Std.Abw.", "Min", "Max",
-                "WE Gesamt", "Nächte Gesamt"
-            ]
-            group_stats["Spread"] = group_stats["Max"] - group_stats["Min"]
-            
-            st.dataframe(group_stats, use_container_width=True)
-            
-            # ========== OUTLIERS / ACTIONABLE INSIGHTS ==========
+            # ========== ACTIONABLE INSIGHTS ==========
             st.markdown("---")
             st.markdown("#### 🎯 Handlungsempfehlungen")
             
-            # Find intra-group outliers (focus on within-group fairness)
             recommendations = []
             for beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
                 group_df = df_stats[df_stats["Beruf"] == beruf.value]
                 if len(group_df) < 2:
                     continue
                 
-                group_mean = group_df["Notdienst / 40h"].mean()
-                group_std = group_df["Notdienst / 40h"].std()
-                group_spread = group_df["Notdienst / 40h"].max() - group_df["Notdienst / 40h"].min()
+                group_mean = group_df["Norm./40h"].mean()
+                group_spread = group_df["Norm./40h"].max() - group_df["Norm./40h"].min()
                 
-                # Flag groups with high internal spread (>3.0)
                 if group_spread > 3.0:
-                    high_load = group_df[group_df["Notdienst / 40h"] > group_mean + 1.5]
-                    low_load = group_df[group_df["Notdienst / 40h"] < group_mean - 1.5]
+                    high_load = group_df[group_df["Norm./40h"] > group_mean + 1.5]
+                    low_load = group_df[group_df["Norm./40h"] < group_mean - 1.5]
                     
                     high_names = ", ".join(high_load["Name"].tolist()) if not high_load.empty else "-"
                     low_names = ", ".join(low_load["Name"].tolist()) if not low_load.empty else "-"
@@ -926,11 +916,10 @@ def page_plan_anzeigen() -> None:
             if recommendations:
                 st.warning("**Ungleichgewicht innerhalb von Gruppen:**")
                 for rec in recommendations:
-                    st.markdown(f"""
-                    **{rec['group']}** (Spread: {rec['spread']:.2f}):
-                    - Überlastet: {rec['high_load']}
-                    - Unterlastet: {rec['low_load']}
-                    """)
+                    st.markdown(
+                        f"**{rec['group']}** (Spread: {rec['spread']:.2f}): "
+                        f"Überlastet: {rec['high_load']} · Unterlastet: {rec['low_load']}"
+                    )
             else:
                 st.success("✅ Alle Gruppen haben eine ausgewogene interne Verteilung (Spread ≤ 3.0).")
             
@@ -944,15 +933,28 @@ def page_plan_anzeigen() -> None:
                   - TFA/Intern: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
                   - Azubi: Immer 1.0× (auch bei Paarung)
                 
-                **FTE-Normalisierung**: $\frac{\text{Notdienst Gesamt}}{\text{Vertragsstunden}} \times 40$
+                **Normalisierung** (Norm./40h):
                 
-                **Fairness-Schwellwert**: Eine Abweichung von ≥2.0 normalisierte Schichten 
-                vom Gruppendurchschnitt wird als unfair markiert.
+                $$\frac{\text{Notdienst Gesamt}}{\text{Vertragsstd.} \times \text{Anwesenheitsfaktor}} \times 40$$
                 
-                **Farbkodierung**: Vergleich mit dem Durchschnitt der eigenen Berufsgruppe:
-                - 🔴 Rot: ≥1.5 über Durchschnitt
+                Anwesenheitsfaktor = $\frac{\text{Verfügbare Tage}}{\text{Quartalstage}}$
+                
+                → Ein Mitarbeiter mit 20h-Vertrag und 10% Urlaub wird auf das gleiche
+                Niveau normalisiert wie jemand mit 40h und 0% Urlaub.
+                
+                **Spalten in der Detailansicht:**
+                - **Urlaub**: Urlaubstage im Quartal
+                - **Verfügbar**: Quartalstage − Urlaub (= planbare Tage)
+                - **WE / Nächte**: Absolute Anzahl zugewiesener Schichten
+                - **Gesamt**: WE + Eff. Nächte
+                - **Norm./40h**: Normalisierter Fairness-Wert (Vergleichswert)
+                
+                **Fairness-Schwellwert**: ≥2.0 Abweichung vom Gruppendurchschnitt = unfair.
+                
+                **Farbkodierung** (relativ zur Berufsgruppe):
+                - 🔴 Rot: ≥1.5 über Ø
                 - 🟡 Gelb: Innerhalb ±1.5
-                - 🟢 Grün: ≥1.5 unter Durchschnitt
+                - 🟢 Grün: ≥1.5 unter Ø
                 """)
 
     # --- TAB 3: VALIDATION ---
