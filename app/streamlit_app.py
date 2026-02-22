@@ -10,9 +10,11 @@ import hashlib
 import os
 from scheduler.models import (
     Beruf,
+    PreviousPlanContext,
     ShiftType,
     Staff,
     Vacation,
+    build_previous_context,
     calculate_available_days,
     load_staff_from_csv,
     load_vacations_from_csv,
@@ -79,6 +81,7 @@ def main() -> None:
         "Personal",
         "Urlaub",
         "Regeln",
+        "Vorheriger Plan",
         "Plan erstellen",
         "Plan anzeigen",
         "Export",
@@ -103,6 +106,8 @@ def main() -> None:
         st.session_state.schedule = None
     if "validation_result" not in st.session_state:
         st.session_state.validation_result = None
+    if "previous_context" not in st.session_state:
+        st.session_state.previous_context = None
 
     # Route to pages
     if page == "Laden / CSV":
@@ -113,6 +118,8 @@ def main() -> None:
         page_urlaub()
     elif page == "Regeln":
         page_regeln()
+    elif page == "Vorheriger Plan":
+        page_vorheriger_plan()
     elif page == "Plan erstellen":
         page_plan_erstellen()
     elif page == "Plan anzeigen":
@@ -531,6 +538,172 @@ def page_regeln() -> None:
     )
 
 
+def page_vorheriger_plan() -> None:
+    """Page: Upload and review previous quarter's carry-forward context."""
+    st.title("📊 Vorheriger Plan (Carry-Forward)")
+
+    st.markdown(
+        "Hier können Sie den **Fortschreibungskontext** des letzten Quartals hochladen "
+        "und überprüfen.  Die Fairness-Deltas werden beim nächsten Planungslauf "
+        "berücksichtigt, damit Über-/Unterbelastungen über Quartale hinweg ausgeglichen "
+        "werden."
+    )
+
+    st.markdown("---")
+    st.markdown("### Kontext hochladen")
+    context_file = st.file_uploader(
+        "Carry-Forward JSON (aus dem Export des letzten Quartals)",
+        type=["json"],
+        key="context_upload",
+        help="Datei `kontext_YYYY-MM-DD.json` vom Export-Tab des vorherigen Plans.",
+    )
+
+    if context_file is not None:
+        try:
+            raw = context_file.read().decode("utf-8")
+            ctx = PreviousPlanContext.model_validate_json(raw)
+            st.session_state.previous_context = ctx
+            st.success(
+                f"✅ Kontext geladen — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
+                f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
+                f"({len(ctx.carry_forward)} Mitarbeiter, "
+                f"{len(ctx.trailing_assignments)} Grenzschichten)"
+            )
+        except Exception as e:
+            st.error(f"❌ Fehler beim Laden: {e}")
+
+    # Show current context status
+    ctx: PreviousPlanContext | None = st.session_state.previous_context
+
+    if ctx is None:
+        st.info(
+            "ℹ️ Kein Vorquartal-Kontext geladen.  Der erste Planungslauf startet ohne "
+            "Carry-Forward — alle Deltas sind 0."
+        )
+        return
+
+    # Remove context button
+    if st.button("🗑️ Kontext entfernen"):
+        st.session_state.previous_context = None
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown(
+        f"### Übersicht — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
+        f"{ctx.quarter_end.strftime('%d.%m.%Y')}"
+    )
+
+    # --- Per-group summary cards ---
+    cf_df = pd.DataFrame([e.model_dump() for e in ctx.carry_forward])
+    if cf_df.empty:
+        st.warning("Keine Carry-Forward-Daten im Kontext.")
+        return
+
+    group_cols = st.columns(3)
+    for idx, (beruf, label, icon) in enumerate([
+        ("TFA", "TFA", "👩‍⚕️"),
+        ("Azubi", "Azubi", "🎓"),
+        ("Intern", "Intern", "🩺"),
+    ]):
+        grp = cf_df[cf_df["beruf"] == beruf]
+        if grp.empty:
+            continue
+        with group_cols[idx]:
+            st.markdown(f"#### {icon} {label}")
+            st.metric("Mitarbeiter", len(grp))
+            st.metric("Ø Norm./40h", f"{grp['normalized_40h'].mean():.2f}")
+            st.metric(
+                "Spread (max − min)",
+                f"{grp['carry_forward_delta'].max() - grp['carry_forward_delta'].min():.2f}",
+            )
+
+    # --- Detailed carry-forward table ---
+    st.markdown("---")
+    st.markdown("### Carry-Forward-Deltas pro Mitarbeiter")
+    st.caption(
+        "**Delta > 0**: Person hat *mehr* als den Gruppendurchschnitt geleistet → "
+        "bekommt im nächsten Quartal weniger.  "
+        "**Delta < 0**: Person hat *weniger* geleistet → bekommt mehr."
+    )
+
+    display_cols = [
+        "name", "identifier", "beruf", "hours",
+        "effective_nights", "weekend_shifts", "total_notdienst",
+        "normalized_40h", "group_mean_40h", "carry_forward_delta",
+    ]
+    display_names = {
+        "name": "Name",
+        "identifier": "Kürzel",
+        "beruf": "Beruf",
+        "hours": "Std.",
+        "effective_nights": "Eff. Nächte",
+        "weekend_shifts": "WE",
+        "total_notdienst": "Gesamt",
+        "normalized_40h": "Norm./40h",
+        "group_mean_40h": "Ø Gruppe",
+        "carry_forward_delta": "Delta",
+    }
+
+    table_df = cf_df[display_cols].copy()
+    table_df = table_df.rename(columns=display_names)
+
+    def _style_delta(val: float) -> str:
+        if abs(val) < 0.5:
+            return "background-color: #c8e6c9"  # green
+        if abs(val) < 1.5:
+            return "background-color: #fff9c4"  # yellow
+        return "background-color: #ffcdd2"  # red
+
+    for beruf_val in ["TFA", "Azubi", "Intern"]:
+        grp = table_df[table_df["Beruf"] == beruf_val]
+        if grp.empty:
+            continue
+        st.markdown(f"##### {beruf_val}")
+        styled = grp.style.map(_style_delta, subset=["Delta"])
+        st.dataframe(styled, use_container_width=True, height=min(400, 35 * len(grp) + 38))
+
+    # --- Trailing assignments summary ---
+    st.markdown("---")
+    st.markdown("### Grenzschichten (letzte 21 Tage)")
+    st.caption(
+        "Diese Schichten werden als fixe Vorgaben in den nächsten Planungslauf "
+        "eingespeist, damit Block-, Ruhezeit- und Konsekutiv-Regeln an der "
+        "Quartalsgrenze eingehalten werden."
+    )
+    if ctx.trailing_assignments:
+        trail_rows = []
+        for ta in sorted(ctx.trailing_assignments, key=lambda t: t.shift_date):
+            trail_rows.append({
+                "Datum": ta.shift_date.strftime("%d.%m.%Y"),
+                "Schicht": ta.shift_type.value,
+                "Mitarbeiter": ta.staff_identifier,
+                "Paarweise": "Ja" if ta.is_paired else "Nein",
+            })
+        st.dataframe(pd.DataFrame(trail_rows), use_container_width=True, height=300)
+    else:
+        st.info("Keine Grenzschichten im Kontext.")
+
+    # --- Explanation ---
+    with st.expander("ℹ️ Wie funktioniert das Carry-Forward?"):
+        st.markdown(r"""
+        **Pro Mitarbeiter und Berufsgruppe** wird am Quartalsende berechnet:
+
+        $$\Delta_i = \text{Norm./40h}_i \;-\; \overline{\text{Norm./40h}}_{\text{Gruppe}}$$
+
+        - $\Delta > 0$: Mehr als der Durchschnitt geleistet → Kompensation im Folge-Quartal
+        - $\Delta < 0$: Weniger geleistet → höhere Zuteilung im Folge-Quartal
+
+        Der Solver addiert diese Deltas als Vorbelastung auf die aktuelle Fairness-Berechnung.
+        So gleichen sich Schwankungen über mehrere Quartale aus.
+
+        **Wichtig**: Falls der tatsächlich ausgeführte Plan vom geplanten abweicht
+        (z.B. durch Krankheit oder kurzfristige Änderungen), sollte der *tatsächliche*
+        Plan als Grundlage für die Kontext-Berechnung verwendet werden.
+        Dazu den angepassten Plan über "Laden / CSV" importieren, neu berechnen lassen,
+        und den aktualisierten Kontext exportieren.
+        """)
+
+
 def page_plan_erstellen() -> None:
     """Page: Generate schedule."""
     st.title("🔨 Plan erstellen")
@@ -563,6 +736,23 @@ def page_plan_erstellen() -> None:
         st.success(f"✅ {len(vacations)} Urlaubseinträge werden berücksichtigt")
     else:
         st.info("ℹ️ Keine Urlaubsdaten geladen - alle Mitarbeiter gelten als verfügbar")
+
+    # Show carry-forward status
+    previous_context: PreviousPlanContext | None = st.session_state.previous_context
+    if previous_context:
+        n_nonzero = sum(
+            1 for e in previous_context.carry_forward
+            if abs(e.carry_forward_delta) >= 0.01
+        )
+        st.success(
+            f"✅ Carry-Forward aktiv — {n_nonzero} Mitarbeiter mit Δ ≠ 0, "
+            f"{len(previous_context.trailing_assignments)} Grenzschichten"
+        )
+    else:
+        st.info(
+            "ℹ️ Kein Carry-Forward geladen (Seite 'Vorheriger Plan').  "
+            "Erster Planungslauf startet ohne historische Ausgleichs-Deltas."
+        )
 
     # Solver parameters
     st.markdown("---")
@@ -597,6 +787,7 @@ def page_plan_erstellen() -> None:
                     vacations=vacations,
                     max_solve_time_seconds=max_solve_time_seconds,
                     random_seed=random_seed,
+                    previous_context=previous_context,
                 )
 
                 if result.success:
@@ -1104,6 +1295,7 @@ def page_export() -> None:
         return
 
     schedule = st.session_state.schedule
+    staff_list: list[Staff] | None = st.session_state.staff_list
 
     st.markdown("### Dienstplan exportieren")
 
@@ -1151,6 +1343,49 @@ def page_export() -> None:
             file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="content",
+        )
+
+    # =========================================================================
+    # CARRY-FORWARD CONTEXT EXPORT
+    # =========================================================================
+    st.markdown("---")
+    st.markdown("### 📊 Carry-Forward Kontext exportieren")
+    st.caption(
+        "Diese JSON-Datei enthält die Fairness-Deltas und Grenzschichten.  "
+        "Laden Sie diese beim nächsten Quartal auf der Seite **Vorheriger Plan** hoch, "
+        "damit historische Imbalancen ausgeglichen werden."
+    )
+
+    if staff_list:
+        vacations: list[Vacation] = st.session_state.vacations or []
+        ctx = build_previous_context(schedule, staff_list, vacations)
+        ctx_json = ctx.model_dump_json(indent=2)
+
+        st.download_button(
+            label="📥 Carry-Forward JSON herunterladen",
+            data=ctx_json,
+            file_name=f"kontext_{schedule.quarter_start.strftime('%Y-%m-%d')}.json",
+            mime="application/json",
+            type="primary",
+            width="content",
+        )
+
+        # Quick preview of deltas
+        with st.expander("Vorschau der Carry-Forward-Deltas"):
+            preview_rows = []
+            for e in ctx.carry_forward:
+                preview_rows.append({
+                    "Name": e.name,
+                    "Beruf": e.beruf,
+                    "Norm./40h": round(e.normalized_40h, 2),
+                    "Ø Gruppe": round(e.group_mean_40h, 2),
+                    "Delta": round(e.carry_forward_delta, 2),
+                })
+            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
+    else:
+        st.warning(
+            "⚠️ Personaldaten werden für die Kontext-Berechnung benötigt.  "
+            "Bitte zuerst auf 'Laden / CSV' hochladen."
         )
 
     # Preview

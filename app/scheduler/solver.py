@@ -5,7 +5,7 @@ Delegates to the OR-Tools CP-SAT solver (solver_cpsat.py).
 
 from datetime import date
 
-from .models import Staff, Vacation
+from .models import PreviousPlanContext, Staff, Vacation
 from .solver_cpsat import SolverResult, generate_schedule_cpsat
 
 
@@ -15,6 +15,7 @@ def generate_schedule(
     vacations: list[Vacation] | None = None,
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
+    previous_context: PreviousPlanContext | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -24,6 +25,7 @@ def generate_schedule(
         vacations: List of vacation periods (staff unavailability)
         max_solve_time_seconds: Maximum solver time in seconds (default 120)
         random_seed: Random seed for reproducibility
+        previous_context: Carry-forward context from previous quarter
 
     Returns:
         SolverResult with best schedule or unsatisfiable constraints
@@ -37,4 +39,5 @@ def generate_schedule(
         vacations=vacations,
         max_solve_time_seconds=max_solve_time_seconds,
         random_seed=random_seed,
+        previous_context=previous_context,
     )

@@ -392,3 +392,173 @@ def calculate_available_days(
         1 for d in unavailable if quarter_start <= d <= quarter_end
     )
     return total_days - vacation_days_in_quarter
+
+
+# =========================================================================
+# CROSS-PERIOD CARRY-FORWARD MODELS
+# =========================================================================
+
+
+class TrailingAssignment(BaseModel):
+    """Simplified assignment for cross-quarter boundary constraints.
+
+    Stores the last ~21 days of the previous quarter's assignments so the
+    solver can enforce block-gap, consecutive-night, and rest-period rules
+    across the quarter boundary.
+    """
+
+    shift_date: date
+    shift_type: ShiftType
+    staff_identifier: str
+    is_paired: bool = False
+
+
+class CarryForwardEntry(BaseModel):
+    """Per-person fairness carry-forward data from a completed quarter.
+
+    Stores the FTE-normalized Notdienst load and the delta from the group
+    mean.  A positive delta means the person did more than average and
+    should be compensated in the next quarter.
+    """
+
+    identifier: str
+    name: str
+    beruf: str
+    hours: int
+    effective_nights: float
+    weekend_shifts: int
+    total_notdienst: float
+    normalized_40h: float
+    group_mean_40h: float
+    carry_forward_delta: float
+
+
+class PreviousPlanContext(BaseModel):
+    """Complete carry-forward context from a prior quarter.
+
+    Contains per-person fairness deltas and trailing assignments (last 21
+    days) for boundary constraint enforcement.  Serialised to JSON for
+    export/import between planning periods.
+    """
+
+    quarter_start: date
+    quarter_end: date
+    carry_forward: list[CarryForwardEntry]
+    trailing_assignments: list[TrailingAssignment]
+
+
+def compute_carry_forward(
+    schedule: Schedule,
+    staff_list: list[Staff],
+    vacations: list[Vacation] | None = None,
+) -> list[CarryForwardEntry]:
+    """Compute per-person carry-forward fairness deltas from a schedule.
+
+    For each person, calculates their FTE-normalised Notdienst load
+    (Norm./40h) and the delta from their beruf group mean.  A positive
+    delta means they did more than average; a negative delta means less.
+    """
+    if vacations is None:
+        vacations = []
+
+    quarter_start = schedule.quarter_start
+    quarter_end = schedule.quarter_end
+    total_days = (quarter_end - quarter_start).days + 1
+
+    # Compute per-person stats grouped by beruf
+    entries_by_beruf: dict[str, list[dict]] = {}
+    all_entries: list[dict] = []
+
+    for staff in staff_list:
+        weekends = schedule.count_weekend_shifts(staff.identifier)
+        effective_nights = schedule.count_effective_nights(staff.identifier, staff)
+        total_notdienst = weekends + effective_nights
+
+        avail_days = calculate_available_days(
+            staff.identifier, vacations, quarter_start, quarter_end
+        )
+        presence_factor = avail_days / total_days if total_days > 0 else 1.0
+
+        if staff.hours > 0 and presence_factor > 0:
+            normalized_40h = (total_notdienst / staff.hours / presence_factor) * 40
+        else:
+            normalized_40h = 0.0
+
+        entry = {
+            "identifier": staff.identifier,
+            "name": staff.name,
+            "beruf": staff.beruf.value,
+            "hours": staff.hours,
+            "effective_nights": round(effective_nights, 4),
+            "weekend_shifts": weekends,
+            "total_notdienst": round(total_notdienst, 4),
+            "normalized_40h": round(normalized_40h, 4),
+        }
+        all_entries.append(entry)
+
+        entries_by_beruf.setdefault(staff.beruf.value, []).append(entry)
+
+    # Group means
+    group_means: dict[str, float] = {}
+    for beruf, entries in entries_by_beruf.items():
+        group_means[beruf] = (
+            sum(e["normalized_40h"] for e in entries) / len(entries)
+            if entries
+            else 0.0
+        )
+
+    result: list[CarryForwardEntry] = []
+    for entry in all_entries:
+        mean = group_means.get(entry["beruf"], 0.0)
+        delta = entry["normalized_40h"] - mean
+        result.append(
+            CarryForwardEntry(
+                identifier=entry["identifier"],
+                name=entry["name"],
+                beruf=entry["beruf"],
+                hours=entry["hours"],
+                effective_nights=entry["effective_nights"],
+                weekend_shifts=entry["weekend_shifts"],
+                total_notdienst=entry["total_notdienst"],
+                normalized_40h=round(entry["normalized_40h"], 4),
+                group_mean_40h=round(mean, 4),
+                carry_forward_delta=round(delta, 4),
+            )
+        )
+    return result
+
+
+def build_previous_context(
+    schedule: Schedule,
+    staff_list: list[Staff],
+    vacations: list[Vacation] | None = None,
+    trailing_days: int = 21,
+) -> PreviousPlanContext:
+    """Build complete carry-forward context from a finished schedule.
+
+    Extracts:
+    1. Per-person fairness deltas (for solver fairness objective).
+    2. Trailing assignments from last ``trailing_days`` days (for boundary
+       constraint enforcement across quarters).
+    """
+    quarter_end = schedule.quarter_end
+    cutoff = quarter_end - timedelta(days=trailing_days - 1)
+
+    trailing: list[TrailingAssignment] = []
+    for a in schedule.assignments:
+        if a.shift.shift_date >= cutoff:
+            trailing.append(
+                TrailingAssignment(
+                    shift_date=a.shift.shift_date,
+                    shift_type=a.shift.shift_type,
+                    staff_identifier=a.staff_identifier,
+                    is_paired=a.is_paired,
+                )
+            )
+
+    return PreviousPlanContext(
+        quarter_start=schedule.quarter_start,
+        quarter_end=schedule.quarter_end,
+        carry_forward=compute_carry_forward(schedule, staff_list, vacations),
+        trailing_assignments=trailing,
+    )

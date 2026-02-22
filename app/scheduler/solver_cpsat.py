@@ -13,6 +13,7 @@ from .models import (
     Abteilung,
     Assignment,
     Beruf,
+    PreviousPlanContext,
     Schedule,
     Shift,
     ShiftType,
@@ -51,6 +52,7 @@ def generate_schedule_cpsat(
     vacations: list[Vacation] | None = None,
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
+    previous_context: PreviousPlanContext | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -89,6 +91,29 @@ def generate_schedule_cpsat(
             bd = staff.get_birthday_date(year)
             if bd is not None and quarter_start <= bd <= quarter_end:
                 staff_vacation_dates[staff.identifier].add(bd)
+
+    # =========================================================================
+    # EXTRACT BOUNDARY DATA FROM PREVIOUS CONTEXT
+    # =========================================================================
+    trailing_work_dates: dict[str, set[date]] = {}  # For block constraints
+    trailing_night_dates: dict[str, list[date]] = {}  # For consecutive-night constraints
+    trailing_last_night: dict[str, date] = {}  # For night/day conflict
+    carry_forward_deltas: dict[str, float] = {}  # For fairness objective
+
+    if previous_context:
+        for ta in previous_context.trailing_assignments:
+            trailing_work_dates.setdefault(ta.staff_identifier, set()).add(ta.shift_date)
+            if ta.shift_type.value.startswith("N_"):
+                trailing_night_dates.setdefault(ta.staff_identifier, []).append(
+                    ta.shift_date
+                )
+        # Sort trailing night dates and find last night per person
+        for sid in trailing_night_dates:
+            trailing_night_dates[sid].sort()
+            trailing_last_night[sid] = trailing_night_dates[sid][-1]
+        # Extract carry-forward deltas (identifier -> norm_40h delta)
+        for entry in previous_context.carry_forward:
+            carry_forward_deltas[entry.identifier] = entry.carry_forward_delta
 
     # Separate shifts by category
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
@@ -316,15 +341,45 @@ def generate_schedule_cpsat(
                     if we_key in x:
                         model.Add(x[night_key] + x[we_key] <= 1)
 
+    # 6b. Night/Day conflict at quarter boundary:
+    #     If someone had a night shift on the last day of the previous quarter,
+    #     they cannot have a day shift on the first day of this quarter.
+    if trailing_last_night:
+        for staff in staff_list:
+            last_night = trailing_last_night.get(staff.identifier)
+            if last_night is None:
+                continue
+            next_day = last_night + timedelta(days=1)
+            for we_shift in weekend_shifts:
+                if we_shift.shift_date == next_day:
+                    we_key = (staff.identifier, we_shift.shift_date, we_shift.shift_type)
+                    if we_key in x:
+                        model.Add(x[we_key] == 0)
+            # Also block night shift on the same day as the trailing night
+            for ns in night_shifts:
+                if ns.shift_date == last_night:
+                    ns_key = (staff.identifier, ns.shift_date, ns.shift_type)
+                    if ns_key in x:
+                        model.Add(x[ns_key] == 0)
+
     # 7. 3-week block constraint: gaps between shift blocks must be >= 21 days
     # Track block starts and enforce gap between consecutive blocks
-    _add_block_constraints(model, x, staff_list, shifts, quarter_start, quarter_end)
+    _add_block_constraints(
+        model, x, staff_list, shifts, quarter_start, quarter_end,
+        trailing_work_dates=trailing_work_dates or None,
+    )
 
     # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
-    _add_nd_max_consecutive_constraints(model, x, staff_list, night_shifts)
+    _add_nd_max_consecutive_constraints(
+        model, x, staff_list, night_shifts,
+        trailing_night_dates=trailing_night_dates or None,
+    )
     
     # 9. Non-Azubi min consecutive nights: TFA/Intern must work at least 2 consecutive nights
-    _add_min_consecutive_nights_constraints(model, x, staff_list, night_shifts)
+    _add_min_consecutive_nights_constraints(
+        model, x, staff_list, night_shifts,
+        trailing_night_dates=trailing_night_dates or None,
+    )
     
     # 10. Abteilung constraint: employees in same abteilung (op or station) cannot work 
     # night shifts together or on consecutive days (prevents capacity shortages)
@@ -452,14 +507,16 @@ def generate_schedule_cpsat(
             if len(nd_eligible) >= 2:
                 _add_group_fairness_objective_with_presence(
                     model, objective_terms, notdienst_half_counts, nd_eligible, 
-                    SCALE, presence_factors, f"ND_{group_name}"
+                    SCALE, presence_factors, f"ND_{group_name}",
+                    carry_forward_deltas=carry_forward_deltas or None,
                 )
         else:
             # TFA and Azubi: combined weekends + nights
             if len(group) >= 2:
                 _add_group_fairness_objective_with_presence(
                     model, objective_terms, notdienst_half_counts, group, 
-                    SCALE, presence_factors, f"ND_{group_name}"
+                    SCALE, presence_factors, f"ND_{group_name}",
+                    carry_forward_deltas=carry_forward_deltas or None,
                 )
 
     # =========================================================================
@@ -567,6 +624,7 @@ def _add_block_constraints(
     shifts: list[Shift],
     quarter_start: date,
     quarter_end: date,
+    trailing_work_dates: dict[str, set[date]] | None = None,
 ) -> None:
     """Add 3-week block constraints.
 
@@ -580,6 +638,10 @@ def _add_block_constraints(
     Simplified approach: Forbid working on day D1 and day D2 where:
     - D1 and D2 are both "block starts" (no work on D1-1 and D2-1)
     - 2 <= D2 - D1 < 21
+
+    When trailing_work_dates is provided, injects fixed work-day variables
+    from the previous quarter (last 21 days) so the 3-week gap is
+    enforced across the quarter boundary.
     """
     # Group shifts by date
     shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
@@ -599,7 +661,7 @@ def _add_block_constraints(
             if has_any:
                 staff_dates.append(d)
 
-        if len(staff_dates) < 2:
+        if len(staff_dates) < 2 and not trailing_work_dates:
             continue
 
         # Create "works_on_D" variable (OR of all shifts on that date)
@@ -616,9 +678,20 @@ def _add_block_constraints(
                 works_on[d] = model.NewBoolVar(f"works_{staff.identifier}_{d}")
                 model.AddMaxEquality(works_on[d], vars_on_d)
 
+        # Inject trailing work dates as fixed variables (previous quarter)
+        if trailing_work_dates:
+            for d in trailing_work_dates.get(staff.identifier, set()):
+                if (quarter_start - d).days <= 21 and d < quarter_start:
+                    fixed = model.NewBoolVar(f"trail_work_{staff.identifier}_{d}")
+                    model.Add(fixed == 1)
+                    works_on[d] = fixed
+
+        # Use all known dates (trailing + current) for block start detection
+        all_known_dates = sorted(works_on.keys())
+
         # Create "block_starts_on_D" = works_on[D] AND NOT works_on[D-1]
         block_starts: dict[date, cp_model.IntVar] = {}
-        for d in staff_dates:
+        for d in all_known_dates:
             if d not in works_on:
                 continue
             prev_d = d - timedelta(days=1)
@@ -649,8 +722,13 @@ def _add_nd_max_consecutive_constraints(
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
     staff_list: list[Staff],
     night_shifts: list[Shift],
+    trailing_night_dates: dict[str, list[date]] | None = None,
 ) -> None:
-    """Enforce max consecutive nights based on nd_max_consecutive field."""
+    """Enforce max consecutive nights based on nd_max_consecutive field.
+
+    When trailing_night_dates is provided, prepends fixed night variables from
+    the previous quarter so consecutive-night limits are enforced at boundary.
+    """
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
 
     for staff in staff_list:
@@ -660,11 +738,20 @@ def _add_nd_max_consecutive_constraints(
         max_consecutive = staff.nd_max_consecutive
 
         # Get this staff's night variables in order
-        staff_night_vars = []
+        staff_night_vars: list[tuple[date, cp_model.IntVar]] = []
         for shift in sorted_nights:
             key = (staff.identifier, shift.shift_date, shift.shift_type)
             if key in x:
                 staff_night_vars.append((shift.shift_date, x[key]))
+
+        # Prepend trailing night dates as fixed variables
+        if trailing_night_dates and staff.identifier in trailing_night_dates:
+            trailing_vars: list[tuple[date, cp_model.IntVar]] = []
+            for d in trailing_night_dates[staff.identifier]:
+                fixed = model.NewBoolVar(f"trail_maxnd_{staff.identifier}_{d}")
+                model.Add(fixed == 1)
+                trailing_vars.append((d, fixed))
+            staff_night_vars = trailing_vars + staff_night_vars
 
         if len(staff_night_vars) <= max_consecutive:
             continue
@@ -701,6 +788,7 @@ def _add_min_consecutive_nights_constraints(
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
     staff_list: list[Staff],
     night_shifts: list[Shift],
+    trailing_night_dates: dict[str, list[date]] | None = None,
 ) -> None:
     """Enforce minimum consecutive nights based on staff.nd_min_consecutive.
     
@@ -711,6 +799,9 @@ def _add_min_consecutive_nights_constraints(
     
     This constraint ensures that if a staff member works any nights, they work
     at least nd_min_consecutive consecutive nights.
+
+    When trailing_night_dates is provided, prepends fixed night variables from
+    the previous quarter so min-consecutive is respected at boundary.
     """
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
     
@@ -725,11 +816,20 @@ def _add_min_consecutive_nights_constraints(
             continue
         
         # Get this staff's night variables in order
-        staff_night_vars = []
+        staff_night_vars: list[tuple[date, cp_model.IntVar]] = []
         for shift in sorted_nights:
             key = (staff.identifier, shift.shift_date, shift.shift_type)
             if key in x:
                 staff_night_vars.append((shift.shift_date, x[key]))
+
+        # Prepend trailing night dates as fixed variables
+        if trailing_night_dates and staff.identifier in trailing_night_dates:
+            trailing_vars: list[tuple[date, cp_model.IntVar]] = []
+            for d in trailing_night_dates[staff.identifier]:
+                fixed = model.NewBoolVar(f"trail_minnd_{staff.identifier}_{d}")
+                model.Add(fixed == 1)
+                trailing_vars.append((d, fixed))
+            staff_night_vars = trailing_vars + staff_night_vars
         
         if len(staff_night_vars) < min_consecutive:
             continue
@@ -911,6 +1011,7 @@ def _add_group_fairness_objective_with_presence(
     presence_factors: dict[str, int],
     prefix: str,
     max_fte_deviation: float = 1.5,
+    carry_forward_deltas: dict[str, float] | None = None,
 ) -> None:
     """Add min-max fairness objective with presence (vacation) adjustment.
 
@@ -919,12 +1020,24 @@ def _add_group_fairness_objective_with_presence(
     
     The effective FTE multiplier becomes: (40 / hours) * (1000 / presence_factor)
     where presence_factor = available_days * 1000 / total_days
+
+    When carry_forward_deltas is provided, adds per-person offsets from the
+    previous quarter so the solver compensates historical imbalances.
+    The delta is in Norm./40h units and is converted to the solver's internal
+    scaled integer space via the constant factor CARRY_FORWARD_SCALE = 20
+    (derived from scale=400, counts in half-units).
     """
     if len(group) < 2:
         return
 
     PRESENCE_SCALE = 1000  # Matches presence_factors scaling
+    # 1.0 Norm./40h = 20 solver-scaled units (= 2 * scale / 40 = 2 * 400 / 40)
+    CARRY_FORWARD_SCALE = 2 * scale // 40  # = 20 for scale=400
     
+    has_carry_forward = carry_forward_deltas and any(
+        carry_forward_deltas.get(s.identifier, 0.0) != 0.0 for s in group
+    )
+
     scaled_counts = []
     for staff in group:
         count_expr = counts.get(staff.identifier, 0)
@@ -947,10 +1060,24 @@ def _add_group_fairness_objective_with_presence(
             max_possible = 100 * combined_multiplier
             scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
             model.Add(scaled_var == count_expr * combined_multiplier)
-        scaled_counts.append(scaled_var)
 
-    max_var = model.NewIntVar(0, 100000, f"{prefix}_max")
-    min_var = model.NewIntVar(0, 100000, f"{prefix}_min")
+        # Apply carry-forward offset (previous quarter imbalance)
+        cf_delta = (carry_forward_deltas or {}).get(staff.identifier, 0.0)
+        if cf_delta != 0.0:
+            cf_offset = int(round(cf_delta * CARRY_FORWARD_SCALE))
+            lb = min(0, cf_offset - 500)
+            ub = 100000 + abs(cf_offset)
+            adjusted_var = model.NewIntVar(
+                lb, ub, f"{prefix}_adj_{staff.identifier}"
+            )
+            model.Add(adjusted_var == scaled_var + cf_offset)
+            scaled_counts.append(adjusted_var)
+        else:
+            scaled_counts.append(scaled_var)
+
+    min_bound = -10000 if has_carry_forward else 0
+    max_var = model.NewIntVar(min_bound, 100000, f"{prefix}_max")
+    min_var = model.NewIntVar(min_bound, 100000, f"{prefix}_min")
     model.AddMaxEquality(max_var, scaled_counts)
     model.AddMinEquality(min_var, scaled_counts)
 
@@ -959,6 +1086,11 @@ def _add_group_fairness_objective_with_presence(
 
     # Hard constraint threshold (adjusted for presence scaling)
     threshold_scaled = int(max_fte_deviation * 2 * (scale // 40) * (PRESENCE_SCALE // 100))
+    # Widen threshold when carry-forward is active to avoid infeasibility
+    if has_carry_forward:
+        group_cfs = [carry_forward_deltas.get(s.identifier, 0.0) for s in group]
+        cf_spread = max(group_cfs) - min(group_cfs)
+        threshold_scaled += int(round(cf_spread * CARRY_FORWARD_SCALE))
     model.Add(range_var <= threshold_scaled)
 
     objective_terms.append(range_var)
