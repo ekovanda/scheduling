@@ -16,8 +16,8 @@ from scheduler.models import (
     Vacation,
     build_previous_context,
     calculate_available_days,
-    load_staff_from_csv,
-    load_vacations_from_csv,
+    load_staff_from_file,
+    load_vacations_from_file,
 )
 from scheduler.solver import generate_schedule
 from scheduler.validator import validate_schedule
@@ -129,24 +129,27 @@ def main() -> None:
 
 
 def page_load_csv() -> None:
-    """Page: Load staff data from CSV."""
+    """Page: Load staff data from CSV or XLSX."""
     st.title("📂 Daten laden")
 
     st.markdown("### Personaldaten hochladen")
     uploaded_file = st.file_uploader(
-        "CSV-Datei mit Personalinformationen",
-        type=["csv"],
-        help="Erwartet: name, identifier, adult, hours, beruf, reception, nd_possible, nd_alone, nd_count, nd_exceptions",
+        "CSV oder Excel-Datei mit Personalinformationen",
+        type=["csv", "xlsx"],
+        help="Unterstützt: CSV (.csv) und Excel (.xlsx).  "
+             "Spalten können flexibel benannt sein: 'Name', 'name', 'Name des Mitarbeiters' etc. "
+             "Erwartet: name, identifier, adult, hours, beruf, reception, nd_possible, nd_alone, "
+             "nd_count, nd_exceptions",
     )
 
     if uploaded_file is not None:
         try:
             # Save to temp file and load
-            temp_path = Path("temp_staff.csv")
+            temp_path = Path("temp_staff." + uploaded_file.name.split(".")[-1])
             with temp_path.open("wb") as f:
                 f.write(uploaded_file.getvalue())
 
-            staff_list = load_staff_from_csv(temp_path)
+            staff_list = load_staff_from_file(temp_path)
             st.session_state.staff_list = staff_list
 
             st.success(f"✅ {len(staff_list)} Mitarbeiter erfolgreich geladen!")
@@ -160,25 +163,27 @@ def page_load_csv() -> None:
             temp_path.unlink(missing_ok=True)
 
         except Exception as e:
-            st.error(f"❌ Fehler beim Laden der CSV: {e}")
+            st.error(f"❌ Fehler beim Laden der Datei: {e}")
 
     # Vacation data upload
     st.markdown("---")
     st.markdown("### Urlaub / Verfügbarkeit hochladen")
     vacation_file = st.file_uploader(
-        "CSV-Datei mit Urlaubsdaten (optional)",
-        type=["csv"],
+        "CSV oder Excel-Datei mit Urlaubsdaten (optional)",
+        type=["csv", "xlsx"],
         key="vacation_upload",
-        help="Erwartet: identifier, start_date, end_date (Datumsformat: YYYY-MM-DD)",
+        help="Unterstützt: CSV (.csv) und Excel (.xlsx).  "
+             "Spalten können flexibel benannt sein.  "
+             "Erwartet: identifier, start_date, end_date (Datumsformat: YYYY-MM-DD, DD.MM.YYYY, etc.)",
     )
     
     if vacation_file is not None:
         try:
-            temp_path = Path("temp_vacations.csv")
+            temp_path = Path("temp_vacations." + vacation_file.name.split(".")[-1])
             with temp_path.open("wb") as f:
                 f.write(vacation_file.getvalue())
             
-            vacations = load_vacations_from_csv(temp_path)
+            vacations = load_vacations_from_file(temp_path)
             st.session_state.vacations = vacations
             
             st.success(f"✅ {len(vacations)} Urlaubseinträge erfolgreich geladen!")

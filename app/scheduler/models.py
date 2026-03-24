@@ -9,6 +9,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from .file_loader import load_staff_from_file as _load_staff_dict
+from .file_loader import load_vacations_from_file as _load_vacations_dict
+
 
 class Beruf(str, Enum):
     """Staff role/profession."""
@@ -364,6 +367,48 @@ def load_vacations_from_csv(csv_path: Path) -> list[Vacation]:
                     end_date=date.fromisoformat(row["end_date"].strip()),
                 )
             )
+    return vacations
+
+
+def load_staff_from_file(file_path: Path | str) -> list[Staff]:
+    """Load staff data from CSV or XLSX file with flexible column name matching.
+
+    Supports both .csv and .xlsx formats. Column names are matched case-insensitively
+    with fuzzy matching, so "Name", "name", "Name des Mitarbeiters", etc. all work.
+
+    Args:
+        file_path: Path to CSV or XLSX file
+
+    Returns:
+        List of Staff objects
+
+    Raises:
+        ValueError: If required columns not found or data validation fails
+    """
+    staff_dict = _load_staff_dict(file_path)
+    return [Staff(**data) for data in staff_dict.values()]
+
+
+def load_vacations_from_file(file_path: Path | str) -> list[Vacation]:
+    """Load vacation data from CSV or XLSX file with flexible column name matching.
+
+    Supports both .csv and .xlsx formats. Column names are matched case-insensitively
+    with fuzzy matching, and date formats (YYYY-MM-DD, DD.MM.YYYY, etc.) are auto-detected.
+
+    Args:
+        file_path: Path to CSV or XLSX file
+
+    Returns:
+        List of Vacation objects
+
+    Raises:
+        ValueError: If required columns not found or data validation fails
+    """
+    vacations_dict = _load_vacations_dict(file_path)
+    vacations: list[Vacation] = []
+    for vac_list in vacations_dict.values():
+        for vac in vac_list:
+            vacations.append(Vacation(**vac))
     return vacations
 
 
