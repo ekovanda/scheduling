@@ -10,14 +10,17 @@ import hashlib
 import os
 from scheduler.models import (
     Beruf,
+    PreAssignedShift,
     PreviousPlanContext,
     ShiftType,
     Staff,
     Vacation,
     build_previous_context,
     calculate_available_days,
+    load_pre_assigned_from_file,
     load_staff_from_file,
     load_vacations_from_file,
+    validate_pre_assigned,
 )
 from scheduler.solver import generate_schedule
 from scheduler.validator import validate_schedule
@@ -80,6 +83,7 @@ def main() -> None:
         "Laden / CSV",
         "Personal",
         "Urlaub",
+        "Feiertage",
         "Regeln",
         "Vorheriger Plan",
         "Plan erstellen",
@@ -108,6 +112,8 @@ def main() -> None:
         st.session_state.validation_result = None
     if "previous_context" not in st.session_state:
         st.session_state.previous_context = None
+    if "pre_assigned" not in st.session_state:
+        st.session_state.pre_assigned = None
 
     # Route to pages
     if page == "Laden / CSV":
@@ -116,6 +122,8 @@ def main() -> None:
         page_personal()
     elif page == "Urlaub":
         page_urlaub()
+    elif page == "Feiertage":
+        page_feiertage()
     elif page == "Regeln":
         page_regeln()
     elif page == "Vorheriger Plan":
@@ -362,6 +370,111 @@ def _show_vacation_by_employee(vacations: list[Vacation], staff_names: dict[str,
     with col3:
         avg = total / len(by_employee) if by_employee else 0
         st.metric("Ø Urlaubstage/Person", f"{avg:.1f}")
+
+
+def page_feiertage() -> None:
+    """Page: Upload and view pre-assigned holiday shifts."""
+    st.title("🎄 Feiertage / Vorgegebene Dienste")
+
+    st.markdown(
+        "Hessische Feiertage und andere vorgegebene Dienste können hier hochgeladen werden. "
+        "Diese Zuordnungen werden als **fix** in die Planung übernommen."
+    )
+
+    st.markdown("### Feiertags-Dienste hochladen")
+    holiday_file = st.file_uploader(
+        "CSV oder Excel-Datei mit vorgegebenen Diensten",
+        type=["csv", "xlsx"],
+        key="holiday_upload",
+        help=(
+            "Erwartete Spalten:\n"
+            "- **Datum**: Feiertag (DD.MM.YYYY oder YYYY-MM-DD)\n"
+            "- **Nachtdienst**: Kürzel (z.B. 'AA' oder 'AA + Bax')\n"
+            "- **Dienst 8-20**: Kürzel für So_8-20\n"
+            "- **Dienst 10-22**: Kürzel für So_10-22 (Rufbereitschaft)\n"
+            "- **Azubi 8-20:30**: Kürzel für Azubi-Dienst\n\n"
+            "Leere Zellen werden ignoriert. Mehrere Personen mit '+' trennen."
+        ),
+    )
+
+    if holiday_file is not None:
+        try:
+            temp_path = Path("temp_holidays." + holiday_file.name.split(".")[-1])
+            with temp_path.open("wb") as f:
+                f.write(holiday_file.getvalue())
+
+            pre_assigned = load_pre_assigned_from_file(temp_path)
+            st.session_state.pre_assigned = pre_assigned
+
+            st.success(f"✅ {len(pre_assigned)} vorgegebene Zuordnungen geladen!")
+            temp_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            st.error(f"❌ Fehler beim Laden: {e}")
+
+    # Display current state
+    pre_assigned: list[PreAssignedShift] | None = st.session_state.pre_assigned
+
+    if pre_assigned is None or len(pre_assigned) == 0:
+        st.info("ℹ️ Keine vorgegebenen Dienste geladen.")
+        return
+
+    # Remove button
+    if st.button("🗑️ Vorgegebene Dienste entfernen"):
+        st.session_state.pre_assigned = None
+        st.rerun()
+
+    # Validate against staff + vacations
+    staff_list: list[Staff] | None = st.session_state.staff_list
+    vacations: list[Vacation] | None = st.session_state.vacations
+
+    if staff_list:
+        warnings = validate_pre_assigned(pre_assigned, staff_list, vacations)
+        if warnings:
+            st.error(
+                "**⚠️ Konflikte erkannt — bitte vor der Planung beheben:**\n\n"
+                + "\n".join(f"- {w}" for w in warnings)
+            )
+        else:
+            st.success("✅ Keine Konflikte mit Personal- oder Urlaubsdaten.")
+    else:
+        st.warning("⚠️ Personaldaten noch nicht geladen — Konfliktprüfung nicht möglich.")
+
+    # Display table
+    st.markdown("---")
+    st.markdown("### 📋 Vorgegebene Zuordnungen")
+
+    staff_names: dict[str, str] = {}
+    if staff_list:
+        staff_names = {s.identifier: s.name for s in staff_list}
+
+    unique_dates = sorted({pa.shift_date for pa in pre_assigned})
+    rows = []
+    for d in unique_dates:
+        weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
+        day_assignments = [pa for pa in pre_assigned if pa.shift_date == d]
+
+        row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.%Y')} {weekday_str}"}
+        for pa in day_assignments:
+            name_or_id = staff_names.get(pa.staff_identifier, pa.staff_identifier)
+            col_label = pa.shift_type.value
+            if col_label in row:
+                row[col_label] += f" + {name_or_id}"
+            else:
+                row[col_label] = name_or_id
+        rows.append(row)
+
+    if rows:
+        df_holidays = pd.DataFrame(rows).set_index("Datum").fillna("")
+        st.dataframe(df_holidays, use_container_width=True)
+    
+    # Summary
+    st.markdown("### 📊 Zusammenfassung")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Feiertage", len(unique_dates))
+    with col2:
+        st.metric("Zuordnungen gesamt", len(pre_assigned))
 
 
 def page_personal() -> None:
@@ -742,6 +855,13 @@ def page_plan_erstellen() -> None:
     else:
         st.info("ℹ️ Keine Urlaubsdaten geladen - alle Mitarbeiter gelten als verfügbar")
 
+    # Show pre-assigned (holiday) status
+    pre_assigned: list[PreAssignedShift] = st.session_state.pre_assigned or []
+    if pre_assigned:
+        st.success(f"✅ {len(pre_assigned)} vorgegebene Feiertagsdienste werden berücksichtigt")
+    else:
+        st.info("ℹ️ Keine Feiertagsdienste geladen (Seite 'Feiertage')")
+
     # Show carry-forward status
     previous_context: PreviousPlanContext | None = st.session_state.previous_context
     if previous_context:
@@ -793,6 +913,7 @@ def page_plan_erstellen() -> None:
                     max_solve_time_seconds=max_solve_time_seconds,
                     random_seed=random_seed,
                     previous_context=previous_context,
+                    pre_assigned=pre_assigned,
                 )
 
                 if result.success:
@@ -892,6 +1013,8 @@ def page_plan_anzeigen() -> None:
 
         # Map (Date, Shift) -> [Staff1, Staff2]
         shift_map: dict[tuple, list[str]] = {}
+        # Track which (Date, ShiftType) has at least one pre-assigned entry
+        pre_assigned_cells: set[tuple] = set()
         unique_dates = sorted({a.shift.shift_date for a in schedule.assignments})
 
         for assignment in schedule.assignments:
@@ -904,19 +1027,25 @@ def page_plan_anzeigen() -> None:
                 else assignment.staff_identifier
             )
             shift_map[key].append(display_value)
+            if assignment.is_pre_assigned:
+                pre_assigned_cells.add(key)
 
         # Build rows: Date | 🌙 Nacht | 6× ☀️ Weekend
         all_cols = [NIGHT_COL] + [label for _, label in WE_COLS]
         calendar_rows = []
+        # Track pre-assigned per row for cell-level styling
+        pre_assigned_flags: list[dict[str, bool]] = []
         for d in unique_dates:
             weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
             row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.')} {weekday_str}"}
+            flags: dict[str, bool] = {}
 
             # Single night column: find the night shift for this date
             for ns in NIGHT_SHIFTS:
                 staff_ids = shift_map.get((d, ns), [])
                 if staff_ids:
                     row[NIGHT_COL] = " + ".join(staff_ids)
+                    flags[NIGHT_COL] = (d, ns) in pre_assigned_cells
                     break
 
             # Weekend columns
@@ -924,8 +1053,10 @@ def page_plan_anzeigen() -> None:
                 staff_ids = shift_map.get((d, s_type), [])
                 if staff_ids:
                     row[col_label] = " + ".join(staff_ids)
+                    flags[col_label] = (d, s_type) in pre_assigned_cells
 
             calendar_rows.append(row)
+            pre_assigned_flags.append(flags)
 
         if calendar_rows:
             df_calendar = pd.DataFrame(calendar_rows).set_index("Datum")
@@ -935,20 +1066,31 @@ def page_plan_anzeigen() -> None:
                     df_calendar[col] = ""
             df_calendar = df_calendar[all_cols].fillna("")
 
-            # Style: different backgrounds for night vs weekend columns
+            # Build pre-assigned flag DataFrame (same shape)
+            pa_flag_rows = []
+            for flags in pre_assigned_flags:
+                pa_flag_rows.append({col: flags.get(col, False) for col in all_cols})
+            df_pa_flags = pd.DataFrame(pa_flag_rows, index=df_calendar.index)
+
+            # Style: different backgrounds for night/weekend + highlight pre-assigned
             we_col_names = [label for _, label in WE_COLS]
 
-            def highlight_columns(df: pd.DataFrame) -> pd.DataFrame:
+            def highlight_cells(df: pd.DataFrame) -> pd.DataFrame:
                 styles = pd.DataFrame("", index=df.index, columns=df.columns)
-                if NIGHT_COL in df.columns:
-                    styles[NIGHT_COL] = "background-color: #e8e0f0"
-                for col in we_col_names:
-                    if col in df.columns:
-                        styles[col] = "background-color: #fff3e0"
+                for row_idx in df.index:
+                    for col in df.columns:
+                        is_pa = df_pa_flags.at[row_idx, col] if col in df_pa_flags.columns else False
+                        if is_pa:
+                            # Pre-assigned: distinct teal background
+                            styles.at[row_idx, col] = "background-color: #b2dfdb"
+                        elif col == NIGHT_COL:
+                            styles.at[row_idx, col] = "background-color: #e8e0f0"
+                        elif col in we_col_names:
+                            styles.at[row_idx, col] = "background-color: #fff3e0"
                 return styles
 
             styled_calendar = df_calendar.style.apply(
-                highlight_columns, axis=None
+                highlight_cells, axis=None
             )
 
             col_cfg: dict = {
@@ -964,6 +1106,16 @@ def page_plan_anzeigen() -> None:
                 use_container_width=False,
                 column_config=col_cfg,
             )
+
+            # Legend
+            has_pre_assigned = any(any(f.values()) for f in pre_assigned_flags)
+            legend_parts = [
+                "🟣 Lila = Nachtdienst",
+                "🟠 Orange = Wochenenddienst",
+            ]
+            if has_pre_assigned:
+                legend_parts.append("🟢 Türkis = Vorgegeben (Feiertag)")
+            st.caption(" · ".join(legend_parts))
         else:
             st.info("Keine Einträge.")
 
@@ -1004,6 +1156,8 @@ def page_plan_anzeigen() -> None:
                     "Beruf": staff.beruf.value,
                     "Std.": staff.hours,
                     "Urlaub": vacation_days,
+                    "Präsenz": round(presence_factor, 3),
+                    "_weight": staff.hours * presence_factor,  # for weighted mean
                     "Nacht": "✅" if staff.nd_possible else "❌",
                     "WE": weekends,
                     "Nächte": round(effective_nights, 1),
@@ -1014,13 +1168,21 @@ def page_plan_anzeigen() -> None:
             df_stats = pd.DataFrame(staff_stats)
             
             # ========== FAIRNESS CHECK PER GROUP ==========
+            def _weighted_mean(group_df: pd.DataFrame) -> float:
+                """Compute hours*presence-weighted mean of Norm./40h."""
+                w = group_df["_weight"]
+                total_w = w.sum()
+                if total_w == 0:
+                    return 0.0
+                return (group_df["Norm./40h"] * w).sum() / total_w
+
             fairness_issues: list[dict] = []
             for beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
                 group_df = df_stats[df_stats["Beruf"] == beruf.value]
                 if len(group_df) < 2:
                     continue
                 
-                group_mean = group_df["Norm./40h"].mean()
+                group_mean = _weighted_mean(group_df)
                 for _, row in group_df.iterrows():
                     deviation = row["Norm./40h"] - group_mean
                     if abs(deviation) >= 2.0:
@@ -1074,10 +1236,12 @@ def page_plan_anzeigen() -> None:
                     st.caption(f"{len(group_df)} Mitarbeiter")
                     if len(group_df) >= 2:
                         g_vals = group_df["Norm./40h"]
+                        g_wmean = _weighted_mean(group_df)
                         spread = g_vals.max() - g_vals.min()
                         c1, c2 = st.columns(2)
                         with c1:
-                            st.metric("Ø Norm./40h", f"{g_vals.mean():.2f}")
+                            st.metric("Ø Norm./40h", f"{g_wmean:.2f}",
+                                      help="Gewichteter Durchschnitt (Std. × Anwesenheit)")
                             st.metric("Min", f"{g_vals.min():.2f}")
                         with c2:
                             st.metric("Spread", f"{spread:.2f}", help="Max - Min (niedriger = fairer)")
@@ -1116,9 +1280,10 @@ def page_plan_anzeigen() -> None:
                 ).format({"Nächte": "{:.1f}", "Gesamt": "{:.1f}"})
             
             # TFA Table
-            df_tfa = df_stats[df_stats["Beruf"] == "TFA"][detail_cols].copy()
+            df_tfa_full = df_stats[df_stats["Beruf"] == "TFA"]
+            df_tfa = df_tfa_full[detail_cols].copy()
             if not df_tfa.empty:
-                tfa_mean = df_tfa["Norm./40h"].mean()
+                tfa_mean = _weighted_mean(df_tfa_full)
                 st.markdown(f"##### 👩‍⚕️ TFA ({len(df_tfa)} MA, Ø {tfa_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_tfa, tfa_mean),
@@ -1127,9 +1292,10 @@ def page_plan_anzeigen() -> None:
                 )
             
             # Azubi Table
-            df_azubi = df_stats[df_stats["Beruf"] == "Azubi"][detail_cols].copy()
+            df_azubi_full = df_stats[df_stats["Beruf"] == "Azubi"]
+            df_azubi = df_azubi_full[detail_cols].copy()
             if not df_azubi.empty:
-                azubi_mean = df_azubi["Norm./40h"].mean()
+                azubi_mean = _weighted_mean(df_azubi_full)
                 st.markdown(f"##### 🎓 Azubi ({len(df_azubi)} MA, Ø {azubi_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_azubi, azubi_mean),
@@ -1138,9 +1304,10 @@ def page_plan_anzeigen() -> None:
                 )
             
             # Intern Table
-            df_intern = df_stats[df_stats["Beruf"] == "Intern"][detail_cols].copy()
+            df_intern_full = df_stats[df_stats["Beruf"] == "Intern"]
+            df_intern = df_intern_full[detail_cols].copy()
             if not df_intern.empty:
-                intern_mean = df_intern["Norm./40h"].mean()
+                intern_mean = _weighted_mean(df_intern_full)
                 st.markdown(f"##### 🩺 Intern ({len(df_intern)} MA, Ø {intern_mean:.2f} Norm./40h)")
                 st.dataframe(
                     style_group_table(df_intern, intern_mean),
@@ -1158,7 +1325,7 @@ def page_plan_anzeigen() -> None:
                 if len(group_df) < 2:
                     continue
                 
-                group_mean = group_df["Norm./40h"].mean()
+                group_mean = _weighted_mean(group_df)
                 group_spread = group_df["Norm./40h"].max() - group_df["Norm./40h"].min()
                 
                 if group_spread > 3.0:

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .file_loader import load_staff_from_file as _load_staff_dict
 from .file_loader import load_vacations_from_file as _load_vacations_dict
+from .file_loader import load_pre_assigned_from_file as _load_pre_assigned_dict
 
 
 class Beruf(str, Enum):
@@ -206,6 +207,7 @@ class Assignment(BaseModel):
     shift: Shift
     staff_identifier: str
     is_paired: bool = False  # True if this night shift is worked with a partner
+    is_pre_assigned: bool = False  # True if fixed by external process (holidays)
 
 
 class Schedule(BaseModel):
@@ -278,16 +280,36 @@ def load_staff_from_csv(csv_path: Path) -> list[Staff]:
     return staff_list
 
 
-def generate_quarter_shifts(quarter_start: date) -> list[Shift]:
-    """Generate all shifts for a quarter (13 weeks)."""
+class PreAssignedShift(BaseModel):
+    """A shift pre-assigned from an external process (e.g., holidays)."""
+
+    shift_date: date
+    shift_type: ShiftType
+    staff_identifier: str
+    is_paired: bool = False
+
+
+def generate_quarter_shifts(
+    quarter_start: date,
+    holiday_dates: set[date] | None = None,
+) -> list[Shift]:
+    """Generate all shifts for a quarter (13 weeks).
+
+    Args:
+        quarter_start: First day of the quarter.
+        holiday_dates: Weekday dates that should receive Sunday-pattern
+            weekend shifts (e.g., public holidays).
+    """
     shifts: list[Shift] = []
     current_date = quarter_start
+    holiday_dates = holiday_dates or set()
 
     # Q2/2026: April 1 - June 30 (91 days, 13 weeks)
     quarter_end = quarter_start + timedelta(days=91)
 
     while current_date < quarter_end:
         weekday = current_date.weekday()  # 0=Mon, 5=Sat, 6=Sun
+        is_holiday = current_date in holiday_dates
 
         # Saturday shifts
         if weekday == 5:
@@ -295,8 +317,8 @@ def generate_quarter_shifts(quarter_start: date) -> list[Shift]:
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_10_22, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_10_19, shift_date=current_date))
 
-        # Sunday shifts
-        elif weekday == 6:
+        # Sunday shifts (or holiday with Sunday pattern)
+        elif weekday == 6 or is_holiday:
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_20, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_10_22, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_2030, shift_date=current_date))
@@ -348,6 +370,14 @@ class Vacation(BaseModel):
     def duration_days(self) -> int:
         """Get the number of days in this vacation period."""
         return (self.end_date - self.start_date).days + 1
+
+    def duration_days_in_range(self, range_start: date, range_end: date) -> int:
+        """Count vacation days that overlap with [range_start, range_end]."""
+        overlap_start = max(self.start_date, range_start)
+        overlap_end = min(self.end_date, range_end)
+        if overlap_start > overlap_end:
+            return 0
+        return (overlap_end - overlap_start).days + 1
 
 
 def load_vacations_from_csv(csv_path: Path) -> list[Vacation]:
@@ -410,6 +440,63 @@ def load_vacations_from_file(file_path: Path | str) -> list[Vacation]:
         for vac in vac_list:
             vacations.append(Vacation(**vac))
     return vacations
+
+
+def load_pre_assigned_from_file(file_path: Path | str) -> list[PreAssignedShift]:
+    """Load pre-assigned holiday shifts from CSV or XLSX."""
+    raw = _load_pre_assigned_dict(file_path)
+    return [
+        PreAssignedShift(
+            shift_date=r["shift_date"],
+            shift_type=ShiftType(r["shift_type"]),
+            staff_identifier=r["staff_identifier"],
+            is_paired=r["is_paired"],
+        )
+        for r in raw
+    ]
+
+
+def validate_pre_assigned(
+    pre_assigned: list[PreAssignedShift],
+    staff_list: list[Staff],
+    vacations: list[Vacation] | None = None,
+) -> list[str]:
+    """Check pre-assigned shifts for conflicts. Returns list of warning messages."""
+    warnings: list[str] = []
+    staff_by_id = {s.identifier: s for s in staff_list}
+    vacation_dates: dict[str, set[date]] = {}
+    if vacations:
+        for v in vacations:
+            vacation_dates.setdefault(v.identifier, set()).update(v.get_dates())
+
+    for pa in pre_assigned:
+        if pa.staff_identifier not in staff_by_id:
+            warnings.append(
+                f"Kürzel '{pa.staff_identifier}' (Datum {pa.shift_date:%d.%m.%Y}) "
+                f"nicht in Personaldaten gefunden."
+            )
+            continue
+        vac_dates = vacation_dates.get(pa.staff_identifier, set())
+        if pa.shift_date in vac_dates:
+            name = staff_by_id[pa.staff_identifier].name
+            warnings.append(
+                f"Konflikt: {name} ({pa.staff_identifier}) ist am "
+                f"{pa.shift_date:%d.%m.%Y} im Urlaub, aber für "
+                f"{pa.shift_type.value} eingeteilt."
+            )
+    return warnings
+
+
+def get_pre_assigned_holiday_dates(
+    pre_assigned: list[PreAssignedShift],
+) -> set[date]:
+    """Extract unique holiday dates from pre-assigned shifts (weekdays only)."""
+    holidays: set[date] = set()
+    for pa in pre_assigned:
+        # Only add as holiday if it's a weekday (Mon-Fri) with weekend-pattern shifts
+        if pa.shift_date.weekday() < 5 and pa.shift_type.value.startswith("So_"):
+            holidays.add(pa.shift_date)
+    return holidays
 
 
 def get_staff_unavailable_dates(

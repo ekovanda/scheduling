@@ -5,7 +5,7 @@ Delegates to the OR-Tools CP-SAT solver (solver_cpsat.py).
 
 from datetime import date
 
-from .models import PreviousPlanContext, Staff, Vacation
+from .models import PreAssignedShift, PreviousPlanContext, Staff, Vacation
 from .solver_cpsat import SolverResult, generate_schedule_cpsat
 
 
@@ -16,6 +16,7 @@ def generate_schedule(
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
     previous_context: PreviousPlanContext | None = None,
+    pre_assigned: list[PreAssignedShift] | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -40,4 +41,5 @@ def generate_schedule(
         max_solve_time_seconds=max_solve_time_seconds,
         random_seed=random_seed,
         previous_context=previous_context,
+        pre_assigned=pre_assigned,
     )

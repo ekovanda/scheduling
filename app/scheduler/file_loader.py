@@ -341,3 +341,140 @@ def load_vacations_from_file(file_path: Path | str) -> dict[str, list[dict[str, 
         )
 
     return vacations_dict
+
+
+# =========================================================================
+# PRE-ASSIGNED (HOLIDAY) SHIFT LOADING
+# =========================================================================
+
+# Maps column names to Sunday-pattern ShiftTypes
+_HOLIDAY_COLUMN_MAP: dict[str, str] = {
+    "nachtdienst": "NIGHT",  # Night shift type derived from date
+    "dienst_8_20": "So_8-20",
+    "dienst_10_22": "So_10-22",
+    "azubi_8_2030": "So_8-20:30",
+}
+
+_HOLIDAY_COLUMN_ALTERNATIVES: dict[str, list[str]] = {
+    "nachtdienst": [
+        "nachtdienst", "Nachtdienst", "night", "Night", "ND",
+    ],
+    "dienst_8_20": [
+        "dienst_8_20", "Dienst 8-20", "WE Dienst A", "we_dienst_a",
+        "Dienst_8_20", "So_8-20", "dienst8-20",
+    ],
+    "dienst_10_22": [
+        "dienst_10_22", "Dienst 10-22", "WE Dienst B", "we_dienst_b",
+        "Dienst_10_22", "So_10-22", "dienst10-22", "rufbereitschaft",
+        "Rufbereitschaft",
+    ],
+    "azubi_8_2030": [
+        "azubi_8_2030", "Azubi 8-20:30", "WE Dienst C", "we_dienst_c",
+        "Dienst_Azubi", "So_8-20:30", "azubi", "Azubi Dienst",
+        "azubi8-2030",
+    ],
+}
+
+# Night shift type mapping: weekday (0=Mon) -> ShiftType value
+_WEEKDAY_TO_NIGHT: dict[int, str] = {
+    0: "N_Mo-Di",
+    1: "N_Di-Mi",
+    2: "N_Mi-Do",
+    3: "N_Do-Fr",
+    4: "N_Fr-Sa",
+    5: "N_Sa-So",
+    6: "N_So-Mo",
+}
+
+
+def load_pre_assigned_from_file(
+    file_path: Path | str,
+) -> list[dict[str, Any]]:
+    """Load pre-assigned (holiday) shifts from CSV or XLSX.
+
+    Expected columns:
+        - Datum: date of the holiday
+        - Nachtdienst: identifier(s) for night shift (e.g. "AA" or "AA + Bax")
+        - Dienst 8-20: identifier for So_8-20 shift
+        - Dienst 10-22: identifier for So_10-22 shift
+        - Azubi 8-20:30: identifier for So_8-20:30 shift
+
+    Returns:
+        List of dicts with keys: shift_date, shift_type, staff_identifier, is_paired
+    """
+    from datetime import date as date_type
+
+    df = load_file_to_dataframe(file_path)
+
+    # Find date column
+    col_date = _find_column(
+        df, ["datum", "Datum", "date", "Date", "Feiertag", "feiertag"]
+    )
+
+    # Find shift columns (all optional except date)
+    found_cols: dict[str, str | None] = {}
+    for key, alternatives in _HOLIDAY_COLUMN_ALTERNATIVES.items():
+        try:
+            found_cols[key] = _find_column(df, alternatives)
+        except ColumnMappingError:
+            found_cols[key] = None
+
+    if not any(found_cols.values()):
+        raise ColumnMappingError(
+            "No shift columns found. Expected at least one of: "
+            "Nachtdienst, Dienst 8-20, Dienst 10-22, Azubi 8-20:30. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    def parse_date(date_str: str) -> date_type:
+        formats = ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y"]
+        for fmt in formats:
+            try:
+                return pd.to_datetime(date_str.strip(), format=fmt).date()
+            except (ValueError, TypeError):
+                continue
+        try:
+            return pd.to_datetime(date_str.strip()).date()
+        except Exception as e:
+            raise ValueError(f"Could not parse date '{date_str}'") from e
+
+    results: list[dict[str, Any]] = []
+
+    for _, row in df.iterrows():
+        date_val = _safe_get_value(row, col_date)
+        if not date_val:
+            continue
+        shift_date = parse_date(str(date_val))
+        weekday = shift_date.weekday()
+
+        for col_key, col_name in found_cols.items():
+            if col_name is None:
+                continue
+            cell = _safe_get_value(row, col_name)
+            if not cell:
+                continue
+
+            cell = str(cell).strip()
+            if not cell:
+                continue
+
+            # Determine shift type
+            shift_type_map = _HOLIDAY_COLUMN_MAP[col_key]
+            if shift_type_map == "NIGHT":
+                shift_type_val = _WEEKDAY_TO_NIGHT[weekday]
+            else:
+                shift_type_val = shift_type_map
+
+            # Parse identifiers (may be "AA + Bax")
+            identifiers = [s.strip() for s in cell.split("+") if s.strip()]
+            is_paired = len(identifiers) > 1
+
+            for identifier in identifiers:
+                results.append({
+                    "shift_date": shift_date,
+                    "shift_type": shift_type_val,
+                    "staff_identifier": identifier,
+                    "is_paired": is_paired,
+                })
+
+    return results

@@ -13,6 +13,7 @@ from .models import (
     Abteilung,
     Assignment,
     Beruf,
+    PreAssignedShift,
     PreviousPlanContext,
     Schedule,
     Shift,
@@ -21,6 +22,7 @@ from .models import (
     Vacation,
     calculate_available_days,
     generate_quarter_shifts,
+    get_pre_assigned_holiday_dates,
     get_staff_unavailable_dates,
 )
 from .validator import validate_schedule
@@ -53,6 +55,7 @@ def generate_schedule_cpsat(
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
     previous_context: PreviousPlanContext | None = None,
+    pre_assigned: list[PreAssignedShift] | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -68,11 +71,16 @@ def generate_schedule_cpsat(
     """
     if vacations is None:
         vacations = []
+    if pre_assigned is None:
+        pre_assigned = []
     
     model = cp_model.CpModel()
 
-    # Generate all shifts for the quarter
-    shifts = generate_quarter_shifts(quarter_start)
+    # Derive holiday dates from pre-assigned shifts for shift generation
+    holiday_dates = get_pre_assigned_holiday_dates(pre_assigned)
+
+    # Generate all shifts for the quarter (including holiday Sunday-pattern shifts)
+    shifts = generate_quarter_shifts(quarter_start, holiday_dates=holiday_dates)
     quarter_end = max(s.shift_date for s in shifts) if shifts else quarter_start
 
     # Index mappings
@@ -160,6 +168,31 @@ def generate_schedule_cpsat(
                     )
 
     # =========================================================================
+    # PRE-ASSIGNED (FIXED) SHIFTS
+    # =========================================================================
+    # Pin decision variables for pre-assigned shifts (holidays, external process)
+    pre_assigned_keys: set[tuple[str, date, ShiftType]] = set()
+    for pa in pre_assigned:
+        key = (pa.staff_identifier, pa.shift_date, pa.shift_type)
+        if key in x:
+            model.Add(x[key] == 1)
+            pre_assigned_keys.add(key)
+        else:
+            # Variable doesn't exist — staff may be on vacation or ineligible.
+            # Create the variable so the assignment can still be recorded,
+            # but only if the shift exists in our shift list.
+            shift_exists = any(
+                s.shift_date == pa.shift_date and s.shift_type == pa.shift_type
+                for s in shifts
+            )
+            if shift_exists:
+                x[key] = model.NewBoolVar(
+                    f"x_{pa.staff_identifier}_{pa.shift_date}_{pa.shift_type.value}"
+                )
+                model.Add(x[key] == 1)
+                pre_assigned_keys.add(key)
+
+    # =========================================================================
     # HARD CONSTRAINTS
     # =========================================================================
 
@@ -178,7 +211,15 @@ def generate_schedule_cpsat(
             if len(vars_for_day) > 1:
                 model.Add(sum(vars_for_day) <= 1)
 
-    # 1. Weekend shift coverage: exactly 1 person per shift
+    # 1. Weekend shift coverage
+    # Default: exactly 1 person per shift.
+    # Pre-assigned holidays may have >1 person pinned; adjust target accordingly.
+    pre_assigned_count: dict[tuple[date, ShiftType], int] = {}
+    for pa in pre_assigned:
+        key = (pa.shift_date, pa.shift_type)
+        pre_assigned_count[key] = pre_assigned_count.get(key, 0) + 1
+    pre_assigned_shift_slots: set[tuple[date, ShiftType]] = set(pre_assigned_count.keys())
+
     for shift in weekend_shifts:
         staff_for_shift = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
@@ -186,13 +227,17 @@ def generate_schedule_cpsat(
             if (s.identifier, shift.shift_date, shift.shift_type) in x
         ]
         if staff_for_shift:
-            model.Add(sum(staff_for_shift) == 1)
+            target = pre_assigned_count.get(
+                (shift.shift_date, shift.shift_type), 1
+            )
+            model.Add(sum(staff_for_shift) == target)
 
     # 2. Night shift coverage:
     #    - Sun-Mon and Mon-Tue (vet present): exactly 1 non-Azubi + optional 0-1 Azubi
     #    - Other nights: 1-2 people total
     #    - At least one non-Azubi required on all nights
     for shift in night_shifts:
+        shift_slot = (shift.shift_date, shift.shift_type)
         is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
         
         # Categorize staff for this shift
@@ -213,7 +258,11 @@ def generate_schedule_cpsat(
         if not all_vars:
             continue
         
-        if is_vet_present:
+        if shift_slot in pre_assigned_shift_slots:
+            # Pre-assigned holiday night: enforce exact headcount, skip role rules
+            target = pre_assigned_count[shift_slot]
+            model.Add(sum(all_vars) == target)
+        elif is_vet_present:
             # Vet-present nights: exactly 1 non-Azubi + optional 0-1 Azubi
             if non_azubi_vars:
                 model.Add(sum(non_azubi_vars) == 1)  # Exactly 1 non-Azubi
@@ -251,6 +300,9 @@ def generate_schedule_cpsat(
     #    - nd_alone=True (non-Azubi) must work COMPLETELY ALONE on regular nights
     
     for shift in night_shifts:
+        if (shift.shift_date, shift.shift_type) in pre_assigned_shift_slots:
+            continue  # Externally-assigned holidays bypass pairing rules
+
         is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
         
         # Categorize staff for this shift
@@ -364,9 +416,15 @@ def generate_schedule_cpsat(
 
     # 7. 3-week block constraint: gaps between shift blocks must be >= 21 days
     # Track block starts and enforce gap between consecutive blocks
+    # Pre-assigned holiday dates get a relaxed 1-week gap per stakeholder request
+    pre_assigned_dates_by_staff: dict[str, set[date]] = {}
+    for sid, d, _ in pre_assigned_keys:
+        pre_assigned_dates_by_staff.setdefault(sid, set()).add(d)
+
     _add_block_constraints(
         model, x, staff_list, shifts, quarter_start, quarter_end,
         trailing_work_dates=trailing_work_dates or None,
+        pre_assigned_dates_by_staff=pre_assigned_dates_by_staff,
     )
 
     # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
@@ -553,7 +611,10 @@ def generate_schedule_cpsat(
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         # Extract solution
-        schedule = _extract_schedule(solver, x, is_paired, shifts, quarter_start, quarter_end)
+        schedule = _extract_schedule(
+            solver, x, is_paired, shifts, quarter_start, quarter_end,
+            pre_assigned_keys=pre_assigned_keys,
+        )
 
         # Validate (should pass, but good to confirm)
         validation = validate_schedule(schedule, staff_list)
@@ -567,8 +628,14 @@ def generate_schedule_cpsat(
         )
     else:
         # Infeasible or timeout
+        status_name = solver.StatusName(status)
         unsatisfiable = _diagnose_infeasibility(
             model, staff_list, shifts, min_participation_info
+        )
+        unsatisfiable.insert(
+            0,
+            f"Solver-Status: {status_name} "
+            f"(Wall-Time: {solver.WallTime():.1f}s)",
         )
         return SolverResult(
             success=False,
@@ -625,24 +692,31 @@ def _add_block_constraints(
     quarter_start: date,
     quarter_end: date,
     trailing_work_dates: dict[str, set[date]] | None = None,
+    pre_assigned_dates_by_staff: dict[str, set[date]] | None = None,
 ) -> None:
-    """Add 3-week block constraints.
+    """Add block gap constraints.
 
     The constraint: if you have blocks B1 and B2, and B2 starts
-    within 21 days of B1's START, that's a violation.
+    within GAP days of B1's START, that's a violation.
+
+    Default GAP is 21 days (3 weeks).  When a block starts on a
+    pre-assigned (holiday) date for that staff member, the gap to/from
+    that block is relaxed to 7 days (1 week).
 
     Implementation: For each potential block-start day D (where we work but didn't
-    work D-1), we forbid working on any day in (D+2, D+20) that would also be a
+    work D-1), we forbid working on any day in (D+2, D+GAP-1) that would also be a
     block-start (i.e., without working the day before).
 
-    Simplified approach: Forbid working on day D1 and day D2 where:
-    - D1 and D2 are both "block starts" (no work on D1-1 and D2-1)
-    - 2 <= D2 - D1 < 21
-
     When trailing_work_dates is provided, injects fixed work-day variables
-    from the previous quarter (last 21 days) so the 3-week gap is
-    enforced across the quarter boundary.
+    from the previous quarter (last 21 days) so the gap is enforced across
+    the quarter boundary.
     """
+    DEFAULT_GAP = 21
+    HOLIDAY_GAP = 7
+
+    if pre_assigned_dates_by_staff is None:
+        pre_assigned_dates_by_staff = {}
+
     # Group shifts by date
     shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
     for s in shifts:
@@ -706,15 +780,24 @@ def _add_block_constraints(
                 # No previous day in schedule, so if working, it's a block start
                 block_starts[d] = works_on[d]
 
-        # Enforce: no two block starts within 21 days (3 weeks)
+        # Enforce block gap: default 21 days, relaxed to 7 if either
+        # block starts on a pre-assigned (holiday) date for this staff.
+        staff_pa_dates = pre_assigned_dates_by_staff.get(staff.identifier, set())
         block_start_dates = sorted(block_starts.keys())
         for i, d1 in enumerate(block_start_dates):
             for d2 in block_start_dates[i + 1:]:
                 gap = (d2 - d1).days
-                if gap >= 21:
+                if gap >= DEFAULT_GAP:
                     break  # No need to check further
-                # Both being block starts is forbidden
-                model.Add(block_starts[d1] + block_starts[d2] <= 1)
+                # Use relaxed gap if either date is pre-assigned
+                required_gap = (
+                    HOLIDAY_GAP
+                    if d1 in staff_pa_dates or d2 in staff_pa_dates
+                    else DEFAULT_GAP
+                )
+                if gap < required_gap:
+                    # Both being block starts is forbidden
+                    model.Add(block_starts[d1] + block_starts[d2] <= 1)
 
 
 def _add_nd_max_consecutive_constraints(
@@ -1198,6 +1281,35 @@ def _add_min_block_constraint(
             model.Add(var == 0)
 
 
+def _count_consecutive_blocks(
+    night_dates: list[date],
+    min_block: int,
+) -> int:
+    """Count how many consecutive runs of length >= min_block exist in sorted dates."""
+    if len(night_dates) < min_block:
+        return 0
+    blocks = 0
+    run = 1
+    for i in range(1, len(night_dates)):
+        if (night_dates[i] - night_dates[i - 1]).days == 1:
+            run += 1
+        else:
+            if run >= min_block:
+                blocks += 1
+            run = 1
+    if run >= min_block:
+        blocks += 1
+    return blocks
+
+
+# Minimum number of valid consecutive blocks needed to justify a hard
+# participation constraint.  With fewer blocks the solver has almost no
+# room to place the mandatory shift alongside 3-week-gap, abteilung
+# and other hard constraints—so we fall back to the soft fairness
+# objective instead.
+_MIN_VIABLE_BLOCKS = 3
+
+
 def _add_min_participation_constraints(
     model: cp_model.CpModel,
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
@@ -1210,6 +1322,11 @@ def _add_min_participation_constraints(
     Eligible staff must work at least:
     - 1 weekend shift (if eligible for any weekend shift type)
     - 1 night shift (if nd_possible=True AND has sufficient availability)
+    
+    Night participation is vacation-aware: only required if the remaining
+    (non-vacation) night variables can form at least _MIN_VIABLE_BLOCKS
+    consecutive blocks of nd_min_consecutive length, giving the solver
+    enough room to place the shift alongside other hard constraints.
     
     Returns dict tracking which constraints were applied per staff for diagnostics.
     """
@@ -1232,19 +1349,27 @@ def _add_min_participation_constraints(
         
         # Night participation: staff with nd_possible=True
         if staff.nd_possible:
+            # Collect the dates for which decision variables exist
+            # (vacation days are already excluded during variable creation)
+            night_dates_with_vars: list[date] = sorted({
+                s.shift_date
+                for s in night_shifts
+                if (staff.identifier, s.shift_date, s.shift_type) in x
+            })
             night_vars = [
                 x[(staff.identifier, s.shift_date, s.shift_type)]
                 for s in night_shifts
                 if (staff.identifier, s.shift_date, s.shift_type) in x
             ]
             
-            # Only require if they have enough availability for min_consecutive requirement
-            # Count available consecutive night opportunities
             min_consec = staff.nd_min_consecutive
-            available_night_types = 7 - len(staff.nd_exceptions)
-            
-            # Heuristic: if available types >= min_consecutive, they can likely form a block
-            if night_vars and available_night_types >= min_consec:
+
+            # Only require night participation if remaining dates can form
+            # enough consecutive blocks to give the solver real flexibility.
+            viable_blocks = _count_consecutive_blocks(
+                night_dates_with_vars, min_consec
+            )
+            if night_vars and viable_blocks >= _MIN_VIABLE_BLOCKS:
                 model.Add(sum(night_vars) >= 1)
                 info["night_required"] = True
         
@@ -1260,9 +1385,11 @@ def _extract_schedule(
     shifts: list[Shift],
     quarter_start: date,
     quarter_end: date,
+    pre_assigned_keys: set[tuple[str, date, ShiftType]] | None = None,
 ) -> Schedule:
     """Extract Schedule object from solver solution."""
     assignments = []
+    pre_assigned_keys = pre_assigned_keys or set()
 
     for shift in shifts:
         assigned_staff = []
@@ -1275,11 +1402,13 @@ def _extract_schedule(
         paired = len(assigned_staff) >= 2 and shift.is_night_shift()
 
         for staff_id in assigned_staff:
+            key = (staff_id, shift.shift_date, shift.shift_type)
             assignments.append(
                 Assignment(
                     shift=shift,
                     staff_identifier=staff_id,
                     is_paired=paired,
+                    is_pre_assigned=key in pre_assigned_keys,
                 )
             )
 
@@ -1338,11 +1467,14 @@ def _diagnose_infeasibility(
     if participation_info:
         for staff in staff_list:
             info = participation_info.get(staff.identifier, {})
-            if info.get("night_required") and len(staff.nd_exceptions) >= 5:
-                issues.append(
-                    f"{staff.name} requires 1+ night shifts but has limited availability "
-                    f"({7 - len(staff.nd_exceptions)} night types). May conflict with vacation."
-                )
+            if info.get("night_required"):
+                available_nights = 7 - len(staff.nd_exceptions)
+                if available_nights <= 2:
+                    issues.append(
+                        f"{staff.name} requires 1+ night shifts but has limited availability "
+                        f"({available_nights} night types). May conflict with vacation or "
+                        f"min-consecutive constraints."
+                    )
 
     if not issues:
         issues.append("Model infeasible. Check constraint interactions, vacation conflicts, or increase solve time.")
