@@ -782,22 +782,24 @@ def _add_block_constraints(
 
         # Enforce block gap: default 21 days, relaxed to 7 if either
         # block starts on a pre-assigned (holiday) date for this staff.
-        # IMPORTANT: Do NOT enforce the gap when d1 is a Q2 (trailing) block start.
-        # This covers two cases:
-        #   1. Q2 → Q2: both block starts are fixed history; the gap constraint would
-        #      force block_starts[d1] + block_starts[d2] <= 1 when both are fixed=1.
-        #   2. Q2 → Q3: trailing block is fixed context; Q3 scheduling should not be
-        #      locked out of the first 3 weeks just because of a Q2 block.
-        # The block-gap rest constraint is an intra-quarter rule only.
+        # Block-gap enforcement across quarter boundaries:
+        #   Q2 → Q2: SKIP. Both block starts are fixed history (both = 1). Adding
+        #            block_starts[d1] + block_starts[d2] <= 1 with both fixed=1
+        #            creates an immediate contradiction.
+        #   Q2 → Q3: ENFORCE. d1 is fixed=1, so the constraint reduces to
+        #            block_starts[d2] <= 0, correctly restricting the Q3 date.
+        #            This implements the rolling 3-week window across quarters.
+        #   Q3 → Q3: ENFORCE (standard intra-quarter rest constraint).
         staff_pa_dates = pre_assigned_dates_by_staff.get(staff.identifier, set())
         block_start_dates = sorted(block_starts.keys())
         for i, d1 in enumerate(block_start_dates):
-            if d1 < quarter_start:
-                continue  # d1 is trailing/Q2 — skip all pairs starting from this date
             for d2 in block_start_dates[i + 1:]:
                 gap = (d2 - d1).days
                 if gap >= DEFAULT_GAP:
                     break  # No need to check further
+                # Skip only when both dates are Q2 trailing (fixed history)
+                if d1 < quarter_start and d2 < quarter_start:
+                    continue
                 # Use relaxed gap if either date is pre-assigned
                 required_gap = (
                     HOLIDAY_GAP

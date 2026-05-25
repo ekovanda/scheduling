@@ -474,15 +474,21 @@ class TestTrailingNightBoundary:
 # ---------------------------------------------------------------------------
 
 class TestTrailingBlockGap:
-    """Regression tests for the Q2→Q2 trailing block gap INFEASIBLE bug.
+    """Regression tests for block-gap constraint behaviour at the Q2/Q3 boundary.
 
-    Bug: _add_block_constraints applied the intra-quarter block-gap rest
-    constraint (≥21 days between block starts) to pairs of Q2 trailing dates.
-    When a staff member had two Q2 block starts less than 21 days apart, both
-    fixed=1, the constraint produced model.Add(1+1 <= 1) — immediate INFEASIBLE.
+    Rule: a staff member must wait ≥21 days between block starts (rolling window).
+    The same window must apply across the quarter boundary (Q2 → Q3).
 
-    Fix: skip the gap constraint whenever d1 < quarter_start (i.e., d1 is a
-    trailing/historical date).  This covers Q2→Q2 and Q2→Q3 pairs.
+    Bug fixed: when a staff member had two Q2 trailing block starts <21 days apart
+    (both fixed=1), the constraint model.Add(1+1 <= 1) caused immediate INFEASIBLE.
+
+    Correct behaviour:
+      Q2 → Q2:  SKIP  — both sides are fixed history; constraining fixed=1 vars
+                         would create a direct contradiction.
+      Q2 → Q3:  ENFORCE — d1 is fixed=1, so the constraint forces the Q3
+                           decision variable to 0 for dates within 21 days.
+                           This implements the rolling window across quarters.
+      Q3 → Q3:  ENFORCE — standard intra-quarter rest constraint.
     """
 
     def _solve(self, model: cp_model.CpModel) -> int:
@@ -490,15 +496,12 @@ class TestTrailingBlockGap:
         solver.parameters.max_time_in_seconds = 2.0
         return solver.Solve(model)
 
-    def test_two_q2_trailing_block_starts_no_contradiction(self) -> None:
-        """Two Q2 trailing block starts <21 days apart must not produce a contradiction.
+    def test_q2_to_q2_trailing_blocks_no_contradiction(self) -> None:
+        """Q2→Q2 pairs must be skipped to avoid contradicting fixed history.
 
-        Old code: `if d1 < quarter_start <= d2: continue` only skipped Q2→Q3
-        pairs. For SW Jun 17 + Jun 28 (gap=11 days, both Q2) it still added
-        model.Add(fixed=1 + fixed=1 <= 1) → immediate INFEASIBLE.
-
-        New code: `if d1 < quarter_start: continue` skips ALL pairs where d1
-        is trailing (Q2→Q2 and Q2→Q3 both skipped).
+        SW had trailing blocks on Jun 17 and Jun 28 (gap=11 days, both Q2,
+        both fixed=1). The gap constraint must NOT be applied here — applying
+        it would produce model.Add(1+1 <= 1), an immediate contradiction.
         """
         DEFAULT_GAP = 21
         quarter_start = date(2026, 7, 1)
@@ -512,43 +515,73 @@ class TestTrailingBlockGap:
         model.Add(b2 == 1)  # fixed trailing history
 
         gap = (d2 - d1).days
-        # New code: skip whenever d1 < quarter_start → no constraint added here
-        if not (d1 < quarter_start) and gap < DEFAULT_GAP:
+        # Current code: skip only when BOTH dates are Q2
+        both_q2 = d1 < quarter_start and d2 < quarter_start
+        if not both_q2 and gap < DEFAULT_GAP:
             model.Add(b1 + b2 <= 1)
 
         status = self._solve(model)
         assert status != cp_model.INFEASIBLE, (
-            "Two Q2 trailing block starts within gap window must not cause contradiction. "
-            "The block-gap constraint is intra-quarter only and must skip Q2 dates."
+            "Q2→Q2 pairs must be skipped. Applying the gap constraint to two "
+            "fixed=1 trailing dates creates a direct contradiction."
         )
 
-    def test_old_q2_to_q2_logic_would_have_been_infeasible(self) -> None:
-        """The OLD condition produced a contradiction for Q2→Q2 pairs (documents bug)."""
+    def test_q2_to_q3_gap_is_enforced(self) -> None:
+        """Q2 trailing block start must restrict Q3 block starts within 21 days.
+
+        If d1 is a trailing Q2 date (fixed=1) and d2 is a Q3 decision variable,
+        the constraint reduces to block_starts[d2] = 0 for any d2 within 21 days.
+        This enforces the rolling 3-week window across the quarter boundary.
+        """
         DEFAULT_GAP = 21
         quarter_start = date(2026, 7, 1)
-        d1 = date(2026, 6, 17)
-        d2 = date(2026, 6, 28)
+        d1 = date(2026, 6, 28)  # Q2 trailing block start (fixed=1)
+        d2 = date(2026, 7, 5)   # Q3 decision variable, gap=7 days < 21
 
         model = cp_model.CpModel()
-        b1 = model.NewBoolVar("block_start_d1")
-        b2 = model.NewBoolVar("block_start_d2")
-        model.Add(b1 == 1)
-        model.Add(b2 == 1)
+        b1 = model.NewBoolVar("q2_block")
+        b2 = model.NewBoolVar("q3_block")
+        model.Add(b1 == 1)   # fixed trailing history
+        model.Add(b2 == 1)   # force Q3 block start (should be forbidden)
 
         gap = (d2 - d1).days
-        # OLD buggy condition: `if d1 < quarter_start <= d2: continue`
-        # For Jun17 < Jul1 <= Jun28: Jul1 <= Jun28 is False → constraint IS added
-        old_skip = d1 < quarter_start <= d2  # evaluates False
-        if not old_skip and gap < DEFAULT_GAP:
-            model.Add(b1 + b2 <= 1)  # BUG: both fixed=1 → contradiction
+        both_q2 = d1 < quarter_start and d2 < quarter_start
+        if not both_q2 and gap < DEFAULT_GAP:
+            model.Add(b1 + b2 <= 1)  # enforced: Q2→Q3 pair
 
         status = self._solve(model)
         assert status == cp_model.INFEASIBLE, (
-            "Documents the bug: old Q2→Q2 logic added b1+b2<=1 with both fixed=1."
+            "Q2→Q3 gap must be enforced. A Q3 block start within 21 days of a "
+            "Q2 trailing block start must be forbidden (rolling window applies "
+            "across the quarter boundary)."
         )
 
-    def test_two_q3_blocks_within_gap_window_is_still_enforced(self) -> None:
-        """Intra-Q3 block gap enforcement must remain active after the fix."""
+    def test_q2_to_q3_gap_allows_dates_outside_window(self) -> None:
+        """Q3 block starts at or beyond 21 days from Q2 trailing must be allowed."""
+        DEFAULT_GAP = 21
+        quarter_start = date(2026, 7, 1)
+        d1 = date(2026, 6, 28)   # Q2 trailing block start (fixed=1)
+        d2 = date(2026, 7, 19)   # Q3 block start exactly 21 days later
+
+        model = cp_model.CpModel()
+        b1 = model.NewBoolVar("q2_block")
+        b2 = model.NewBoolVar("q3_block")
+        model.Add(b1 == 1)
+        model.Add(b2 == 1)
+
+        gap = (d2 - d1).days  # exactly 21 = DEFAULT_GAP → break, no constraint
+        both_q2 = d1 < quarter_start and d2 < quarter_start
+        if not both_q2 and gap < DEFAULT_GAP:
+            model.Add(b1 + b2 <= 1)
+
+        status = self._solve(model)
+        assert status != cp_model.INFEASIBLE, (
+            "A Q3 block start exactly 21 days after a Q2 trailing block must be "
+            "permitted — the rolling window boundary is inclusive."
+        )
+
+    def test_q3_to_q3_gap_is_still_enforced(self) -> None:
+        """Intra-Q3 block gap enforcement must remain active."""
         DEFAULT_GAP = 21
         quarter_start = date(2026, 7, 1)
         d1 = date(2026, 7, 1)   # Q3 block start
@@ -561,8 +594,8 @@ class TestTrailingBlockGap:
         model.Add(b2 == 1)
 
         gap = (d2 - d1).days
-        # New code: d1=Jul1 is NOT < Jul1, so constraint is added
-        if not (d1 < quarter_start) and gap < DEFAULT_GAP:
+        both_q2 = d1 < quarter_start and d2 < quarter_start
+        if not both_q2 and gap < DEFAULT_GAP:
             model.Add(b1 + b2 <= 1)
 
         status = self._solve(model)
