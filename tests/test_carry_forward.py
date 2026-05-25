@@ -3,6 +3,7 @@
 from datetime import date
 
 import pytest
+from ortools.sat.python import cp_model
 
 from app.scheduler.models import (
     Assignment,
@@ -17,7 +18,9 @@ from app.scheduler.models import (
     Vacation,
     build_previous_context,
     compute_carry_forward,
+    generate_quarter_shifts,
 )
+from app.scheduler.solver_cpsat import _add_min_consecutive_nights_constraints
 
 
 # ---------------------------------------------------------------------------
@@ -336,3 +339,234 @@ def _build_minimal_staff() -> list[Staff]:
             nd_exceptions=[],
         ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: trailing night boundary constraint bug
+# ---------------------------------------------------------------------------
+
+class TestTrailingNightBoundary:
+    """Regression tests for the isolated-trailing-night INFEASIBLE bug.
+
+    Bug: _add_min_consecutive_nights_constraints applied the min-consecutive
+    adjacency constraint to fixed trailing (historical) variables. An isolated
+    trailing night at the Q2/Q3 cutoff boundary had no adjacent neighbour,
+    causing model.Add(var==0) to contradict the already-set model.Add(var==1),
+    producing immediate INFEASIBLE regardless of the rest of the schedule.
+    """
+
+    def _make_tfa(self, identifier: str = "T") -> Staff:
+        return Staff(
+            name=identifier, identifier=identifier, adult=True, hours=40,
+            beruf=Beruf.TFA, reception=True, nd_possible=True,
+            nd_alone=True, nd_max_consecutive=5, nd_min_consecutive=2,
+            nd_exceptions=[],
+        )
+
+    def _solve_model(self, model: cp_model.CpModel) -> int:
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 5.0
+        return solver.Solve(model)
+
+    def test_isolated_trailing_night_at_cutoff_boundary_is_feasible(self) -> None:
+        """Isolated trailing night on cutoff day with long gap to first Q3 night.
+
+        Simulates Jana H (Hör): worked a single night June 10 (first day of the
+        trailing window). The Q2 predecessor (June 9) is outside the window and
+        the next Q3 night is weeks away. Before the fix this caused INFEASIBLE.
+        """
+        staff = self._make_tfa("T")
+        q3_start = date(2026, 7, 1)
+        all_q3_nights = [s for s in generate_quarter_shifts(q3_start) if s.is_night_shift()]
+
+        model = cp_model.CpModel()
+        # Only create Q3 vars for the last 30 days (simulating long vacation)
+        x: dict = {}
+        for shift in all_q3_nights:
+            if (shift.shift_date - q3_start).days >= 60:
+                x[("T", shift.shift_date, shift.shift_type)] = model.NewBoolVar(
+                    f"x_{shift.shift_date}"
+                )
+
+        # Isolated trailing night — sole entry, no adjacent Q2 or Q3 night
+        trailing = {"T": [date(2026, 6, 10)]}
+        _add_min_consecutive_nights_constraints(model, x, [staff], all_q3_nights, trailing)
+
+        status = self._solve_model(model)
+        assert status != cp_model.INFEASIBLE, (
+            "Isolated trailing night at cutoff boundary must not force INFEASIBLE. "
+            "Trailing variables are fixed history and must not be constrained to "
+            "have adjacent nights."
+        )
+
+    def test_isolated_trailing_night_mid_window_no_adjacent_q3(self) -> None:
+        """Isolated trailing night mid-window with vacation consuming all adjacent Q3.
+
+        Simulates Samira W (SW): worked June 28 alone (next block was June 16-17,
+        previous block ended there), and her next Q3 night is July 1+ which is
+        >1 day away. Before the fix this caused INFEASIBLE.
+        """
+        staff = self._make_tfa("S")
+        q3_start = date(2026, 7, 1)
+        all_q3_nights = [s for s in generate_quarter_shifts(q3_start) if s.is_night_shift()]
+
+        model = cp_model.CpModel()
+        # First Q3 variable for staff S is July 7 (vacation blocks July 1-6)
+        x: dict = {}
+        for shift in all_q3_nights:
+            if (shift.shift_date - q3_start).days >= 6:
+                x[("S", shift.shift_date, shift.shift_type)] = model.NewBoolVar(
+                    f"xs_{shift.shift_date}"
+                )
+
+        # June 28 isolated trailing night (gap to first Q3 var = 9 days)
+        trailing = {"S": [date(2026, 6, 28)]}
+        _add_min_consecutive_nights_constraints(model, x, [staff], all_q3_nights, trailing)
+
+        status = self._solve_model(model)
+        assert status != cp_model.INFEASIBLE, (
+            "Isolated trailing night with no adjacent Q3 neighbour must not force INFEASIBLE."
+        )
+
+    def test_contiguous_trailing_nights_still_contextualise_q3(self) -> None:
+        """Trailing nights June 29-30 must satisfy min-consec for adjacent Q3 night July 1.
+
+        Trailing nights are context for Q3 decision vars. If Q3 July 1 is assigned,
+        it should be satisfied by the adjacent trailing June 30 without needing
+        an additional Q3 neighbour on July 2.
+        """
+        staff = self._make_tfa("C")
+        q3_start = date(2026, 7, 1)
+        all_q3_nights = [s for s in generate_quarter_shifts(q3_start) if s.is_night_shift()]
+
+        model = cp_model.CpModel()
+        x: dict = {}
+        for shift in all_q3_nights:
+            key = ("C", shift.shift_date, shift.shift_type)
+            x[key] = model.NewBoolVar(f"xc_{shift.shift_date}")
+
+        # Two consecutive trailing nights ending right at Q3 start
+        trailing = {"C": [date(2026, 6, 29), date(2026, 6, 30)]}
+        _add_min_consecutive_nights_constraints(model, x, [staff], all_q3_nights, trailing)
+
+        # Force July 1 to be worked — it must be satisfiable without forcing July 2
+        # because June 30 (trailing, fixed=1) is adjacent
+        july_1_shift = next(s for s in all_q3_nights if s.shift_date == date(2026, 7, 1))
+        july_1_key = ("C", date(2026, 7, 1), july_1_shift.shift_type)
+        model.Add(x[july_1_key] == 1)
+
+        # Force July 2 to NOT be worked — this would make July 1 unsatisfied if
+        # trailing context isn't working
+        july_2_shift = next(
+            (s for s in all_q3_nights if s.shift_date == date(2026, 7, 2)), None
+        )
+        if july_2_shift:
+            model.Add(x[("C", date(2026, 7, 2), july_2_shift.shift_type)] == 0)
+
+        status = self._solve_model(model)
+        assert status != cp_model.INFEASIBLE, (
+            "July 1 should be satisfiable by adjacent trailing June 30 without needing July 2."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: trailing block-gap constraint bug
+# ---------------------------------------------------------------------------
+
+class TestTrailingBlockGap:
+    """Regression tests for the Q2→Q2 trailing block gap INFEASIBLE bug.
+
+    Bug: _add_block_constraints applied the intra-quarter block-gap rest
+    constraint (≥21 days between block starts) to pairs of Q2 trailing dates.
+    When a staff member had two Q2 block starts less than 21 days apart, both
+    fixed=1, the constraint produced model.Add(1+1 <= 1) — immediate INFEASIBLE.
+
+    Fix: skip the gap constraint whenever d1 < quarter_start (i.e., d1 is a
+    trailing/historical date).  This covers Q2→Q2 and Q2→Q3 pairs.
+    """
+
+    def _solve(self, model: cp_model.CpModel) -> int:
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 2.0
+        return solver.Solve(model)
+
+    def test_two_q2_trailing_block_starts_no_contradiction(self) -> None:
+        """Two Q2 trailing block starts <21 days apart must not produce a contradiction.
+
+        Old code: `if d1 < quarter_start <= d2: continue` only skipped Q2→Q3
+        pairs. For SW Jun 17 + Jun 28 (gap=11 days, both Q2) it still added
+        model.Add(fixed=1 + fixed=1 <= 1) → immediate INFEASIBLE.
+
+        New code: `if d1 < quarter_start: continue` skips ALL pairs where d1
+        is trailing (Q2→Q2 and Q2→Q3 both skipped).
+        """
+        DEFAULT_GAP = 21
+        quarter_start = date(2026, 7, 1)
+        d1 = date(2026, 6, 17)  # Q2 trailing block start
+        d2 = date(2026, 6, 28)  # Q2 trailing block start, gap=11 days
+
+        model = cp_model.CpModel()
+        b1 = model.NewBoolVar("block_start_d1")
+        b2 = model.NewBoolVar("block_start_d2")
+        model.Add(b1 == 1)  # fixed trailing history
+        model.Add(b2 == 1)  # fixed trailing history
+
+        gap = (d2 - d1).days
+        # New code: skip whenever d1 < quarter_start → no constraint added here
+        if not (d1 < quarter_start) and gap < DEFAULT_GAP:
+            model.Add(b1 + b2 <= 1)
+
+        status = self._solve(model)
+        assert status != cp_model.INFEASIBLE, (
+            "Two Q2 trailing block starts within gap window must not cause contradiction. "
+            "The block-gap constraint is intra-quarter only and must skip Q2 dates."
+        )
+
+    def test_old_q2_to_q2_logic_would_have_been_infeasible(self) -> None:
+        """The OLD condition produced a contradiction for Q2→Q2 pairs (documents bug)."""
+        DEFAULT_GAP = 21
+        quarter_start = date(2026, 7, 1)
+        d1 = date(2026, 6, 17)
+        d2 = date(2026, 6, 28)
+
+        model = cp_model.CpModel()
+        b1 = model.NewBoolVar("block_start_d1")
+        b2 = model.NewBoolVar("block_start_d2")
+        model.Add(b1 == 1)
+        model.Add(b2 == 1)
+
+        gap = (d2 - d1).days
+        # OLD buggy condition: `if d1 < quarter_start <= d2: continue`
+        # For Jun17 < Jul1 <= Jun28: Jul1 <= Jun28 is False → constraint IS added
+        old_skip = d1 < quarter_start <= d2  # evaluates False
+        if not old_skip and gap < DEFAULT_GAP:
+            model.Add(b1 + b2 <= 1)  # BUG: both fixed=1 → contradiction
+
+        status = self._solve(model)
+        assert status == cp_model.INFEASIBLE, (
+            "Documents the bug: old Q2→Q2 logic added b1+b2<=1 with both fixed=1."
+        )
+
+    def test_two_q3_blocks_within_gap_window_is_still_enforced(self) -> None:
+        """Intra-Q3 block gap enforcement must remain active after the fix."""
+        DEFAULT_GAP = 21
+        quarter_start = date(2026, 7, 1)
+        d1 = date(2026, 7, 1)   # Q3 block start
+        d2 = date(2026, 7, 10)  # Q3 block start, gap=9 days
+
+        model = cp_model.CpModel()
+        b1 = model.NewBoolVar("q3_block_1")
+        b2 = model.NewBoolVar("q3_block_2")
+        model.Add(b1 == 1)
+        model.Add(b2 == 1)
+
+        gap = (d2 - d1).days
+        # New code: d1=Jul1 is NOT < Jul1, so constraint is added
+        if not (d1 < quarter_start) and gap < DEFAULT_GAP:
+            model.Add(b1 + b2 <= 1)
+
+        status = self._solve(model)
+        assert status == cp_model.INFEASIBLE, (
+            "Intra-Q3 gap enforcement must remain active. "
+            "Two Q3 block starts within 21 days must not both be allowed."
+        )

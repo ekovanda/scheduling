@@ -782,9 +782,18 @@ def _add_block_constraints(
 
         # Enforce block gap: default 21 days, relaxed to 7 if either
         # block starts on a pre-assigned (holiday) date for this staff.
+        # IMPORTANT: Do NOT enforce the gap when d1 is a Q2 (trailing) block start.
+        # This covers two cases:
+        #   1. Q2 → Q2: both block starts are fixed history; the gap constraint would
+        #      force block_starts[d1] + block_starts[d2] <= 1 when both are fixed=1.
+        #   2. Q2 → Q3: trailing block is fixed context; Q3 scheduling should not be
+        #      locked out of the first 3 weeks just because of a Q2 block.
+        # The block-gap rest constraint is an intra-quarter rule only.
         staff_pa_dates = pre_assigned_dates_by_staff.get(staff.identifier, set())
         block_start_dates = sorted(block_starts.keys())
         for i, d1 in enumerate(block_start_dates):
+            if d1 < quarter_start:
+                continue  # d1 is trailing/Q2 — skip all pairs starting from this date
             for d2 in block_start_dates[i + 1:]:
                 gap = (d2 - d1).days
                 if gap >= DEFAULT_GAP:
@@ -905,13 +914,18 @@ def _add_min_consecutive_nights_constraints(
             if key in x:
                 staff_night_vars.append((shift.shift_date, x[key]))
 
-        # Prepend trailing night dates as fixed variables
+        # Prepend trailing night dates as fixed variables.
+        # These are committed history and only serve as adjacency context for the
+        # first Q3 nights — they must NOT themselves be constrained to have adjacent
+        # nights (their Q2 predecessor may be before the trailing cutoff window).
+        num_trailing = 0
         if trailing_night_dates and staff.identifier in trailing_night_dates:
             trailing_vars: list[tuple[date, cp_model.IntVar]] = []
             for d in trailing_night_dates[staff.identifier]:
                 fixed = model.NewBoolVar(f"trail_minnd_{staff.identifier}_{d}")
                 model.Add(fixed == 1)
                 trailing_vars.append((d, fixed))
+            num_trailing = len(trailing_vars)
             staff_night_vars = trailing_vars + staff_night_vars
         
         if len(staff_night_vars) < min_consecutive:
@@ -920,11 +934,15 @@ def _add_min_consecutive_nights_constraints(
         # For min_consecutive=2: each assigned night needs at least 1 adjacent night
         # For min_consecutive=3: each assigned night needs to be part of a 3+ block
         # General approach: for each night, if assigned, there must be (min_consecutive-1)
-        # other nights within the same contiguous block
+        # other nights within the same contiguous block.
+        # Skip trailing vars — they are historical facts, not decision variables.
         
         if min_consecutive == 2:
             # Simple case: each night needs at least one adjacent night
             for i, (d, var) in enumerate(staff_night_vars):
+                if i < num_trailing:
+                    continue  # Trailing nights are fixed history; skip constraint
+
                 adjacent_vars = []
                 
                 # Check previous day
@@ -949,7 +967,8 @@ def _add_min_consecutive_nights_constraints(
             # General case for min_consecutive >= 3
             # For each night, if assigned, it must be part of a block of at least min_consecutive
             # This is more complex: we need to ensure the block extends in either direction
-            _add_min_block_constraint(model, staff_night_vars, min_consecutive)
+            _add_min_block_constraint(model, staff_night_vars, min_consecutive,
+                                      num_trailing=num_trailing)
 
 
 def _add_abteilung_night_constraints(
@@ -1234,6 +1253,7 @@ def _add_min_block_constraint(
     model: cp_model.CpModel,
     staff_night_vars: list[tuple[date, cp_model.IntVar]],
     min_consecutive: int,
+    num_trailing: int = 0,
 ) -> None:
     """Add constraint that any assigned night must be part of a block of min_consecutive.
     
@@ -1243,10 +1263,16 @@ def _add_min_block_constraint(
     - nights i, i+1, i+2 are all assigned (block starts at i)
     
     This generalizes to any min_consecutive value.
+    
+    num_trailing: number of leading entries that are trailing (historical) vars.
+    These are skipped — they are fixed=1 history, not decision variables.
     """
     n = len(staff_night_vars)
     
     for i, (d, var) in enumerate(staff_night_vars):
+        if i < num_trailing:
+            continue  # Trailing nights are fixed history; skip constraint
+
         # Find all possible blocks of min_consecutive that include position i
         valid_block_indicators = []
         
