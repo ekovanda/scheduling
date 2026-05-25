@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from .file_loader import load_staff_from_file as _load_staff_dict
 from .file_loader import load_vacations_from_file as _load_vacations_dict
 from .file_loader import load_pre_assigned_from_file as _load_pre_assigned_dict
+from .file_loader import parse_previous_plan_xlsx as _parse_previous_plan_xlsx
 
 
 class Beruf(str, Enum):
@@ -694,3 +695,57 @@ def build_previous_context(
         carry_forward=compute_carry_forward(schedule, staff_list, vacations),
         trailing_assignments=trailing,
     )
+
+
+def build_previous_context_from_xlsx(
+    source: "Path | str | IO[bytes]",
+    staff_list: list[Staff],
+    trailing_days: int = 21,
+) -> PreviousPlanContext:
+    """Build a carry-forward context by parsing a previous quarter's xlsx.
+
+    Parses the long-format *Arbeitseinsätze* xlsx (one row per assignment),
+    auto-detects the quarter boundaries from the date range in the file, and
+    delegates to :func:`build_previous_context`.
+
+    Vacation data is intentionally omitted: staff absent in the previous quarter
+    carry a negative delta, which combined with their higher presence in the next
+    quarter naturally rebalances workload over the year.
+
+    Args:
+        source: Path or file-like object for the xlsx (e.g. Streamlit UploadedFile).
+        staff_list: Staff for the *new* quarter — used for beruf/hours normalisation.
+        trailing_days: Number of days at the end of the previous quarter whose
+            assignments are forwarded as boundary constraints (default 21).
+
+    Raises:
+        FileFormatError: If the xlsx is missing required columns.
+        ValueError: If a ShiftType value in the file is not recognised.
+    """
+    raw = _parse_previous_plan_xlsx(source)
+    if not raw:
+        raise ValueError("The uploaded xlsx contains no valid assignment rows.")
+
+    assignments: list[Assignment] = []
+    for row in raw:
+        assignments.append(
+            Assignment(
+                shift=Shift(
+                    shift_type=ShiftType(row["shift_type"]),
+                    shift_date=row["shift_date"],
+                ),
+                staff_identifier=row["staff_identifier"],
+                is_paired=row["is_paired"],
+            )
+        )
+
+    all_dates = [a.shift.shift_date for a in assignments]
+    quarter_start = min(all_dates)
+    quarter_end = max(all_dates)
+
+    schedule = Schedule(
+        quarter_start=quarter_start,
+        quarter_end=quarter_end,
+        assignments=assignments,
+    )
+    return build_previous_context(schedule, staff_list, vacations=None, trailing_days=trailing_days)

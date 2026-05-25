@@ -16,6 +16,7 @@ from scheduler.models import (
     Staff,
     Vacation,
     build_previous_context,
+    build_previous_context_from_xlsx,
     calculate_available_days,
     load_pre_assigned_from_file,
     load_staff_from_file,
@@ -669,26 +670,41 @@ def page_vorheriger_plan() -> None:
 
     st.markdown("---")
     st.markdown("### Kontext hochladen")
+
+    if st.session_state.staff_list is None:
+        st.warning(
+            "⚠️ Bitte zuerst Personaldaten laden (Seite 'Laden / CSV'), "
+            "damit die Carry-Forward-Deltas korrekt berechnet werden können."
+        )
+
     context_file = st.file_uploader(
-        "Carry-Forward JSON (aus dem Export des letzten Quartals)",
-        type=["json"],
+        "Arbeitseinsätze des vorherigen Quartals (xlsx)",
+        type=["xlsx"],
         key="context_upload",
-        help="Datei `kontext_YYYY-MM-DD.json` vom Export-Tab des vorherigen Plans.",
+        help=(
+            "Exportierte xlsx-Datei des Vorquartals (z.B. Q2_Arbeitseinsätze.xlsx). "
+            "Format: eine Zeile pro Schicht — Spalten: Datum, Wochentag, Schicht, "
+            "Mitarbeiter, Paarweise."
+        ),
     )
 
     if context_file is not None:
-        try:
-            raw = context_file.read().decode("utf-8")
-            ctx = PreviousPlanContext.model_validate_json(raw)
-            st.session_state.previous_context = ctx
-            st.success(
-                f"✅ Kontext geladen — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
-                f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
-                f"({len(ctx.carry_forward)} Mitarbeiter, "
-                f"{len(ctx.trailing_assignments)} Grenzschichten)"
-            )
-        except Exception as e:
-            st.error(f"❌ Fehler beim Laden: {e}")
+        if st.session_state.staff_list is None:
+            st.error("❌ Personaldaten müssen zuerst geladen werden.")
+        else:
+            try:
+                ctx = build_previous_context_from_xlsx(
+                    context_file, st.session_state.staff_list
+                )
+                st.session_state.previous_context = ctx
+                st.success(
+                    f"✅ Kontext berechnet — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
+                    f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
+                    f"({len(ctx.carry_forward)} Mitarbeiter, "
+                    f"{len(ctx.trailing_assignments)} Grenzschichten)"
+                )
+            except Exception as e:
+                st.error(f"❌ Fehler beim Verarbeiten: {e}")
 
     # Show current context status
     ctx: PreviousPlanContext | None = st.session_state.previous_context
@@ -804,7 +820,7 @@ def page_vorheriger_plan() -> None:
     # --- Explanation ---
     with st.expander("ℹ️ Wie funktioniert das Carry-Forward?"):
         st.markdown(r"""
-        **Pro Mitarbeiter und Berufsgruppe** wird am Quartalsende berechnet:
+        **Pro Mitarbeiter und Berufsgruppe** wird aus dem hochgeladenen Plan berechnet:
 
         $$\Delta_i = \text{Norm./40h}_i \;-\; \overline{\text{Norm./40h}}_{\text{Gruppe}}$$
 
@@ -814,11 +830,13 @@ def page_vorheriger_plan() -> None:
         Der Solver addiert diese Deltas als Vorbelastung auf die aktuelle Fairness-Berechnung.
         So gleichen sich Schwankungen über mehrere Quartale aus.
 
-        **Wichtig**: Falls der tatsächlich ausgeführte Plan vom geplanten abweicht
-        (z.B. durch Krankheit oder kurzfristige Änderungen), sollte der *tatsächliche*
-        Plan als Grundlage für die Kontext-Berechnung verwendet werden.
-        Dazu den angepassten Plan über "Laden / CSV" importieren, neu berechnen lassen,
-        und den aktualisierten Kontext exportieren.
+        **Urlaubszeiten** werden bewusst *nicht* herausgerechnet: Wer im Vorquartal
+        weniger gearbeitet hat, trägt ein negatives Delta — unabhängig vom Grund.
+        Im neuen Quartal gleicht der Solver dies über die Anwesenheits-Gewichtung aus.
+
+        **Workflow**: Laden Sie die tatsächlich durchgeführte Arbeitseinsatz-xlsx des
+        Vorquartals hoch (z.B. `Q2_Arbeitseinsätze.xlsx`).  Das System berechnet
+        die Deltas automatisch auf Basis der darin enthaltenen Schichten.
         """)
 
 
@@ -1517,48 +1535,7 @@ def page_export() -> None:
             width="content",
         )
 
-    # =========================================================================
-    # CARRY-FORWARD CONTEXT EXPORT
-    # =========================================================================
-    st.markdown("---")
-    st.markdown("### 📊 Carry-Forward Kontext exportieren")
-    st.caption(
-        "Diese JSON-Datei enthält die Fairness-Deltas und Grenzschichten.  "
-        "Laden Sie diese beim nächsten Quartal auf der Seite **Vorheriger Plan** hoch, "
-        "damit historische Imbalancen ausgeglichen werden."
-    )
 
-    if staff_list:
-        vacations: list[Vacation] = st.session_state.vacations or []
-        ctx = build_previous_context(schedule, staff_list, vacations)
-        ctx_json = ctx.model_dump_json(indent=2)
-
-        st.download_button(
-            label="📥 Carry-Forward JSON herunterladen",
-            data=ctx_json,
-            file_name=f"kontext_{schedule.quarter_start.strftime('%Y-%m-%d')}.json",
-            mime="application/json",
-            type="primary",
-            width="content",
-        )
-
-        # Quick preview of deltas
-        with st.expander("Vorschau der Carry-Forward-Deltas"):
-            preview_rows = []
-            for e in ctx.carry_forward:
-                preview_rows.append({
-                    "Name": e.name,
-                    "Beruf": e.beruf,
-                    "Norm./40h": round(e.normalized_40h, 2),
-                    "Ø Gruppe": round(e.group_mean_40h, 2),
-                    "Delta": round(e.carry_forward_delta, 2),
-                })
-            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
-    else:
-        st.warning(
-            "⚠️ Personaldaten werden für die Kontext-Berechnung benötigt.  "
-            "Bitte zuerst auf 'Laden / CSV' hochladen."
-        )
 
     # Preview
     st.markdown("---")

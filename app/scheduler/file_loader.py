@@ -478,3 +478,80 @@ def load_pre_assigned_from_file(
                 })
 
     return results
+
+
+def parse_previous_plan_xlsx(
+    source: "Path | str | IO[bytes]",
+) -> list[dict[str, Any]]:
+    """Parse a previous quarter's schedule xlsx into a list of assignment dicts.
+
+    Expects long format with one row per assignment:
+        Datum        | Wochentag | Schicht | Mitarbeiter | Paarweise
+        01.04.2026   | Mi        | N_Mi-Do | SG          | Ja
+
+    ``Wochentag`` is optional and ignored (derived from date).
+    ``Paarweise``: "Ja" (case-insensitive) → is_paired=True, all else → False.
+    ``Schicht`` values must match ShiftType enum values exactly (e.g. "N_Mi-Do",
+    "Sa_10-22", "So_8-20").
+
+    Args:
+        source: File path (Path/str) or file-like object (e.g. Streamlit UploadedFile).
+
+    Returns:
+        List of dicts with keys: shift_date (date), shift_type (str),
+        staff_identifier (str), is_paired (bool).
+
+    Raises:
+        FileFormatError: If required columns are missing.
+        ValueError: If a date value cannot be parsed.
+    """
+    from io import IOBase
+
+    if isinstance(source, (Path, str)):
+        df = pd.read_excel(source, dtype=str)
+    else:
+        df = pd.read_excel(source, dtype=str)  # BytesIO / UploadedFile
+
+    try:
+        col_date = _find_column(df, ["Datum", "datum", "date", "Date"])
+        col_shift = _find_column(df, ["Schicht", "schicht", "shift", "Shift", "ShiftType"])
+        col_staff = _find_column(df, ["Mitarbeiter", "mitarbeiter", "identifier", "Kürzel"])
+        col_paired = _find_column(df, ["Paarweise", "paarweise", "paired", "is_paired"])
+    except ColumnMappingError as exc:
+        raise FileFormatError(
+            f"Previous plan xlsx is missing required columns: {exc}"
+        ) from exc
+
+    def _parse_date(raw: str) -> date:
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return pd.to_datetime(raw.strip(), format=fmt).date()
+            except (ValueError, TypeError):
+                continue
+        try:
+            return pd.to_datetime(raw.strip()).date()
+        except Exception as exc:
+            raise ValueError(f"Cannot parse date '{raw}'") from exc
+
+    results: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        raw_date = _safe_get_value(row, col_date)
+        raw_shift = _safe_get_value(row, col_shift)
+        raw_staff = _safe_get_value(row, col_staff)
+        if not raw_date or not raw_shift or not raw_staff:
+            continue  # skip blank/header rows
+
+        shift_date = _parse_date(str(raw_date))
+        shift_type = str(raw_shift).strip()
+        staff_identifier = str(raw_staff).strip()
+        raw_paired = _safe_get_value(row, col_paired, default="Nein")
+        is_paired = str(raw_paired).strip().lower() == "ja"
+
+        results.append({
+            "shift_date": shift_date,
+            "shift_type": shift_type,
+            "staff_identifier": staff_identifier,
+            "is_paired": is_paired,
+        })
+
+    return results
