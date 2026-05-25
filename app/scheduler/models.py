@@ -65,6 +65,7 @@ class Staff(BaseModel):
     nd_min_consecutive: int = 2  # Min consecutive nights required (Azubis=1, most TFA/Intern=2)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
     birthday: str | None = None  # Birthday in MM-DD format (no year), e.g. "04-15"
+    available_from: date | None = None  # First date available for scheduling (new employees)
 
     @field_validator("birthday", mode="before")
     @classmethod
@@ -516,13 +517,20 @@ def calculate_available_days(
     vacations: list[Vacation],
     quarter_start: date,
     quarter_end: date,
+    effective_start: date | None = None,
 ) -> int:
-    """Calculate number of available (non-vacation) days in the quarter."""
-    total_days = (quarter_end - quarter_start).days + 1
+    """Calculate number of available (non-vacation) days in the quarter.
+
+    ``effective_start`` overrides ``quarter_start`` for new employees whose
+    first available date falls within the planning period.  Vacation days
+    before that date are ignored since the employee wasn't present yet.
+    """
+    eff_start = max(quarter_start, effective_start) if effective_start else quarter_start
+    total_days = (quarter_end - eff_start).days + 1
     unavailable = get_staff_unavailable_dates(vacations, staff_identifier)
-    # Only count vacation days that fall within the quarter
+    # Only count vacation days that fall within the effective window
     vacation_days_in_quarter = sum(
-        1 for d in unavailable if quarter_start <= d <= quarter_end
+        1 for d in unavailable if eff_start <= d <= quarter_end
     )
     return total_days - vacation_days_in_quarter
 
@@ -603,13 +611,19 @@ def compute_carry_forward(
     all_entries: list[dict] = []
 
     for staff in staff_list:
+        avail_days = calculate_available_days(
+            staff.identifier, vacations, quarter_start, quarter_end,
+            effective_start=staff.available_from,
+        )
+        # Skip staff with zero available days (e.g. available_from > quarter_end);
+        # they have no presence in this quarter and must not skew group means.
+        if avail_days <= 0:
+            continue
+
         weekends = schedule.count_weekend_shifts(staff.identifier)
         effective_nights = schedule.count_effective_nights(staff.identifier, staff)
         total_notdienst = weekends + effective_nights
 
-        avail_days = calculate_available_days(
-            staff.identifier, vacations, quarter_start, quarter_end
-        )
         presence_factor = avail_days / total_days if total_days > 0 else 1.0
 
         if staff.hours > 0 and presence_factor > 0:

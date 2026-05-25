@@ -228,3 +228,70 @@ MM,2026-04-05,2026-04-01
         )
         with pytest.raises(ValueError, match="Invalid date range"):
             load_vacations_from_file(csv_file)
+
+
+class TestAvailableFromParsing:
+    """Tests for the available_from field parsing in load_staff_from_file."""
+
+    _BASE_COLS = "Name,Kürzel,Alter,Stunden,Beruf,Anmeldung,Nacht_möglich,Nacht_alleine"
+    _BASE_ROW = "Max Müller,MM,true,40,TFA,true,true,false"
+
+    def test_available_from_dd_mm_yyyy_parsed_correctly(self, tmp_path: Path) -> None:
+        """DD.MM.YYYY in available_from column is parsed to the correct date."""
+        csv_file = tmp_path / "staff_af.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS},available_from\n{self._BASE_ROW},01.07.2026\n",
+            encoding="utf-8",
+        )
+        staff_dict = load_staff_from_file(csv_file)
+        assert staff_dict["MM"]["available_from"] == date(2026, 7, 1)
+
+    def test_available_from_empty_returns_none(self, tmp_path: Path) -> None:
+        """Empty available_from cell returns None (employee is treated as old)."""
+        csv_file = tmp_path / "staff_af_empty.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS},available_from\n{self._BASE_ROW},\n",
+            encoding="utf-8",
+        )
+        staff_dict = load_staff_from_file(csv_file)
+        assert staff_dict["MM"]["available_from"] is None
+
+    def test_available_from_column_absent_returns_none(self, tmp_path: Path) -> None:
+        """Missing available_from column does not break loading; field defaults to None."""
+        csv_file = tmp_path / "staff_no_af.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS}\n{self._BASE_ROW}\n",
+            encoding="utf-8",
+        )
+        staff_dict = load_staff_from_file(csv_file)
+        assert staff_dict["MM"].get("available_from") is None
+
+    def test_german_synonym_verfuegbar_ab_recognized(self, tmp_path: Path) -> None:
+        """German column name 'Verfügbar_ab' is accepted as a synonym."""
+        csv_file = tmp_path / "staff_de_af.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS},Verfügbar_ab\n{self._BASE_ROW},15.08.2026\n",
+            encoding="utf-8",
+        )
+        staff_dict = load_staff_from_file(csv_file)
+        assert staff_dict["MM"]["available_from"] == date(2026, 8, 15)
+
+    def test_invalid_format_raises_value_error(self, tmp_path: Path) -> None:
+        """Non-DD.MM.YYYY format raises ValueError with a helpful message."""
+        csv_file = tmp_path / "staff_bad_af.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS},available_from\n{self._BASE_ROW},not-a-date\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Invalid available_from format"):
+            load_staff_from_file(csv_file)
+
+    def test_excel_datetime_string_accepted(self, tmp_path: Path) -> None:
+        """Excel Date-formatted cells arrive as '2026-08-01 00:00:00'; must parse correctly."""
+        csv_file = tmp_path / "staff_excel_af.csv"
+        csv_file.write_text(
+            f"{self._BASE_COLS},available_from\n{self._BASE_ROW},2026-08-01 00:00:00\n",
+            encoding="utf-8",
+        )
+        staff_dict = load_staff_from_file(csv_file)
+        assert staff_dict["MM"]["available_from"] == date(2026, 8, 1)

@@ -9,7 +9,7 @@ Supports:
 """
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -96,6 +96,32 @@ def load_file_to_dataframe(file_path: Path | str) -> pd.DataFrame:
         return pd.read_excel(file_path, dtype=str)
     else:
         raise FileFormatError(f"Unsupported file format: {suffix}. Use .csv or .xlsx")
+
+
+def _parse_available_from(value: Any, identifier: str) -> date | None:
+    """Parse the available_from field from a staff row.
+
+    Accepts DD.MM.YYYY format.  Empty/None values return None.
+
+    Raises:
+        ValueError: If the value is present but cannot be parsed.
+    """
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    raw = str(value).strip()
+    # Try the canonical user-facing format first, then the format Excel/pandas
+    # produces when a cell is formatted as "Date" (e.g. '2026-08-01 00:00:00').
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(
+        f"Invalid available_from format for '{identifier}': '{raw}'. "
+        "Expected DD.MM.YYYY (e.g. 01.07.2026)."
+    )
 
 
 def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
@@ -192,6 +218,14 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
     except ColumnMappingError:
         pass
 
+    col_available_from = None
+    try:
+        col_available_from = _find_column(
+            df, ["available_from", "Verfügbar_ab", "verfügbar_ab", "Verfuegbar_ab"]
+        )
+    except ColumnMappingError:
+        pass
+
     # Parse rows
     staff_dict: dict[str, dict[str, Any]] = {}
 
@@ -254,6 +288,9 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
             ),
             "nd_exceptions": nd_exceptions,
             "birthday": _safe_get_value(row, col_birthday),
+            "available_from": _parse_available_from(
+                _safe_get_value(row, col_available_from), identifier
+            ) if col_available_from else None,
         }
 
     return staff_dict

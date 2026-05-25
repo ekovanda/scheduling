@@ -100,6 +100,17 @@ def generate_schedule_cpsat(
             if bd is not None and quarter_start <= bd <= quarter_end:
                 staff_vacation_dates[staff.identifier].add(bd)
 
+    # Block pre-arrival dates for new employees.
+    # Any date before available_from (up to quarter_end) is treated as unavailable.
+    # This handles both mid-quarter arrivals and available_from > quarter_end (fully absent).
+    for staff in staff_list:
+        if staff.available_from is not None and staff.available_from > quarter_start:
+            block_end = min(staff.available_from - timedelta(days=1), quarter_end)
+            current = quarter_start
+            while current <= block_end:
+                staff_vacation_dates[staff.identifier].add(current)
+                current += timedelta(days=1)
+
     # =========================================================================
     # EXTRACT BOUNDARY DATA FROM PREVIOUS CONTEXT
     # =========================================================================
@@ -122,6 +133,15 @@ def generate_schedule_cpsat(
         # Extract carry-forward deltas (identifier -> norm_40h delta)
         for entry in previous_context.carry_forward:
             carry_forward_deltas[entry.identifier] = entry.carry_forward_delta
+
+    # New employees (available_from within the planning period) always start
+    # with a clean slate regardless of any prior carry-forward entry.
+    for staff in staff_list:
+        if (
+            staff.available_from is not None
+            and quarter_start <= staff.available_from <= quarter_end
+        ):
+            carry_forward_deltas[staff.identifier] = 0.0
 
     # Separate shifts by category
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
@@ -465,7 +485,8 @@ def generate_schedule_cpsat(
     presence_factors: dict[str, int] = {}
     for staff in staff_list:
         available_days = calculate_available_days(
-            staff.identifier, vacations, quarter_start, quarter_end
+            staff.identifier, vacations, quarter_start, quarter_end,
+            effective_start=staff.available_from,
         )
         # Scale by 1000 to maintain precision in integer arithmetic
         presence_factors[staff.identifier] = (available_days * 1000) // total_quarter_days
