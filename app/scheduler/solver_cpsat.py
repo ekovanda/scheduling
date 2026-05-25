@@ -441,7 +441,7 @@ def generate_schedule_cpsat(
     for sid, d, _ in pre_assigned_keys:
         pre_assigned_dates_by_staff.setdefault(sid, set()).add(d)
 
-    _add_block_constraints(
+    cross_quarter_violations = _add_block_constraints(
         model, x, staff_list, shifts, quarter_start, quarter_end,
         trailing_work_dates=trailing_work_dates or None,
         pre_assigned_dates_by_staff=pre_assigned_dates_by_staff,
@@ -568,6 +568,11 @@ def generate_schedule_cpsat(
 
     # Calculate scaled fairness by group
     objective_terms = []
+
+    # Minimize cross-quarter block gap violations with absolute highest priority.
+    # Weight is gap_diff * 10,000,000 to place it far above standard fairness metrics in scale.
+    for viol_var, gap_diff in cross_quarter_violations:
+        objective_terms.append(viol_var * gap_diff * 10000000)
 
     # Group staff by role for fairness within groups
     tfa_staff = [s for s in staff_list if s.beruf == Beruf.TFA]
@@ -714,7 +719,7 @@ def _add_block_constraints(
     quarter_end: date,
     trailing_work_dates: dict[str, set[date]] | None = None,
     pre_assigned_dates_by_staff: dict[str, set[date]] | None = None,
-) -> None:
+) -> list[tuple[cp_model.IntVar, int]]:
     """Add block gap constraints.
 
     The constraint: if you have blocks B1 and B2, and B2 starts
@@ -737,6 +742,8 @@ def _add_block_constraints(
 
     if pre_assigned_dates_by_staff is None:
         pre_assigned_dates_by_staff = {}
+
+    cross_quarter_violations: list[tuple[cp_model.BoolVar, int]] = []
 
     # Group shifts by date
     shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
@@ -828,8 +835,17 @@ def _add_block_constraints(
                     else DEFAULT_GAP
                 )
                 if gap < required_gap:
-                    # Both being block starts is forbidden
-                    model.Add(block_starts[d1] + block_starts[d2] <= 1)
+                    is_cross_quarter = d1 < quarter_start and d2 >= quarter_start
+                    if is_cross_quarter:
+                        # Soften cross-quarter block constraint
+                        violation = model.NewBoolVar(f"cross_quarter_viol_{staff.identifier}_{d1}_{d2}")
+                        model.Add(block_starts[d1] + block_starts[d2] <= 1 + violation)
+                        cross_quarter_violations.append((violation, required_gap - gap))
+                    else:
+                        # Both being block starts is forbidden (intra-quarter)
+                        model.Add(block_starts[d1] + block_starts[d2] <= 1)
+
+    return cross_quarter_violations
 
 
 def _add_nd_max_consecutive_constraints(
