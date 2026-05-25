@@ -81,12 +81,10 @@ def main() -> None:
     # Handle navigation from buttons (e.g., "Plan anzeigen" button on Plan erstellen page)
     nav_default_index = 0
     nav_options = [
-        "Laden / CSV",
+        "Daten hochladen",
         "Personal",
         "Urlaub",
-        "Feiertage",
         "Regeln",
-        "Vorheriger Plan",
         "Plan erstellen",
         "Plan anzeigen",
         "Export",
@@ -117,18 +115,14 @@ def main() -> None:
         st.session_state.pre_assigned = None
 
     # Route to pages
-    if page == "Laden / CSV":
-        page_load_csv()
+    if page == "Daten hochladen":
+        page_daten_hochladen()
     elif page == "Personal":
         page_personal()
     elif page == "Urlaub":
         page_urlaub()
-    elif page == "Feiertage":
-        page_feiertage()
     elif page == "Regeln":
         page_regeln()
-    elif page == "Vorheriger Plan":
-        page_vorheriger_plan()
     elif page == "Plan erstellen":
         page_plan_erstellen()
     elif page == "Plan anzeigen":
@@ -137,90 +131,128 @@ def main() -> None:
         page_export()
 
 
-def page_load_csv() -> None:
-    """Page: Load staff data from CSV or XLSX."""
-    st.title("📂 Daten laden")
+def page_daten_hochladen() -> None:
+    """Page: Upload all required data files."""
+    st.title("📂 Daten hochladen")
 
-    st.markdown("### Personaldaten hochladen")
+    # ── 1. Personaldaten ──────────────────────────────────────────────────────
+    st.markdown("### 👥 Personaldaten")
     uploaded_file = st.file_uploader(
-        "CSV oder Excel-Datei mit Personalinformationen",
+        "CSV oder Excel mit Personalinformationen",
         type=["csv", "xlsx"],
-        help="Unterstützt: CSV (.csv) und Excel (.xlsx).  "
-             "Spalten können flexibel benannt sein: 'Name', 'name', 'Name des Mitarbeiters' etc. "
-             "Erwartet: name, identifier, adult, hours, beruf, reception, nd_possible, nd_alone, "
-             "nd_count, nd_exceptions",
+        help="Erwartete Spalten: name, identifier, adult, hours, beruf, reception, "
+             "nd_possible, nd_alone, nd_count, nd_exceptions",
     )
-
     if uploaded_file is not None:
         try:
-            # Save to temp file and load
             temp_path = Path("temp_staff." + uploaded_file.name.split(".")[-1])
             with temp_path.open("wb") as f:
                 f.write(uploaded_file.getvalue())
-
             staff_list = load_staff_from_file(temp_path)
             st.session_state.staff_list = staff_list
-
-            st.success(f"✅ {len(staff_list)} Mitarbeiter erfolgreich geladen!")
-
-            # Show preview
-            st.markdown("### Vorschau")
-            df = pd.DataFrame([s.model_dump() for s in staff_list])
-            st.dataframe(df, width="content")
-
-            # Cleanup
+            st.success(f"✅ {len(staff_list)} Mitarbeiter geladen")
             temp_path.unlink(missing_ok=True)
-
         except Exception as e:
-            st.error(f"❌ Fehler beim Laden der Datei: {e}")
+            st.error(f"❌ {e}")
+    elif st.session_state.staff_list:
+        st.caption(f"Geladen: {len(st.session_state.staff_list)} Mitarbeiter")
 
-    # Vacation data upload
+    # ── 2. Urlaubsdaten ────────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Urlaub / Verfügbarkeit hochladen")
+    st.markdown("### 🏖️ Urlaub / Verfügbarkeit")
     vacation_file = st.file_uploader(
-        "CSV oder Excel-Datei mit Urlaubsdaten (optional)",
+        "CSV oder Excel mit Urlaubsdaten (optional)",
         type=["csv", "xlsx"],
         key="vacation_upload",
-        help="Unterstützt: CSV (.csv) und Excel (.xlsx).  "
-             "Spalten können flexibel benannt sein.  "
-             "Erwartet: identifier, start_date, end_date (Datumsformat: YYYY-MM-DD, DD.MM.YYYY, etc.)",
+        help="Erwartete Spalten: identifier, start_date, end_date",
     )
-    
     if vacation_file is not None:
         try:
             temp_path = Path("temp_vacations." + vacation_file.name.split(".")[-1])
             with temp_path.open("wb") as f:
                 f.write(vacation_file.getvalue())
-            
             vacations = load_vacations_from_file(temp_path)
             st.session_state.vacations = vacations
-            
-            st.success(f"✅ {len(vacations)} Urlaubseinträge erfolgreich geladen!")
-            
-            # Show preview
-            st.markdown("### Vorschau")
-            df = pd.DataFrame([v.model_dump() for v in vacations])
-            st.dataframe(df, width="content")
-            
+            st.success(f"✅ {len(vacations)} Urlaubseinträge geladen")
             temp_path.unlink(missing_ok=True)
-            
         except Exception as e:
-            st.error(f"❌ Fehler beim Laden der Urlaubsdaten: {e}")
+            st.error(f"❌ {e}")
+    elif st.session_state.vacations:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.caption(f"Geladen: {len(st.session_state.vacations)} Urlaubseinträge")
+        with col2:
+            if st.button("🗑️ Entfernen", key="remove_vacations"):
+                st.session_state.vacations = None
+                st.rerun()
 
-    # Show current status
+    # ── 3. Feiertagsdienste ────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### 📊 Aktueller Status")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.session_state.staff_list:
-            st.success(f"✅ {len(st.session_state.staff_list)} Mitarbeiter geladen")
+    st.markdown("### 🎄 Vorgegebene Dienste (optional)")
+    holiday_file = st.file_uploader(
+        "CSV oder Excel mit vorgegebenen Diensten",
+        type=["csv", "xlsx"],
+        key="holiday_upload",
+        help="Spalten: Datum, Nachtdienst, Dienst 8-20, Dienst 10-22, Azubi 8-20:30",
+    )
+    if holiday_file is not None:
+        try:
+            temp_path = Path("temp_holidays." + holiday_file.name.split(".")[-1])
+            with temp_path.open("wb") as f:
+                f.write(holiday_file.getvalue())
+            pre_assigned = load_pre_assigned_from_file(temp_path)
+            st.session_state.pre_assigned = pre_assigned
+            st.success(f"✅ {len(pre_assigned)} vorgegebene Dienste geladen")
+            temp_path.unlink(missing_ok=True)
+        except Exception as e:
+            st.error(f"❌ {e}")
+    elif st.session_state.pre_assigned:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.caption(f"Geladen: {len(st.session_state.pre_assigned)} vorgegebene Dienste")
+        with col2:
+            if st.button("🗑️ Entfernen", key="remove_pre_assigned"):
+                st.session_state.pre_assigned = None
+                st.rerun()
+
+    # ── 4. Vorheriger Plan ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📊 Vorheriger Plan (optional)")
+    if st.session_state.staff_list is None:
+        st.warning("⚠️ Personaldaten zuerst laden, damit Carry-Forward-Deltas berechnet werden können.")
+    context_file = st.file_uploader(
+        "Arbeitseinsätze des vorherigen Quartals (xlsx)",
+        type=["xlsx"],
+        key="context_upload",
+        help="Exportierte xlsx des Vorquartals. Spalten: Datum, Wochentag, Schicht, Mitarbeiter, Paarweise.",
+    )
+    if context_file is not None:
+        if st.session_state.staff_list is None:
+            st.error("❌ Personaldaten müssen zuerst geladen werden.")
         else:
-            st.warning("⚠️ Noch keine Personaldaten geladen")
-    with col2:
-        if st.session_state.vacations:
-            st.success(f"✅ {len(st.session_state.vacations)} Urlaubseinträge geladen")
-        else:
-            st.info("ℹ️ Keine Urlaubsdaten geladen (optional)")
+            try:
+                ctx = build_previous_context_from_xlsx(context_file, st.session_state.staff_list)
+                st.session_state.previous_context = ctx
+                st.success(
+                    f"✅ Kontext geladen — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
+                    f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
+                    f"({len(ctx.carry_forward)} Mitarbeiter)"
+                )
+            except Exception as e:
+                st.error(f"❌ {e}")
+    elif st.session_state.previous_context is not None:
+        ctx = st.session_state.previous_context
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.caption(
+                f"Geladen: {ctx.quarter_start.strftime('%d.%m.%Y')} – "
+                f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
+                f"({len(ctx.carry_forward)} Mitarbeiter)"
+            )
+        with col2:
+            if st.button("🗑️ Entfernen", key="remove_context"):
+                st.session_state.previous_context = None
+                st.rerun()
 
 
 def page_urlaub() -> None:
@@ -374,226 +406,259 @@ def _show_vacation_by_employee(vacations: list[Vacation], staff_names: dict[str,
 
 
 def page_feiertage() -> None:
-    """Page: Upload and view pre-assigned holiday shifts."""
-    st.title("🎄 Feiertage / Vorgegebene Dienste")
-
-    st.markdown(
-        "Hessische Feiertage und andere vorgegebene Dienste können hier hochgeladen werden. "
-        "Diese Zuordnungen werden als **fix** in die Planung übernommen."
-    )
-
-    st.markdown("### Feiertags-Dienste hochladen")
-    holiday_file = st.file_uploader(
-        "CSV oder Excel-Datei mit vorgegebenen Diensten",
-        type=["csv", "xlsx"],
-        key="holiday_upload",
-        help=(
-            "Erwartete Spalten:\n"
-            "- **Datum**: Feiertag (DD.MM.YYYY oder YYYY-MM-DD)\n"
-            "- **Nachtdienst**: Kürzel (z.B. 'AA' oder 'AA + Bax')\n"
-            "- **Dienst 8-20**: Kürzel für So_8-20\n"
-            "- **Dienst 10-22**: Kürzel für So_10-22 (Rufbereitschaft)\n"
-            "- **Azubi 8-20:30**: Kürzel für Azubi-Dienst\n\n"
-            "Leere Zellen werden ignoriert. Mehrere Personen mit '+' trennen."
-        ),
-    )
-
-    if holiday_file is not None:
-        try:
-            temp_path = Path("temp_holidays." + holiday_file.name.split(".")[-1])
-            with temp_path.open("wb") as f:
-                f.write(holiday_file.getvalue())
-
-            pre_assigned = load_pre_assigned_from_file(temp_path)
-            st.session_state.pre_assigned = pre_assigned
-
-            st.success(f"✅ {len(pre_assigned)} vorgegebene Zuordnungen geladen!")
-            temp_path.unlink(missing_ok=True)
-
-        except Exception as e:
-            st.error(f"❌ Fehler beim Laden: {e}")
-
-    # Display current state
-    pre_assigned: list[PreAssignedShift] | None = st.session_state.pre_assigned
-
-    if pre_assigned is None or len(pre_assigned) == 0:
-        st.info("ℹ️ Keine vorgegebenen Dienste geladen.")
-        return
-
-    # Remove button
-    if st.button("🗑️ Vorgegebene Dienste entfernen"):
-        st.session_state.pre_assigned = None
-        st.rerun()
-
-    # Validate against staff + vacations
-    staff_list: list[Staff] | None = st.session_state.staff_list
-    vacations: list[Vacation] | None = st.session_state.vacations
-
-    if staff_list:
-        warnings = validate_pre_assigned(pre_assigned, staff_list, vacations)
-        if warnings:
-            st.error(
-                "**⚠️ Konflikte erkannt — bitte vor der Planung beheben:**\n\n"
-                + "\n".join(f"- {w}" for w in warnings)
-            )
-        else:
-            st.success("✅ Keine Konflikte mit Personal- oder Urlaubsdaten.")
-    else:
-        st.warning("⚠️ Personaldaten noch nicht geladen — Konfliktprüfung nicht möglich.")
-
-    # Display table
-    st.markdown("---")
-    st.markdown("### 📋 Vorgegebene Zuordnungen")
-
-    staff_names: dict[str, str] = {}
-    if staff_list:
-        staff_names = {s.identifier: s.name for s in staff_list}
-
-    unique_dates = sorted({pa.shift_date for pa in pre_assigned})
-    rows = []
-    for d in unique_dates:
-        weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
-        day_assignments = [pa for pa in pre_assigned if pa.shift_date == d]
-
-        row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.%Y')} {weekday_str}"}
-        for pa in day_assignments:
-            name_or_id = staff_names.get(pa.staff_identifier, pa.staff_identifier)
-            col_label = pa.shift_type.value
-            if col_label in row:
-                row[col_label] += f" + {name_or_id}"
-            else:
-                row[col_label] = name_or_id
-        rows.append(row)
-
-    if rows:
-        df_holidays = pd.DataFrame(rows).set_index("Datum").fillna("")
-        st.dataframe(df_holidays, use_container_width=True)
-    
-    # Summary
-    st.markdown("### 📊 Zusammenfassung")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Feiertage", len(unique_dates))
-    with col2:
-        st.metric("Zuordnungen gesamt", len(pre_assigned))
+    """Removed: content merged into page_personal tab."""
+    pass
 
 
 def page_personal() -> None:
-    """Page: View and filter staff data."""
+    """Page: Staff overview, Feiertage review, and Vorheriger Plan review."""
     st.title("👥 Personal")
 
-    if st.session_state.staff_list is None:
-        st.warning("⚠️ Bitte zuerst Personaldaten laden (Seite 'Laden / CSV')")
-        return
-
-    staff_list: list[Staff] = st.session_state.staff_list
-
-    # Search box for name/identifier
-    st.markdown("### 🔍 Mitarbeiter suchen")
-    search_query = st.text_input(
-        "Name oder Kürzel eingeben",
-        placeholder="z.B. 'Müller' oder 'MM'",
-        help="Suche nach Name oder Identifier (Groß-/Kleinschreibung wird ignoriert)",
+    tab_personal, tab_feiertage, tab_prev_plan = st.tabs(
+        ["👥 Personal", "🎄 Feiertage", "📊 Vorheriger Plan"]
     )
 
-    # Filters
-    st.markdown("### Filter")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        role_filter = st.multiselect(
-            "Beruf filtern", options=[b.value for b in Beruf], default=[b.value for b in Beruf]
-        )
-    with col2:
-        adult_filter = st.selectbox("Alter", ["Alle", "Erwachsene", "Minderjährige"])
-    with col3:
-        nd_filter = st.selectbox("Nachtdienst", ["Alle", "ND möglich", "ND nicht möglich"])
+    # ── Tab 1: Personal ────────────────────────────────────────────────────────
+    with tab_personal:
+        if st.session_state.staff_list is None:
+            st.warning("⚠️ Bitte zuerst Personaldaten laden (Seite 'Daten hochladen')")
+        else:
+            staff_list: list[Staff] = st.session_state.staff_list
 
-    # Apply filters
-    filtered = staff_list
-    
-    # Text search filter (name or identifier)
-    if search_query:
-        query_lower = search_query.lower()
-        filtered = [
-            s for s in filtered 
-            if query_lower in s.name.lower() or query_lower in s.identifier.lower()
-        ]
-    
-    if role_filter:
-        filtered = [s for s in filtered if s.beruf.value in role_filter]
-    if adult_filter == "Erwachsene":
-        filtered = [s for s in filtered if s.adult]
-    elif adult_filter == "Minderjährige":
-        filtered = [s for s in filtered if not s.adult]
-    if nd_filter == "ND möglich":
-        filtered = [s for s in filtered if s.nd_possible]
-    elif nd_filter == "ND nicht möglich":
-        filtered = [s for s in filtered if not s.nd_possible]
+            st.markdown("### 🔍 Mitarbeiter suchen")
+            search_query = st.text_input(
+                "Name oder Kürzel eingeben",
+                placeholder="z.B. 'Müller' oder 'MM'",
+                help="Suche nach Name oder Identifier (Groß-/Kleinschreibung wird ignoriert)",
+            )
 
-    # Display table
-    st.markdown(f"### Mitarbeiter ({len(filtered)} von {len(staff_list)})")
-    df = pd.DataFrame([s.model_dump() for s in filtered])
-    st.dataframe(df, width="content", height=600)
+            st.markdown("### Filter")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                role_filter = st.multiselect(
+                    "Beruf filtern", options=[b.value for b in Beruf], default=[b.value for b in Beruf]
+                )
+            with col2:
+                adult_filter = st.selectbox("Alter", ["Alle", "Erwachsene", "Minderjährige"])
+            with col3:
+                nd_filter = st.selectbox("Nachtdienst", ["Alle", "ND möglich", "ND nicht möglich"])
 
-    # Statistics
-    st.markdown("---")
-    st.markdown("### Statistik")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("TFA", sum(1 for s in staff_list if s.beruf == Beruf.TFA))
-    with col2:
-        st.metric("Azubi", sum(1 for s in staff_list if s.beruf == Beruf.AZUBI))
-    with col3:
-        st.metric("Intern", sum(1 for s in staff_list if s.beruf == Beruf.INTERN))
-    with col4:
-        st.metric("Gesamt", len(staff_list))
+            filtered = staff_list
+            if search_query:
+                query_lower = search_query.lower()
+                filtered = [
+                    s for s in filtered
+                    if query_lower in s.name.lower() or query_lower in s.identifier.lower()
+                ]
+            if role_filter:
+                filtered = [s for s in filtered if s.beruf.value in role_filter]
+            if adult_filter == "Erwachsene":
+                filtered = [s for s in filtered if s.adult]
+            elif adult_filter == "Minderjährige":
+                filtered = [s for s in filtered if not s.adult]
+            if nd_filter == "ND möglich":
+                filtered = [s for s in filtered if s.nd_possible]
+            elif nd_filter == "ND nicht möglich":
+                filtered = [s for s in filtered if not s.nd_possible]
 
-    # Birthday overview
-    st.markdown("---")
-    st.markdown("### 🎂 Geburtstage")
-    st.caption(
-        "Mitarbeiter dürfen an ihrem Geburtstag **keine Schicht** eingeteilt werden "
-        "(wird wie ein Urlaubstag behandelt)."
-    )
+            st.markdown(f"### Mitarbeiter ({len(filtered)} von {len(staff_list)})")
+            df = pd.DataFrame([s.model_dump() for s in filtered])
+            st.dataframe(df, width="content", height=600)
 
-    month_names = {
-        1: "Januar", 2: "Februar", 3: "März", 4: "April",
-        5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
-        9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
-    }
-    month_filter_options = ["Alle Monate"] + list(month_names.values())
-    selected_month_label = st.selectbox(
-        "Monat filtern", month_filter_options, index=0
-    )
-    selected_month: int | None = None
-    if selected_month_label != "Alle Monate":
-        selected_month = next(k for k, v in month_names.items() if v == selected_month_label)
+            st.markdown("---")
+            st.markdown("### Statistik")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("TFA", sum(1 for s in staff_list if s.beruf == Beruf.TFA))
+            with col2:
+                st.metric("Azubi", sum(1 for s in staff_list if s.beruf == Beruf.AZUBI))
+            with col3:
+                st.metric("Intern", sum(1 for s in staff_list if s.beruf == Beruf.INTERN))
+            with col4:
+                st.metric("Gesamt", len(staff_list))
 
-    birthday_rows = []
-    for s in staff_list:
-        if s.birthday is None:
-            continue
-        month, day = (int(p) for p in s.birthday.split("-"))
-        if selected_month is not None and month != selected_month:
-            continue
-        birthday_rows.append({
-            "Name": s.name,
-            "Kürzel": s.identifier,
-            "Beruf": s.beruf.value,
-            "Geburtstag": f"{day:02d}. {month_names[month]}",
-            "MM-DD": s.birthday,
-        })
+            st.markdown("---")
+            st.markdown("### 🎂 Geburtstage")
+            st.caption(
+                "Mitarbeiter dürfen an ihrem Geburtstag **keine Schicht** eingeteilt werden "
+                "(wird wie ein Urlaubstag behandelt)."
+            )
+            month_names = {
+                1: "Januar", 2: "Februar", 3: "März", 4: "April",
+                5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
+                9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
+            }
+            month_filter_options = ["Alle Monate"] + list(month_names.values())
+            selected_month_label = st.selectbox("Monat filtern", month_filter_options, index=0)
+            selected_month: int | None = None
+            if selected_month_label != "Alle Monate":
+                selected_month = next(k for k, v in month_names.items() if v == selected_month_label)
 
-    if birthday_rows:
-        birthday_rows.sort(key=lambda r: r["MM-DD"])
-        bd_df = pd.DataFrame(birthday_rows).drop(columns=["MM-DD"])
-        st.dataframe(bd_df, use_container_width=True)
-        st.caption(
-            f"{len(birthday_rows)} von {sum(1 for s in staff_list if s.birthday)} "
-            "Mitarbeitern mit eingetragenem Geburtstag."
-        )
-    else:
-        st.info("Keine Geburtstage für den gewählten Filter gefunden.")
+            birthday_rows = []
+            for s in staff_list:
+                if s.birthday is None:
+                    continue
+                bmonth, bday = (int(p) for p in s.birthday.split("-"))
+                if selected_month is not None and bmonth != selected_month:
+                    continue
+                birthday_rows.append({
+                    "Name": s.name,
+                    "Kürzel": s.identifier,
+                    "Beruf": s.beruf.value,
+                    "Geburtstag": f"{bday:02d}. {month_names[bmonth]}",
+                    "MM-DD": s.birthday,
+                })
+
+            if birthday_rows:
+                birthday_rows.sort(key=lambda r: r["MM-DD"])
+                bd_df = pd.DataFrame(birthday_rows).drop(columns=["MM-DD"])
+                st.dataframe(bd_df, use_container_width=True)
+                st.caption(
+                    f"{len(birthday_rows)} von {sum(1 for s in staff_list if s.birthday)} "
+                    "Mitarbeitern mit eingetragenem Geburtstag."
+                )
+            else:
+                st.info("Keine Geburtstage für den gewählten Filter gefunden.")
+
+    # ── Tab 2: Feiertage ───────────────────────────────────────────────────────
+    with tab_feiertage:
+        pre_assigned: list[PreAssignedShift] | None = st.session_state.pre_assigned
+        if pre_assigned is None or len(pre_assigned) == 0:
+            st.info("ℹ️ Keine vorgegebenen Dienste geladen. Upload über 'Daten hochladen'.")
+        else:
+            if st.button("🗑️ Vorgegebene Dienste entfernen", key="remove_pa_tab"):
+                st.session_state.pre_assigned = None
+                st.rerun()
+
+            tab_staff: list[Staff] | None = st.session_state.staff_list
+            tab_vac: list[Vacation] | None = st.session_state.vacations
+            if tab_staff:
+                pa_warnings = validate_pre_assigned(pre_assigned, tab_staff, tab_vac)
+                if pa_warnings:
+                    st.error(
+                        "**⚠️ Konflikte erkannt — bitte vor der Planung beheben:**\n\n"
+                        + "\n".join(f"- {w}" for w in pa_warnings)
+                    )
+                else:
+                    st.success("✅ Keine Konflikte mit Personal- oder Urlaubsdaten.")
+            else:
+                st.warning("⚠️ Personaldaten nicht geladen — Konfliktprüfung nicht möglich.")
+
+            pa_staff_names: dict[str, str] = (
+                {s.identifier: s.name for s in tab_staff} if tab_staff else {}
+            )
+            unique_dates = sorted({pa.shift_date for pa in pre_assigned})
+            rows = []
+            for d in unique_dates:
+                weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
+                day_assignments = [pa for pa in pre_assigned if pa.shift_date == d]
+                row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.%Y')} {weekday_str}"}
+                for pa in day_assignments:
+                    name_or_id = pa_staff_names.get(pa.staff_identifier, pa.staff_identifier)
+                    col_label = pa.shift_type.value
+                    if col_label in row:
+                        row[col_label] += f" + {name_or_id}"
+                    else:
+                        row[col_label] = name_or_id
+                rows.append(row)
+
+            if rows:
+                df_holidays = pd.DataFrame(rows).set_index("Datum").fillna("")
+                st.dataframe(df_holidays, use_container_width=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Feiertage", len(unique_dates))
+            with col2:
+                st.metric("Zuordnungen gesamt", len(pre_assigned))
+
+    # ── Tab 3: Vorheriger Plan ─────────────────────────────────────────────────
+    with tab_prev_plan:
+        ctx: PreviousPlanContext | None = st.session_state.previous_context
+        if ctx is None:
+            st.info(
+                "ℹ️ Kein Vorquartal-Kontext geladen. "
+                "Erster Planungslauf startet ohne Carry-Forward-Deltas. "
+                "Upload über 'Daten hochladen'."
+            )
+        else:
+            if st.button("🗑️ Kontext entfernen", key="remove_ctx_tab"):
+                st.session_state.previous_context = None
+                st.rerun()
+
+            st.markdown(
+                f"**{ctx.quarter_start.strftime('%d.%m.%Y')} – "
+                f"{ctx.quarter_end.strftime('%d.%m.%Y')}**"
+            )
+
+            cf_df = pd.DataFrame([e.model_dump() for e in ctx.carry_forward])
+            if cf_df.empty:
+                st.warning("Keine Carry-Forward-Daten im Kontext.")
+            else:
+                group_cols = st.columns(3)
+                for idx, (beruf_key, label, icon) in enumerate([
+                    ("TFA", "TFA", "👩‍⚕️"),
+                    ("Azubi", "Azubi", "🎓"),
+                    ("Intern", "Intern", "🩺"),
+                ]):
+                    grp = cf_df[cf_df["beruf"] == beruf_key]
+                    if grp.empty:
+                        continue
+                    with group_cols[idx]:
+                        st.markdown(f"#### {icon} {label}")
+                        st.metric("Mitarbeiter", len(grp))
+                        st.metric("Ø Norm./40h", f"{grp['normalized_40h'].mean():.2f}")
+                        st.metric(
+                            "Spread",
+                            f"{grp['carry_forward_delta'].max() - grp['carry_forward_delta'].min():.2f}",
+                        )
+
+                st.markdown("---")
+                st.caption(
+                    "**Δ > 0**: Mehr als Ø geleistet → weniger im nächsten Quartal.  "
+                    "**Δ < 0**: Weniger als Ø geleistet → mehr im nächsten Quartal."
+                )
+                display_cols = [
+                    "name", "identifier", "beruf", "hours",
+                    "effective_nights", "weekend_shifts", "total_notdienst",
+                    "normalized_40h", "group_mean_40h", "carry_forward_delta",
+                ]
+                display_names = {
+                    "name": "Name", "identifier": "Kürzel", "beruf": "Beruf",
+                    "hours": "Std.", "effective_nights": "Eff. Nächte",
+                    "weekend_shifts": "WE", "total_notdienst": "Gesamt",
+                    "normalized_40h": "Norm./40h", "group_mean_40h": "Ø Gruppe",
+                    "carry_forward_delta": "Delta",
+                }
+                table_df = cf_df[display_cols].rename(columns=display_names)
+
+                def _style_delta(val: float) -> str:
+                    if abs(val) < 0.5:
+                        return "background-color: #c8e6c9"
+                    if abs(val) < 1.5:
+                        return "background-color: #fff9c4"
+                    return "background-color: #ffcdd2"
+
+                for beruf_val in ["TFA", "Azubi", "Intern"]:
+                    grp_t = table_df[table_df["Beruf"] == beruf_val]
+                    if grp_t.empty:
+                        continue
+                    st.markdown(f"##### {beruf_val}")
+                    styled = grp_t.style.map(_style_delta, subset=["Delta"])
+                    st.dataframe(styled, use_container_width=True, height=min(400, 35 * len(grp_t) + 38))
+
+            if ctx.trailing_assignments:
+                st.markdown("---")
+                st.markdown("### Grenzschichten (letzte 21 Tage)")
+                trail_rows = []
+                for ta in sorted(ctx.trailing_assignments, key=lambda t: t.shift_date):
+                    trail_rows.append({
+                        "Datum": ta.shift_date.strftime("%d.%m.%Y"),
+                        "Schicht": ta.shift_type.value,
+                        "Mitarbeiter": ta.staff_identifier,
+                        "Paarweise": "Ja" if ta.is_paired else "Nein",
+                    })
+                st.dataframe(pd.DataFrame(trail_rows), use_container_width=True, height=300)
 
 
 def page_regeln() -> None:
@@ -658,186 +723,8 @@ def page_regeln() -> None:
 
 
 def page_vorheriger_plan() -> None:
-    """Page: Upload and review previous quarter's carry-forward context."""
-    st.title("📊 Vorheriger Plan (Carry-Forward)")
-
-    st.markdown(
-        "Hier können Sie den **Fortschreibungskontext** des letzten Quartals hochladen "
-        "und überprüfen.  Die Fairness-Deltas werden beim nächsten Planungslauf "
-        "berücksichtigt, damit Über-/Unterbelastungen über Quartale hinweg ausgeglichen "
-        "werden."
-    )
-
-    st.markdown("---")
-    st.markdown("### Kontext hochladen")
-
-    if st.session_state.staff_list is None:
-        st.warning(
-            "⚠️ Bitte zuerst Personaldaten laden (Seite 'Laden / CSV'), "
-            "damit die Carry-Forward-Deltas korrekt berechnet werden können."
-        )
-
-    context_file = st.file_uploader(
-        "Arbeitseinsätze des vorherigen Quartals (xlsx)",
-        type=["xlsx"],
-        key="context_upload",
-        help=(
-            "Exportierte xlsx-Datei des Vorquartals (z.B. Q2_Arbeitseinsätze.xlsx). "
-            "Format: eine Zeile pro Schicht — Spalten: Datum, Wochentag, Schicht, "
-            "Mitarbeiter, Paarweise."
-        ),
-    )
-
-    if context_file is not None:
-        if st.session_state.staff_list is None:
-            st.error("❌ Personaldaten müssen zuerst geladen werden.")
-        else:
-            try:
-                ctx = build_previous_context_from_xlsx(
-                    context_file, st.session_state.staff_list
-                )
-                st.session_state.previous_context = ctx
-                st.success(
-                    f"✅ Kontext berechnet — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
-                    f"{ctx.quarter_end.strftime('%d.%m.%Y')} "
-                    f"({len(ctx.carry_forward)} Mitarbeiter, "
-                    f"{len(ctx.trailing_assignments)} Grenzschichten)"
-                )
-            except Exception as e:
-                st.error(f"❌ Fehler beim Verarbeiten: {e}")
-
-    # Show current context status
-    ctx: PreviousPlanContext | None = st.session_state.previous_context
-
-    if ctx is None:
-        st.info(
-            "ℹ️ Kein Vorquartal-Kontext geladen.  Der erste Planungslauf startet ohne "
-            "Carry-Forward — alle Deltas sind 0."
-        )
-        return
-
-    # Remove context button
-    if st.button("🗑️ Kontext entfernen"):
-        st.session_state.previous_context = None
-        st.rerun()
-
-    st.markdown("---")
-    st.markdown(
-        f"### Übersicht — {ctx.quarter_start.strftime('%d.%m.%Y')} bis "
-        f"{ctx.quarter_end.strftime('%d.%m.%Y')}"
-    )
-
-    # --- Per-group summary cards ---
-    cf_df = pd.DataFrame([e.model_dump() for e in ctx.carry_forward])
-    if cf_df.empty:
-        st.warning("Keine Carry-Forward-Daten im Kontext.")
-        return
-
-    group_cols = st.columns(3)
-    for idx, (beruf, label, icon) in enumerate([
-        ("TFA", "TFA", "👩‍⚕️"),
-        ("Azubi", "Azubi", "🎓"),
-        ("Intern", "Intern", "🩺"),
-    ]):
-        grp = cf_df[cf_df["beruf"] == beruf]
-        if grp.empty:
-            continue
-        with group_cols[idx]:
-            st.markdown(f"#### {icon} {label}")
-            st.metric("Mitarbeiter", len(grp))
-            st.metric("Ø Norm./40h", f"{grp['normalized_40h'].mean():.2f}")
-            st.metric(
-                "Spread (max − min)",
-                f"{grp['carry_forward_delta'].max() - grp['carry_forward_delta'].min():.2f}",
-            )
-
-    # --- Detailed carry-forward table ---
-    st.markdown("---")
-    st.markdown("### Carry-Forward-Deltas pro Mitarbeiter")
-    st.caption(
-        "**Delta > 0**: Person hat *mehr* als den Gruppendurchschnitt geleistet → "
-        "bekommt im nächsten Quartal weniger.  "
-        "**Delta < 0**: Person hat *weniger* geleistet → bekommt mehr."
-    )
-
-    display_cols = [
-        "name", "identifier", "beruf", "hours",
-        "effective_nights", "weekend_shifts", "total_notdienst",
-        "normalized_40h", "group_mean_40h", "carry_forward_delta",
-    ]
-    display_names = {
-        "name": "Name",
-        "identifier": "Kürzel",
-        "beruf": "Beruf",
-        "hours": "Std.",
-        "effective_nights": "Eff. Nächte",
-        "weekend_shifts": "WE",
-        "total_notdienst": "Gesamt",
-        "normalized_40h": "Norm./40h",
-        "group_mean_40h": "Ø Gruppe",
-        "carry_forward_delta": "Delta",
-    }
-
-    table_df = cf_df[display_cols].copy()
-    table_df = table_df.rename(columns=display_names)
-
-    def _style_delta(val: float) -> str:
-        if abs(val) < 0.5:
-            return "background-color: #c8e6c9"  # green
-        if abs(val) < 1.5:
-            return "background-color: #fff9c4"  # yellow
-        return "background-color: #ffcdd2"  # red
-
-    for beruf_val in ["TFA", "Azubi", "Intern"]:
-        grp = table_df[table_df["Beruf"] == beruf_val]
-        if grp.empty:
-            continue
-        st.markdown(f"##### {beruf_val}")
-        styled = grp.style.map(_style_delta, subset=["Delta"])
-        st.dataframe(styled, use_container_width=True, height=min(400, 35 * len(grp) + 38))
-
-    # --- Trailing assignments summary ---
-    st.markdown("---")
-    st.markdown("### Grenzschichten (letzte 21 Tage)")
-    st.caption(
-        "Diese Schichten werden als fixe Vorgaben in den nächsten Planungslauf "
-        "eingespeist, damit Block-, Ruhezeit- und Konsekutiv-Regeln an der "
-        "Quartalsgrenze eingehalten werden."
-    )
-    if ctx.trailing_assignments:
-        trail_rows = []
-        for ta in sorted(ctx.trailing_assignments, key=lambda t: t.shift_date):
-            trail_rows.append({
-                "Datum": ta.shift_date.strftime("%d.%m.%Y"),
-                "Schicht": ta.shift_type.value,
-                "Mitarbeiter": ta.staff_identifier,
-                "Paarweise": "Ja" if ta.is_paired else "Nein",
-            })
-        st.dataframe(pd.DataFrame(trail_rows), use_container_width=True, height=300)
-    else:
-        st.info("Keine Grenzschichten im Kontext.")
-
-    # --- Explanation ---
-    with st.expander("ℹ️ Wie funktioniert das Carry-Forward?"):
-        st.markdown(r"""
-        **Pro Mitarbeiter und Berufsgruppe** wird aus dem hochgeladenen Plan berechnet:
-
-        $$\Delta_i = \text{Norm./40h}_i \;-\; \overline{\text{Norm./40h}}_{\text{Gruppe}}$$
-
-        - $\Delta > 0$: Mehr als der Durchschnitt geleistet → Kompensation im Folge-Quartal
-        - $\Delta < 0$: Weniger geleistet → höhere Zuteilung im Folge-Quartal
-
-        Der Solver addiert diese Deltas als Vorbelastung auf die aktuelle Fairness-Berechnung.
-        So gleichen sich Schwankungen über mehrere Quartale aus.
-
-        **Urlaubszeiten** werden bewusst *nicht* herausgerechnet: Wer im Vorquartal
-        weniger gearbeitet hat, trägt ein negatives Delta — unabhängig vom Grund.
-        Im neuen Quartal gleicht der Solver dies über die Anwesenheits-Gewichtung aus.
-
-        **Workflow**: Laden Sie die tatsächlich durchgeführte Arbeitseinsatz-xlsx des
-        Vorquartals hoch (z.B. `Q2_Arbeitseinsätze.xlsx`).  Das System berechnet
-        die Deltas automatisch auf Basis der darin enthaltenen Schichten.
-        """)
+    """Removed: content merged into page_personal tab."""
+    pass
 
 
 def page_plan_erstellen() -> None:
@@ -845,7 +732,7 @@ def page_plan_erstellen() -> None:
     st.title("🔨 Plan erstellen")
 
     if st.session_state.staff_list is None:
-        st.warning("⚠️ Bitte zuerst Personaldaten laden (Seite 'Laden / CSV')")
+        st.warning("⚠️ Bitte zuerst Personaldaten laden (Seite 'Daten hochladen')")
         return
 
     st.markdown("### Quartal auswählen")
@@ -865,37 +752,10 @@ def page_plan_erstellen() -> None:
     quarter_start = quarter_starts[quarter]
 
     st.info(f"📅 Zeitraum: {quarter_start.strftime('%d.%m.%Y')} - ca. 91 Tage")
-    
-    # Show vacation status
+
     vacations = st.session_state.vacations or []
-    if vacations:
-        st.success(f"✅ {len(vacations)} Urlaubseinträge werden berücksichtigt")
-    else:
-        st.info("ℹ️ Keine Urlaubsdaten geladen - alle Mitarbeiter gelten als verfügbar")
-
-    # Show pre-assigned (holiday) status
     pre_assigned: list[PreAssignedShift] = st.session_state.pre_assigned or []
-    if pre_assigned:
-        st.success(f"✅ {len(pre_assigned)} vorgegebene Feiertagsdienste werden berücksichtigt")
-    else:
-        st.info("ℹ️ Keine Feiertagsdienste geladen (Seite 'Feiertage')")
-
-    # Show carry-forward status
     previous_context: PreviousPlanContext | None = st.session_state.previous_context
-    if previous_context:
-        n_nonzero = sum(
-            1 for e in previous_context.carry_forward
-            if abs(e.carry_forward_delta) >= 0.01
-        )
-        st.success(
-            f"✅ Carry-Forward aktiv — {n_nonzero} Mitarbeiter mit Δ ≠ 0, "
-            f"{len(previous_context.trailing_assignments)} Grenzschichten"
-        )
-    else:
-        st.info(
-            "ℹ️ Kein Carry-Forward geladen (Seite 'Vorheriger Plan').  "
-            "Erster Planungslauf startet ohne historische Ausgleichs-Deltas."
-        )
 
     # Solver parameters
     st.markdown("---")
@@ -914,10 +774,6 @@ def page_plan_erstellen() -> None:
     )
     max_solve_time_seconds = 60 if solve_mode == "Schnell (~1 Min.)" else 600
 
-    random_seed = st.number_input(
-        "Random Seed (optional)", min_value=0, max_value=9999, value=42, step=1
-    )
-
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary"):
@@ -929,7 +785,7 @@ def page_plan_erstellen() -> None:
                     quarter_start,
                     vacations=vacations,
                     max_solve_time_seconds=max_solve_time_seconds,
-                    random_seed=random_seed,
+                    random_seed=42,
                     previous_context=previous_context,
                     pre_assigned=pre_assigned,
                 )
@@ -1148,6 +1004,15 @@ def page_plan_anzeigen() -> None:
             quarter_end = schedule.quarter_end
             total_quarter_days = (quarter_end - quarter_start).days + 1
             
+            # Build carry-forward delta lookup if previous context is loaded
+            _prev_ctx: PreviousPlanContext | None = st.session_state.previous_context
+            cf_lookup: dict[str, float] = (
+                {e.identifier: e.carry_forward_delta for e in _prev_ctx.carry_forward}
+                if _prev_ctx is not None
+                else {}
+            )
+            has_cf_delta = _prev_ctx is not None
+
             # Compute all statistics including vacation/availability
             staff_stats = []
             for staff in staff_list:
@@ -1181,6 +1046,7 @@ def page_plan_anzeigen() -> None:
                     "Nächte": round(effective_nights, 1),
                     "Gesamt": round(total_notdienst, 1),
                     "Norm./40h": round(total_notdienst_fte, 2),
+                    "Δ Vorquartal": cf_lookup.get(staff.identifier, 0.0),
                 })
             
             df_stats = pd.DataFrame(staff_stats)
@@ -1281,6 +1147,8 @@ def page_plan_anzeigen() -> None:
             
             # Columns to display in detail tables (condensed)
             detail_cols = ["Name", "Kürzel", "Std.", "Urlaub", "Nacht", "WE", "Nächte", "Gesamt", "Norm./40h"]
+            if has_cf_delta:
+                detail_cols = detail_cols + ["Δ Vorquartal"]
             
             def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.io.formats.style.Styler:
                 """Apply green/yellow/red styling based on absolute deviation from group mean."""
@@ -1292,10 +1160,21 @@ def page_plan_anzeigen() -> None:
                         return "background-color: #ffffcc"  # yellow – slight deviation
                     else:
                         return "background-color: #ffcccc"  # red – significant
-                
-                return df.style.applymap(
-                    color_notdienst, subset=["Norm./40h"]
-                ).format({"Nächte": "{:.1f}", "Gesamt": "{:.1f}"})
+
+                def color_cf_delta(val: float) -> str:
+                    a = abs(val)
+                    if a < 0.5:
+                        return "background-color: #c8e6c9"
+                    if a < 1.5:
+                        return "background-color: #fff9c4"
+                    return "background-color: #ffcdd2"
+
+                fmt: dict = {"Nächte": "{:.1f}", "Gesamt": "{:.1f}"}
+                styled = df.style.applymap(color_notdienst, subset=["Norm./40h"])
+                if has_cf_delta and "Δ Vorquartal" in df.columns:
+                    styled = styled.applymap(color_cf_delta, subset=["Δ Vorquartal"])
+                    fmt["Δ Vorquartal"] = lambda v: f"+{v:.2f}" if v > 0 else f"{v:.2f}"
+                return styled.format(fmt)
             
             # TFA Table
             df_tfa_full = df_stats[df_stats["Beruf"] == "TFA"]
