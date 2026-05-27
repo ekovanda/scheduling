@@ -1033,6 +1033,7 @@ def page_plan_anzeigen() -> None:
                 else:
                     total_notdienst_fte = 0.0
                 
+                cf_delta = cf_lookup.get(staff.identifier, 0.0)
                 staff_stats.append({
                     "Name": staff.name,
                     "Kürzel": staff.identifier,
@@ -1046,7 +1047,8 @@ def page_plan_anzeigen() -> None:
                     "Nächte": round(effective_nights, 1),
                     "Gesamt": round(total_notdienst, 1),
                     "Norm./40h": round(total_notdienst_fte, 2),
-                    "Δ Vorquartal": cf_lookup.get(staff.identifier, 0.0),
+                    "Δ Vorquartal": cf_delta,
+                    "Adj. Norm.": round(total_notdienst_fte + cf_delta, 2),
                 })
             
             df_stats = pd.DataFrame(staff_stats)
@@ -1144,36 +1146,63 @@ def page_plan_anzeigen() -> None:
                 "🟡 ±1.0–2.0 (leichte Abweichung), 🔴 >±2.0 (signifikant)  —  "
                 "Normalisierung: Notdienst ÷ Vertragsstd. ÷ Anwesenheitsfaktor × 40"
             )
-            
+            if has_cf_delta:
+                st.caption(
+                    "**Δ Vorquartal**: Carry-Forward aus dem Vorquartal — "
+                    "**positiv (+)**: letztes Quartal mehr als Ø geleistet → Entlastung im aktuellen Quartal erwartet. "
+                    "**negativ (−)**: weniger als Ø geleistet → stärkere Einplanung jetzt erwartet. "
+                    "**Adj. Norm.** = Norm./40h + Δ = bereinigter Fairness-Wert (maßgeblich für die Beurteilung)."
+                )
+
             # Columns to display in detail tables (condensed)
             detail_cols = ["Name", "Kürzel", "Std.", "Urlaub", "Nacht", "WE", "Nächte", "Gesamt", "Norm./40h"]
             if has_cf_delta:
-                detail_cols = detail_cols + ["Δ Vorquartal"]
+                detail_cols = detail_cols + ["Δ Vorquartal", "Adj. Norm."]
             
-            def style_group_table(df: pd.DataFrame, group_mean: float) -> pd.io.formats.style.Styler:
-                """Apply green/yellow/red styling based on absolute deviation from group mean."""
-                def color_notdienst(val: float) -> str:
+            def style_group_table(
+                df: pd.DataFrame, group_mean: float, adj_mean: float | None = None
+            ) -> pd.io.formats.style.Styler:
+                """Color the Norm./40h, Δ Vorquartal, and Adj. Norm. columns."""
+
+                def color_norm(val: float) -> str:
+                    """Soft shading — current-quarter position relative to group mean."""
                     abs_dev = abs(val - group_mean)
                     if abs_dev <= 1.0:
-                        return "background-color: #ccffcc"  # green – fair
+                        return "background-color: #e8f5e9"  # soft green
                     elif abs_dev <= 2.0:
-                        return "background-color: #ffffcc"  # yellow – slight deviation
-                    else:
-                        return "background-color: #ffcccc"  # red – significant
+                        return "background-color: #fff8e1"  # soft yellow
+                    return "background-color: #ffebee"  # soft red
 
-                def color_cf_delta(val: float) -> str:
-                    a = abs(val)
-                    if a < 0.5:
-                        return "background-color: #c8e6c9"
-                    if a < 1.5:
-                        return "background-color: #fff9c4"
-                    return "background-color: #ffcdd2"
+                def color_delta(val: float) -> str:
+                    """Diverging warm/cool — direction of carry-forward."""
+                    if val > 0.5:
+                        return "background-color: #ffe0b2"  # warm orange: overworked last Q
+                    if val < -0.5:
+                        return "background-color: #e3f2fd"  # cool blue: underworked last Q
+                    return ""  # near-zero: no fill
 
-                fmt: dict = {"Nächte": "{:.1f}", "Gesamt": "{:.1f}"}
-                styled = df.style.applymap(color_notdienst, subset=["Norm./40h"])
+                def color_adj(val: float) -> str:
+                    """Primary fairness metric — bold green / yellow / red."""
+                    ref = adj_mean if adj_mean is not None else group_mean
+                    abs_dev = abs(val - ref)
+                    if abs_dev <= 1.0:
+                        return "background-color: #66bb6a; font-weight: bold"
+                    elif abs_dev <= 2.0:
+                        return "background-color: #ffee58; font-weight: bold"
+                    return "background-color: #ef5350; color: white; font-weight: bold"
+
+                fmt: dict = {
+                    "Nächte": "{:.1f}",
+                    "Gesamt": "{:.1f}",
+                    "Norm./40h": "{:.2f}",
+                }
+                styled = df.style.applymap(color_norm, subset=["Norm./40h"])
                 if has_cf_delta and "Δ Vorquartal" in df.columns:
-                    styled = styled.applymap(color_cf_delta, subset=["Δ Vorquartal"])
+                    styled = styled.applymap(color_delta, subset=["Δ Vorquartal"])
                     fmt["Δ Vorquartal"] = lambda v: f"+{v:.2f}" if v > 0 else f"{v:.2f}"
+                if has_cf_delta and "Adj. Norm." in df.columns:
+                    styled = styled.applymap(color_adj, subset=["Adj. Norm."])
+                    fmt["Adj. Norm."] = "{:.2f}"
                 return styled.format(fmt)
             
             # TFA Table
@@ -1181,9 +1210,16 @@ def page_plan_anzeigen() -> None:
             df_tfa = df_tfa_full[detail_cols].copy()
             if not df_tfa.empty:
                 tfa_mean = _weighted_mean(df_tfa_full)
+                tfa_adj_mean: float | None = (
+                    float(
+                        (df_tfa_full["Adj. Norm."] * df_tfa_full["_weight"]).sum()
+                        / df_tfa_full["_weight"].sum()
+                    )
+                    if has_cf_delta else None
+                )
                 st.markdown(f"##### 👩‍⚕️ TFA ({len(df_tfa)} MA, Ø {tfa_mean:.2f} Norm./40h)")
                 st.dataframe(
-                    style_group_table(df_tfa, tfa_mean),
+                    style_group_table(df_tfa, tfa_mean, tfa_adj_mean),
                     use_container_width=True,
                     height=min(400, 35 * len(df_tfa) + 38),
                 )
@@ -1193,9 +1229,16 @@ def page_plan_anzeigen() -> None:
             df_azubi = df_azubi_full[detail_cols].copy()
             if not df_azubi.empty:
                 azubi_mean = _weighted_mean(df_azubi_full)
+                azubi_adj_mean: float | None = (
+                    float(
+                        (df_azubi_full["Adj. Norm."] * df_azubi_full["_weight"]).sum()
+                        / df_azubi_full["_weight"].sum()
+                    )
+                    if has_cf_delta else None
+                )
                 st.markdown(f"##### 🎓 Azubi ({len(df_azubi)} MA, Ø {azubi_mean:.2f} Norm./40h)")
                 st.dataframe(
-                    style_group_table(df_azubi, azubi_mean),
+                    style_group_table(df_azubi, azubi_mean, azubi_adj_mean),
                     use_container_width=True,
                     height=min(400, 35 * len(df_azubi) + 38),
                 )
@@ -1205,9 +1248,16 @@ def page_plan_anzeigen() -> None:
             df_intern = df_intern_full[detail_cols].copy()
             if not df_intern.empty:
                 intern_mean = _weighted_mean(df_intern_full)
+                intern_adj_mean: float | None = (
+                    float(
+                        (df_intern_full["Adj. Norm."] * df_intern_full["_weight"]).sum()
+                        / df_intern_full["_weight"].sum()
+                    )
+                    if has_cf_delta else None
+                )
                 st.markdown(f"##### 🩺 Intern ({len(df_intern)} MA, Ø {intern_mean:.2f} Norm./40h)")
                 st.dataframe(
-                    style_group_table(df_intern, intern_mean),
+                    style_group_table(df_intern, intern_mean, intern_adj_mean),
                     use_container_width=True,
                     height=min(400, 35 * len(df_intern) + 38),
                 )
@@ -1273,14 +1323,16 @@ def page_plan_anzeigen() -> None:
                 - **Nacht**: Ob Nachtdienst möglich ist (✅/❌)
                 - **WE / Nächte**: Absolute Anzahl zugewiesener Schichten
                 - **Gesamt**: WE + Eff. Nächte
-                - **Norm./40h**: Normalisierter Fairness-Wert (Vergleichswert)
+                - **Norm./40h**: Normalisierter Quartalswert (Vergleichsbasis)
+                - **Δ Vorquartal**: Carry-Forward — positiv = mehr geleistet, negativ = weniger geleistet
+                - **Adj. Norm.**: Norm./40h + Δ = bereinigter Fairness-Wert *(primärer Indikator)*
                 
                 **Fairness-Schwellwert**: ≥2.0 Abweichung vom Gruppendurchschnitt = unfair.
                 
                 **Farbkodierung** (relativ zur Berufsgruppe):
-                - � Grün: Innerhalb ±1.0 vom Ø (fair)
-                - 🟡 Gelb: ±1.0–2.0 vom Ø (leichte Abweichung)
-                - 🔴 Rot: >±2.0 vom Ø (signifikante Abweichung)
+                - **Norm./40h** (soft): 🟢 ±1.0 fair · 🟡 ±1.0–2.0 leicht · 🔴 >±2.0 signifikant
+                - **Δ Vorquartal**: 🟠 Warm = mehr geleistet letztes Q · 🔵 Kühl = weniger geleistet
+                - **Adj. Norm.** (fett, primär): 🟢 ±1.0 · 🟡 ±1.0–2.0 · 🔴 >±2.0 — relativ zum bereinigten Gruppenø
                 """)
 
     # --- TAB 3: VALIDATION ---
@@ -1385,45 +1437,35 @@ def page_export() -> None:
 
     df_export = pd.DataFrame(assignment_data)
 
-    # CSV download
-    csv_buffer = io.StringIO()
-    df_export.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
-    csv_data = csv_buffer.getvalue()
+    # Split into the two export sheets
+    df_nights = df_export[df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
+    df_weekends = df_export[~df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="📥 Als CSV herunterladen",
-            data=csv_data,
-            file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.csv",
-            mime="text/csv",
-            width="content",
-        )
+    # Excel download — two sheets: nights and weekends
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+        df_nights.to_excel(writer, sheet_name="Nachtdienste", index=False)
+        df_weekends.to_excel(writer, sheet_name="Wochenenddienste", index=False)
+    excel_data = excel_buffer.getvalue()
 
-    with col2:
-        # Excel download — two sheets: nights and weekends
-        df_nights = df_export[df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
-        df_weekends = df_export[~df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-            df_nights.to_excel(writer, sheet_name="Nachtdienste", index=False)
-            df_weekends.to_excel(writer, sheet_name="Wochenenddienste", index=False)
-        excel_data = excel_buffer.getvalue()
+    st.download_button(
+        label="📥 Als Excel herunterladen",
+        data=excel_data,
+        file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="content",
+    )
 
-        st.download_button(
-            label="📥 Als Excel herunterladen",
-            data=excel_data,
-            file_name=f"dienstplan_{schedule.quarter_start.strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="content",
-        )
-
-
-
-    # Preview
+    # Preview — tabbed by sheet
     st.markdown("---")
     st.markdown("### Vorschau")
-    st.dataframe(df_export, width="content", height=600)
+    tab_prev_nights, tab_prev_weekends = st.tabs(["🌙 Nachtdienste", "☀️ Wochenenddienste"])
+    with tab_prev_nights:
+        st.caption(f"{len(df_nights)} Einträge")
+        st.dataframe(df_nights, use_container_width=True, height=500)
+    with tab_prev_weekends:
+        st.caption(f"{len(df_weekends)} Einträge")
+        st.dataframe(df_weekends, use_container_width=True, height=500)
 
 
 if __name__ == "__main__":
