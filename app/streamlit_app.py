@@ -1401,9 +1401,13 @@ def page_export() -> None:
         )
 
     with col2:
-        # Excel download
+        # Excel download — two sheets: nights and weekends
+        df_nights = df_export[df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
+        df_weekends = df_export[~df_export["Schicht"].str.startswith("N_")].reset_index(drop=True)
         excel_buffer = io.BytesIO()
-        df_export.to_excel(excel_buffer, index=False, engine="xlsxwriter")
+        with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+            df_nights.to_excel(writer, sheet_name="Nachtdienste", index=False)
+            df_weekends.to_excel(writer, sheet_name="Wochenenddienste", index=False)
         excel_data = excel_buffer.getvalue()
 
         st.download_button(

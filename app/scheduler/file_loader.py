@@ -522,7 +522,11 @@ def parse_previous_plan_xlsx(
 ) -> list[dict[str, Any]]:
     """Parse a previous quarter's schedule xlsx into a list of assignment dicts.
 
-    Expects long format with one row per assignment:
+    Accepts both the legacy single-sheet format and the current two-sheet format
+    (sheet 1 = "Nachtdienste", sheet 2 = "Wochenenddienste"). All sheets are
+    concatenated before parsing, so either format works transparently.
+
+    Each sheet (or the single sheet) uses the long format:
         Datum        | Wochentag | Schicht | Mitarbeiter | Paarweise
         01.04.2026   | Mi        | N_Mi-Do | SG          | Ja
 
@@ -544,10 +548,8 @@ def parse_previous_plan_xlsx(
     """
     from io import IOBase
 
-    if isinstance(source, (Path, str)):
-        df = pd.read_excel(source, dtype=str)
-    else:
-        df = pd.read_excel(source, dtype=str)  # BytesIO / UploadedFile
+    sheets: dict[str, pd.DataFrame] = pd.read_excel(source, sheet_name=None, dtype=str)
+    df = pd.concat(sheets.values(), ignore_index=True)
 
     try:
         col_date = _find_column(df, ["Datum", "datum", "date", "Date"])

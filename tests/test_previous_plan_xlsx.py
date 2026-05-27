@@ -60,6 +60,31 @@ def _build_xlsx(rows: list[dict]) -> io.BytesIO:
     return buf
 
 
+def _build_two_sheet_xlsx(
+    night_rows: list[dict],
+    weekend_rows: list[dict],
+) -> io.BytesIO:
+    """Build an in-memory two-sheet xlsx matching the current export format."""
+    headers = ["Datum", "Wochentag", "Schicht", "Mitarbeiter", "Paarweise"]
+    wb = openpyxl.Workbook()
+
+    ws_nights = wb.active
+    ws_nights.title = "Nachtdienste"
+    ws_nights.append(headers)
+    for row in night_rows:
+        ws_nights.append([row["Datum"], row.get("Wochentag", ""), row["Schicht"], row["Mitarbeiter"], row["Paarweise"]])
+
+    ws_weekends = wb.create_sheet(title="Wochenenddienste")
+    ws_weekends.append(headers)
+    for row in weekend_rows:
+        ws_weekends.append([row["Datum"], row.get("Wochentag", ""), row["Schicht"], row["Mitarbeiter"], row["Paarweise"]])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 # ---------------------------------------------------------------------------
 # Tests: parse_previous_plan_xlsx
 # ---------------------------------------------------------------------------
@@ -136,6 +161,27 @@ class TestParsePreviousPlanXlsx:
         buf.seek(0)
         with pytest.raises(FileFormatError):
             parse_previous_plan_xlsx(buf)
+
+    def test_two_sheet_xlsx_parses_all_assignments(self) -> None:
+        """Two-sheet export format: nights sheet + weekends sheet → all rows recovered."""
+        night_rows = [
+            {"Datum": "01.04.2026", "Schicht": "N_Mi-Do", "Mitarbeiter": "SG", "Paarweise": "Nein"},
+            {"Datum": "07.04.2026", "Schicht": "N_Di-Mi", "Mitarbeiter": "JK", "Paarweise": "Ja"},
+        ]
+        weekend_rows = [
+            {"Datum": "04.04.2026", "Schicht": "Sa_10-22", "Mitarbeiter": "AA", "Paarweise": "Nein"},
+            {"Datum": "05.04.2026", "Schicht": "So_8-20", "Mitarbeiter": "BB", "Paarweise": "Nein"},
+        ]
+        buf = _build_two_sheet_xlsx(night_rows, weekend_rows)
+        rows = parse_previous_plan_xlsx(buf)
+
+        assert len(rows) == 4
+        identifiers = {r["staff_identifier"] for r in rows}
+        assert identifiers == {"SG", "JK", "AA", "BB"}
+        night_parsed = [r for r in rows if r["shift_type"].startswith("N_")]
+        weekend_parsed = [r for r in rows if not r["shift_type"].startswith("N_")]
+        assert len(night_parsed) == 2
+        assert len(weekend_parsed) == 2
 
 
 # ---------------------------------------------------------------------------
