@@ -891,7 +891,6 @@ def page_plan_erstellen() -> None:
                     st.success(
                         f"✅ Dienstplan erfolgreich erstellt! ({len(best_schedule.assignments)} Zuweisungen)"
                     )
-                    st.metric("Soft Penalty", f"{validation.soft_penalty:.2f}")
 
                 else:
                     st.error("❌ Keine gültige Lösung gefunden!")
@@ -903,13 +902,36 @@ def page_plan_erstellen() -> None:
                 st.error(f"❌ Fehler beim Generieren: {e}")
                 st.exception(e)
 
-    # Current status + navigation
+    # Current status + navigation (score persists here via session_state)
     st.markdown("---")
     if st.session_state.schedule:
-        st.success("✅ Plan vorhanden")
-        if st.button("📅 Plan anzeigen →", type="primary"):
-            st.session_state.nav_target = "Plan anzeigen"
-            st.rerun()
+        if st.session_state.validation_result:
+            _v = st.session_state.validation_result
+            _n_hard = len(_v.hard_violations)
+            col_score, col_nav = st.columns([1, 1])
+            with col_score:
+                st.metric(
+                    "Soft Penalty Score",
+                    f"{_v.soft_penalty:.2f}",
+                    help=(
+                        "Bewertet Fairness und Regelkonformität. Niedriger = besser. "
+                        "Aufschlüsselung im Tab 'Plan anzeigen → Fairness & Statistik'."
+                    ),
+                )
+                if _n_hard == 0:
+                    st.caption("✅ Keine harten Regelverstöße")
+                else:
+                    st.caption(f"⚠️ {_n_hard} harte Regelverstöße")
+            with col_nav:
+                st.success("✅ Plan vorhanden")
+                if st.button("📅 Plan anzeigen →", type="primary"):
+                    st.session_state.nav_target = "Plan anzeigen"
+                    st.rerun()
+        else:
+            st.success("✅ Plan vorhanden")
+            if st.button("📅 Plan anzeigen →", type="primary"):
+                st.session_state.nav_target = "Plan anzeigen"
+                st.rerun()
     else:
         st.info("ℹ️ Noch kein Plan generiert")
 
@@ -1380,7 +1402,161 @@ def page_plan_anzeigen() -> None:
                     )
             else:
                 st.success("✅ Alle Gruppen haben eine ausgewogene interne Verteilung (Spread ≤ 3.0).")
-            
+
+            # ========== SCORE BREAKDOWN EXPANDER ==========
+            with st.expander("📈 Optimierungs-Score: Aufschlüsselung"):
+                if validation_result is None:
+                    st.info("Kein Validierungsergebnis verfügbar.")
+                else:
+                    total_score = validation_result.soft_penalty
+                    total_hours_all = sum(s.hours for s in staff_list)
+                    total_assignments = len(schedule.assignments)
+
+                    # -- Component 1: proportional deviation --
+                    prop_rows = []
+                    total_prop_penalty = 0.0
+                    for _s in staff_list:
+                        actual = schedule.count_total_notdienst(_s.identifier, _s)
+                        target = (
+                            (_s.hours / total_hours_all) * total_assignments
+                            if total_hours_all > 0
+                            else 0.0
+                        )
+                        deviation = actual - target
+                        contribution = deviation**2
+                        total_prop_penalty += contribution
+                        prop_rows.append(
+                            {
+                                "Name": _s.name,
+                                "Beruf": _s.beruf.value,
+                                "Std.": _s.hours,
+                                "Ist": round(actual, 1),
+                                "Soll (∝ Std.)": round(target, 1),
+                                "Differenz": round(deviation, 1),
+                                "Beitrag (Δ²)": round(contribution, 2),
+                            }
+                        )
+
+                    # -- Component 2: within-group fairness (std dev × 10) --
+                    group_rows = []
+                    total_group_penalty = 0.0
+                    for _beruf in [Beruf.TFA, Beruf.AZUBI, Beruf.INTERN]:
+                        _grp = [s for s in staff_list if s.beruf == _beruf]
+                        if len(_grp) < 2:
+                            continue
+                        _counts = [
+                            schedule.count_total_notdienst(s.identifier, s) for s in _grp
+                        ]
+                        _mean = sum(_counts) / len(_counts)
+                        _variance = sum((x - _mean) ** 2 for x in _counts) / len(_counts)
+                        _std = _variance**0.5
+                        _contrib = _std * 10
+                        total_group_penalty += _contrib
+                        group_rows.append(
+                            {
+                                "Gruppe": _beruf.value,
+                                "MA": len(_grp),
+                                "Ø Notdienste": round(_mean, 2),
+                                "Std.-Abw.": round(_std, 2),
+                                "× Faktor": 10,
+                                "Penalty-Beitrag": round(_contrib, 2),
+                            }
+                        )
+
+                    # -- Component 3: soft violations (nd_max_consecutive) --
+                    violation_penalty = max(
+                        0.0,
+                        round(total_score - total_prop_penalty - total_group_penalty, 4),
+                    )
+                    n_violations = round(violation_penalty / 100)
+
+                    # --- Header ---
+                    st.markdown(
+                        f"**Gesamt-Score: {total_score:.2f} Punkte** "
+                        "*(niedriger = fairer und regelkonformer Plan; 0 = optimal)*"
+                    )
+                    st.caption(
+                        "Der Score setzt sich aus drei unabhängigen Komponenten zusammen. "
+                        "Jede misst eine andere Dimension der Planqualität."
+                    )
+                    st.markdown("---")
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(
+                            "① Proportionale Abweichung",
+                            f"{total_prop_penalty:.2f}",
+                            help=(
+                                "Summe (Ist − Soll)² über alle Mitarbeiter. "
+                                "Soll = Stunden-Anteil × Gesamtdienste."
+                            ),
+                        )
+                    with col2:
+                        st.metric(
+                            "② Gruppen-Fairness",
+                            f"{total_group_penalty:.2f}",
+                            help="Std.-Abw. der Notdienste pro Berufsgruppe × 10.",
+                        )
+                    with col3:
+                        st.metric(
+                            "③ Soft-Regelverstöße",
+                            f"{violation_penalty:.2f}",
+                            help=(
+                                "100 Punkte pro Verstoß gegen nd_max_consecutive "
+                                "(aufeinanderfolgende Nächte überschreiten das Maximum)."
+                            ),
+                        )
+
+                    st.markdown("---")
+
+                    # --- Detail: Component 1 ---
+                    st.markdown("##### ① Proportionale Abweichung — pro Mitarbeiter")
+                    st.caption(
+                        f"**{total_prop_penalty:.2f} Punkte** · "
+                        f"Formel: Σ (Ist − Soll)²  ·  "
+                        f"Soll = Std./Gesamtstd. × {total_assignments} Dienste"
+                    )
+
+                    def _color_contrib(val: float) -> str:
+                        if val < 0.5:
+                            return "background-color: #e8f5e9"
+                        if val < 2.0:
+                            return "background-color: #fff8e1"
+                        return "background-color: #ffebee"
+
+                    df_prop = pd.DataFrame(prop_rows).sort_values(
+                        "Beitrag (Δ²)", ascending=False
+                    )
+                    st.dataframe(
+                        df_prop.style.applymap(_color_contrib, subset=["Beitrag (Δ²)"]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    # --- Detail: Component 2 ---
+                    if group_rows:
+                        st.markdown("##### ② Gruppen-Fairness — pro Berufsgruppe")
+                        st.caption(
+                            f"**{total_group_penalty:.2f} Punkte** · "
+                            "Formel: Std.-Abw.(Notdienste) × 10 pro Gruppe"
+                        )
+                        st.dataframe(
+                            pd.DataFrame(group_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                    # --- Detail: Component 3 ---
+                    st.markdown("##### ③ Soft-Regelverstöße (nd_max_consecutive)")
+                    if violation_penalty > 0.1:
+                        st.warning(
+                            f"⚠️ ~{n_violations} Verstoß/Verstöße gegen `nd_max_consecutive` "
+                            f"erkannt → {violation_penalty:.0f} Punkte. "
+                            "Details auf dem Tab '✅ Validierung'."
+                        )
+                    else:
+                        st.success("✅ Keine Soft-Regelverstöße (0 Punkte)")
+
             # Breakdown explanation
             with st.expander("ℹ️ Berechnungslogik"):
                 st.markdown(r"""
