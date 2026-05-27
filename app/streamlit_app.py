@@ -665,61 +665,151 @@ def page_regeln() -> None:
     """Page: Display constraint rules."""
     st.title("📋 Regeln & Constraints")
 
-    st.markdown("""
-    ## Hard Constraints (müssen erfüllt sein)
-
-    ### Wochenend-Schichten
-    - **Samstag 10-19**: Alle Azubis (Azubidienst)
-    - **Samstag 10-21**: Azubis mit `reception=True` oder TFA (Anmeldung)
-    - **Samstag 10-22 / Sonntag 8-20 / Sonntag 10-22**: Nur TFA
-    - **Sonntag 8-20:30**: Nur erwachsene Azubis (≥18 Jahre)
-    - **Minderjährige**: Dürfen **nicht** sonntags arbeiten
-    - **Interns**: Arbeiten **nie** am Wochenende
-    - **Max. 1 Schicht/Tag**: Jede Person kann max. 1 Schicht pro Tag haben
-    - **Wochenend-Isolation**: WE-Schichten können nicht Teil eines Blocks sein
-
-    ### Nachtdienste
-    - **Alle Nächte**: 1-2 Personen, mind. 1 nicht-Azubi (TFA oder Intern)
-    - **Sonntag→Montag / Montag→Dienstag**: Genau 1 TFA/Intern + optional 1 Azubi
-    - **Azubis**: Müssen **immer** mit einem TFA oder Intern zusammenarbeiten
-    - **Azubi effektive Nächte**: Zählen immer 1.0× (auch bei Paarung)
-    - **Zwei Azubis**: Können **nie** zusammen Nachtdienst machen
-    - **nd_alone=False**: Mitarbeiter müssen paarweise arbeiten (außer So→Mo, Mo→Di)
-    - **nd_alone=True**: Mitarbeiter arbeiten **komplett alleine** (keine Paarung erlaubt)
-    - **Min. aufeinanderfolgende Nächte**: Individuelle Einstellung per `nd_min_consecutive` (Standard 2 für TFA/Intern; 1 für Azubis und Ausnahme-TFA)
-    - **Interns**: Arbeiten 2-3 Nächte/Monat (6-9 pro Quartal)
-
-    ### Abteilungs-Constraint
-    - **Abteilung (OP/Station)**: Mitarbeiter derselben Abteilung (`op` oder `station`) dürfen:
-      - **Nicht zusammen** auf derselben Nachtschicht arbeiten
-      - **Nicht aufeinanderfolgend** Nachtschichten machen (Tag N und Tag N+1)
-    - **Begründung**: Verhindert Kapazitätsengpässe in Spezialgebieten
-    - **Ausnahme**: Mitarbeiter mit `abteilung=other` sind von dieser Regel ausgenommen
-
-    ### Zeitliche Constraints
-    - **2-Wochen-Regel**: Max. 1 zusammenhängender Schichtblock pro 2-Wochen-Fenster
-    - **Nacht/Tag-Konflikt**: Kein Tagdienst am selben oder nächsten Tag nach Nachtschicht
-    - **nd_exceptions**: Keine Nächte an Wochentagen in `nd_exceptions` (1=Mo, 7=So)
-    - **🎂 Geburtstag**: Mitarbeiter dürfen an ihrem Geburtstag **keine Schicht** eingeteilt werden (wirkt wie Urlaub)
-
-    ## Soft Constraints (Optimierungsziele)
-
-    - **nd_max_consecutive**: Max. aufeinanderfolgende Nächte (wird möglichst eingehalten)
-    - **Faire Verteilung**: Notdienste (WE + Nächte kombiniert) proportional zu Wochenstunden
-    - **Effective Nights**: TFA/Intern: Paar-Nächte = 0,5×, Solo-Nächte = 1,0×; Azubi: immer 1,0×
-    - **Gruppen-Fairness**: Minimale Abweichung (±2) innerhalb TFA/Azubi/Intern
-
-    ### Penalty-System
-    - Abweichung von Ziel → Quadratische Strafe
-    - Ungleichheit in Gruppe → Standardabweichung × 10
-    - nd_max_consecutive Überschreitung → 100 pro Verletzung
-    """)
-
-    st.markdown("---")
-    st.info(
-        "💡 **Tipp**: Bei nicht erfüllbaren Constraints wird eine Liste der Verletzungen "
-        "angezeigt. Verwende den Button 'Entspannungen vorschlagen', um Lösungen zu finden."
+    st.markdown(
+        "Der Solver unterscheidet zwischen **harten Constraints** (nie verletzbar) "
+        "und **weichen Constraints** (Optimierungsziele). Klappt einen Abschnitt auf für Details."
     )
+
+    # ── HARD CONSTRAINTS ────────────────────────────────────────────────────
+    st.markdown("## 🔒 Harte Constraints")
+
+    with st.expander("📅 Wochenend-Schichttypen & Berechtigungen"):
+        st.markdown("""
+| Schichttyp | Berechtigt |
+|---|---|
+| **Sa 10-19** (Azubidienst) | Nur Azubis |
+| **Sa 10-21** (Anmeldung) | TFA **oder** Azubi mit `reception=True` |
+| **Sa 10-22** (Rufbereitschaft) | Nur TFA |
+| **So 8-20** | Nur TFA |
+| **So 8-20:30** (Azubidienst) | Nur erwachsene Azubis (`adult=True`) |
+| **So 10-22** (Rufbereitschaft) | Nur TFA |
+
+**Feiertage** (Werktage, die als Feiertag markiert sind) erhalten dasselbe Schichtmuster wie ein Sonntag.
+
+**Weitere Einschränkungen:**
+- Minderjährige (`adult=False`) dürfen **keine** Sonntagsschicht übernehmen.
+- Interns arbeiten **nie** am Wochenende.
+- Max. **1 Schicht pro Person pro Tag** (kein Doppeleinsatz).
+- **Wochenend-Isolation**: Jede WE-Schicht muss einzeln stehen — kein angrenzendes Schicht am Vor- oder Folgetag.
+        """)
+
+    with st.expander("🌙 Nachtdienste – Besetzung & Rollen"):
+        st.markdown("""
+**Reguläre Nächte** (Di→Mi bis Sa→So):
+- 1–2 Personen, mind. 1 Nicht-Azubi (TFA oder Intern).
+- Zwei Azubis dürfen **nie** gemeinsam Nachtdienst machen.
+- Azubis müssen **immer** mit einem TFA oder Intern gepaart sein.
+- `nd_alone=False` (Nicht-Azubi): muss **paarweise** arbeiten (mind. 2 Personen gesamt).
+- `nd_alone=True` (Nicht-Azubi): arbeitet **komplett allein** — keine weitere Person auf derselben Nacht.
+
+**Vet-Nächte** (So→Mo und Mo→Di — TA vor Ort):
+- Genau **1 Nicht-Azubi** (TFA oder Intern).
+- Optional darf **1 Azubi** hinzukommen (max. 1).
+- `nd_alone`-Regeln gelten auf diesen Nächten **nicht**.
+
+**Intern-Kontingent:**
+- Interns müssen pro Quartal **6–9 Nächte** übernehmen (≈ 2–3 pro Monat).
+
+**Effektive Nachtzählung** (für Fairness):
+- Azubi: immer **1,0×** (auch wenn gepaart).
+- TFA/Intern, allein: **1,0×** | gepaart: **0,5×** pro Person.
+        """)
+
+    with st.expander("⏱️ Zeitliche Regeln (Sperren & Abstände)"):
+        st.markdown("""
+**3-Wochen-Regel (Blockabstand):**
+- Pro Person darf max. 1 zusammenhängender Schichtblock in einem rollierenden **21-Tage-Fenster** beginnen.
+- *Ausnahme Feiertage*: Wurde ein Schichtblock durch einen vorab zugewiesenen Feiertag erzwungen, gilt ein entspanntes Fenster von nur **7 Tagen** (statt 21).
+- Über Quartalsgrenzen hinweg wird die Regel weich erzwungen (Verletzungen sind stark bestraft, aber nicht absolut verboten).
+
+**Nacht/Tag-Konflikt:**
+- Kein Tagdienst (WE-Schicht) am **selben Tag** oder **Folgetag** nach einer Nachtschicht.
+
+**nd_exceptions:**
+- Keine Nachtzuweisung an Wochentagen, die in `nd_exceptions` hinterlegt sind (1 = Mo, …, 7 = So).
+
+**Urlaub & Abwesenheit:**
+- Urlaubstage (aus der Urlaubsliste) sperren **alle** Schichttypen.
+- **🎂 Geburtstag**: Der Geburtstag (`birthday`-Feld, Format `MM-DD`) wird wie ein Urlaubstag behandelt — keine Schicht am Geburtstag.
+- **Neueinstieg** (`available_from`): Mitarbeiter, die erst im Quartal anfangen, werden vor ihrem Startdatum vollständig gesperrt.
+
+**Vorheriger Plan (Carry-Forward):**
+- Die letzten 21 Tage des Vorquartals werden berücksichtigt, damit 3-Wochen-Regel, Mindestnächte und Nacht/Tag-Konflikt über Quartalsgrenzen korrekt greifen.
+        """)
+
+    with st.expander("🏥 Abteilungs-Constraint (OP / Station)"):
+        st.markdown("""
+Mitarbeiter mit `abteilung=op` oder `abteilung=station` unterliegen zusätzlichen Einschränkungen,
+um Kapazitätsengpässe in Spezialgebieten zu verhindern:
+
+1. **Gleiche Nacht**: Zwei Mitarbeiter aus derselben Abteilung dürfen **nicht** gemeinsam auf einer Nachtschicht eingesetzt werden.
+2. **Aufeinanderfolgende Nächte**: Zwei Mitarbeiter aus derselben Abteilung dürfen an aufeinanderfolgenden Tagen (Tag N und Tag N+1) **nicht** Nacht machen.
+
+Mitarbeiter mit `abteilung=other` sind von beiden Regeln **ausgenommen**.
+        """)
+
+    with st.expander("✅ Mindest-Teilnahme"):
+        st.markdown("""
+Damit niemand ausschließlich Wochenenddienste oder ausschließlich Nachtdienste sammelt:
+
+- **Wochenend-Pflicht**: Alle TFA und Azubis müssen pro Quartal mind. **1 Wochenendschicht** ableisten.
+- **Nacht-Pflicht**: Alle Mitarbeiter mit `nd_possible=True` müssen pro Quartal mind. **1 Nachtschicht** ableisten.
+
+*Ausnahme Nacht-Pflicht*: Wenn die nach Urlaub und `nd_exceptions` verbleibenden Nachttermine zu wenige gültige aufeinanderfolgende Blöcke für `nd_min_consecutive` bieten (< 3 Blöcke), entfällt die Pflicht und der Solver verlässt sich stattdessen auf das Fairness-Ziel.
+
+**`nd_max_consecutive` (Max. aufeinanderfolgende Nächte):**
+Wenn ein Mitarbeiter einen Wert in diesem Feld hat, erzwingt der Solver diese Obergrenze als **hartes Limit** — keine Nachtfolge darf länger sein. Der Validierungs-Score gibt zusätzlich **100 Strafpunkte** pro Verstoß (für extern importierte Pläne).
+        """)
+
+    with st.expander("📋 Min. aufeinanderfolgende Nächte (`nd_min_consecutive`)"):
+        st.markdown("""
+| Rolle | Standard | Bedeutung |
+|---|---|---|
+| Azubi | 1 | Einzelnächte erlaubt (immer gepaart) |
+| TFA / Intern | 2 | Mindestens 2 aufeinanderfolgende Nächte pro Block |
+| Sonderfall (z. B. Anika) | 3 | Mindestens 3 aufeinanderfolgende Nächte pro Block |
+
+Wenn ein Mitarbeiter eine Nacht antritt, muss der gesamte Block mindestens `nd_min_consecutive` lang sein.
+        """)
+
+    # ── SOFT CONSTRAINTS ────────────────────────────────────────────────────
+    st.markdown("## 🎯 Weiche Constraints (Optimierungsziele)")
+
+    with st.expander("⚖️ Faire Verteilung – Solver-Objektiv (CP-SAT)"):
+        st.markdown("""
+Der Solver minimiert die **maximale FTE-normierte Abweichung** innerhalb jeder Berufsgruppe (TFA, Azubi, Intern).
+
+**FTE-Normierung:**
+```
+FTE-Wert = Gesamte_Notdienste × (40 / Wochenstunden) × (Quartalstage / Anwesenheitstage)
+```
+- Mitarbeiter mit 20 Std. sollen halb so viele Dienste wie 40-Std.-Kollegen haben.
+- Urlaubsbereinigt: Wer 2 Wochen Urlaub hat, hat entsprechend weniger erwartet.
+
+**Zwei Fairness-Ziele (beide minimiert):**
+1. **Primär**: Spanne (Max − Min) der FTE-Werte innerhalb TFA / Azubi / Intern.
+   - Hartes Limit: Spanne ≤ 1,5 FTE-Einheiten (wird verletzt, wenn kein besserer Plan machbar ist).
+2. **Sekundär** (geringeres Gewicht): Spanne der *Nacht*-FTE-Werte innerhalb nachtfähiger TFA/Azubi — verhindert, dass jemand nur Wochenenddienste sammelt.
+
+**Carry-Forward (Vorquartal):**
+Wer im Vorquartal mehr als der Gruppendurchschnitt geleistet hat (`carry_forward_delta > 0`), bekommt einen Bonus-Offset, der seinen FTE-Wert im neuen Quartal nach oben verschiebt — der Solver gleicht so historische Ungleichheiten aus.
+        """)
+
+    with st.expander("📊 Validierungs-Bewertung (Post-Solve Score)"):
+        st.markdown("""
+Nach dem Lösen berechnet der Validator einen **Soft-Penalty-Score** (niedriger = besser).
+Dieser Score ist unabhängig vom Solver-Objektiv und dient der Übersicht:
+
+| Komponente | Formel |
+|---|---|
+| Abweichung vom proportionalen Ziel | Σ (Ist − Ziel)² pro Mitarbeiter |
+| Gruppen-Ungleichheit | Standardabweichung × 10 pro Gruppe |
+| `nd_max_consecutive`-Überschreitung | **100 Punkte** pro Verstoß |
+
+*Hinweis*: Da der CP-SAT-Solver `nd_max_consecutive` bereits als hartes Limit durchsetzt,
+treten die 100-Punkte-Strafen nur bei extern importierten oder manuell bearbeiteten Plänen auf.
+        """)
+
 
 
 def page_vorheriger_plan() -> None:
@@ -808,14 +898,6 @@ def page_plan_erstellen() -> None:
                     st.markdown("### Verletzungen der Hard Constraints:")
                     for constraint in result.unsatisfiable_constraints:
                         st.text(f"• {constraint}")
-
-                    if st.button("💡 Entspannungen vorschlagen"):
-                        st.info(
-                            "Vorschläge:\n"
-                            "- Reduziere 3-Wochen-Regel auf 2 Wochen\n"
-                            "- Erlaube Azubis mehr Solo-Nächte (So-Mo, Mo-Di mit TA)\n"
-                            "- Erhöhe nd_count Flexibilität für einige Mitarbeiter"
-                        )
 
             except Exception as e:
                 st.error(f"❌ Fehler beim Generieren: {e}")

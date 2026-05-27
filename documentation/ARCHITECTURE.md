@@ -32,11 +32,25 @@ app/
 - `Assignment`: Staff → Shift mapping with `is_paired` flag
 - `Schedule`: Full quarter schedule with helper methods
 
+- `nd_max_consecutive: int | None  # Hard limit on consecutive nights (enforced in solver; +100 soft pts in validator)`
+- `nd_min_consecutive: int          # Min consecutive nights per block`
+- `birthday: str | None             # MM-DD, treated like vacation`
+- `available_from: date | None      # Blocks all shifts before this date (new hires)`
+
+**Cross-Quarter Models:**
+```python
+TrailingAssignment  # Last 21 days of previous quarter — boundary constraint source
+CarryForwardEntry   # Per-person FTE delta from prior quarter
+PreviousPlanContext # Combines trailing assignments + carry-forward entries
+```
+
 **Key Methods:**
 ```python
 Staff.can_work_shift(shift_type, date) -> bool  # Eligibility check
-Staff.effective_nights_weight(is_paired) -> float  # TFA/Intern: 0.5 if paired, 1.0 if solo; Azubi: always 1.0
+Staff.effective_nights_weight(is_paired) -> float  # TFA/Intern: 0.5 if paired, 1.0 if solo; Azubi: 1.0
 Schedule.count_effective_nights(staff_id, staff) -> float  # Sum of weighted nights
+build_previous_context(schedule, staff_list) -> PreviousPlanContext  # Export carry-forward
+build_previous_context_from_xlsx(source, staff_list) -> PreviousPlanContext  # Import from xlsx
 ```
 
 ### 2. validator.py - Constraint Validation
@@ -51,7 +65,7 @@ Schedule.count_effective_nights(staff_id, staff) -> float  # Sum of weighted nig
 | `_check_intern_night_capacity` | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional 0-1 Azubi |
 | `_check_min_consecutive_nights_constraint` | Per-staff nd_min_consecutive: blocks of fewer nights than the minimum are flagged |
 | `_check_same_day_next_day_constraint` | No day shift after night shift |
-| `_check_three_week_block_constraint` | Max 1 block per 14-day window |
+| `_check_three_week_block_constraint` | Max 1 block per **21-day** rolling window |
 | `_check_weekend_isolation_constraint` | Weekend shifts cannot be adjacent to other shifts |
 | `_check_nd_exceptions_constraint` | Respect weekday exclusions |
 | `_check_shift_eligibility` | General eligibility check (Sa 10-22, So 8-20, So 10-22 = TFA only) |
@@ -92,13 +106,25 @@ def generate_schedule(
 - Pairing logic: `x[s,d,t] => is_paired[s,d]` for nd_alone=False
 - nd_alone=True: Must work alone (sum of all others == 0)
 - Min consecutive: Non-Azubis must have adjacent night if assigned
-- Block constraint: Track block starts, forbid two within 14 days
+- Block constraint: Track block starts; forbid two block starts within **21 days** of each other
+  (relaxed to **7 days** for pre-assigned holiday blocks; cross-quarter violations are soft)
 - Weekend isolation: Weekend shifts cannot be adjacent to other shifts
-- nd_max_consecutive: Sliding window sum constraints
-- Abteilung constraint: Same abteilung (op/station) <= 1 per night, no consecutive
+- nd_max_consecutive: Sliding-window sum ≤ nd_max_consecutive (**hard** in solver)
+- Abteilung constraint: Same abteilung (op/station) ≤ 1 per night, no consecutive days
+- Intern night cap: 6 ≤ sum(intern_night_vars) ≤ 9 per quarter
+- `available_from`: All dates before start date added to vacation set (variable excluded)
+- Min participation: ≥1 weekend (TFA/Azubi); ≥1 night (nd_possible, viability-guarded)
 
 **Objective Function:**
-Minimize `sum(range_var)` where `range_var = max_fte - min_fte` for combined Notdienste within each group.
+Minimize `sum(range_var)` where `range_var = max_fte − min_fte` for combined Notdienste
+within each role group (TFA / Azubi / Intern separately).
+
+Two objectives stacked (both minimized together):
+1. **Primary**: FTE-scaled Notdienste range per group (presence + carry-forward adjusted).
+2. **Secondary** (weight 1): FTE-scaled night-shift range per group (type-balance).
+
+Cross-quarter block violations are penalized with `gap_diff × 10,000,000` — far above fairness
+terms — to treat them as near-hard without risking infeasibility.
 
 ## Algorithms
 
@@ -126,18 +152,22 @@ Minimize `sum(range_var)` where `range_var = max_fte - min_fte` for combined Not
 ## Data Flow
 
 ```
-CSV Upload → Staff List → Solver → Schedule → Validator → UI Display
-                ↓                      ↓
-            Shift Generation      Assignment List
+CSV/XLSX Upload → Staff List + Vacations + Pre-assigned Shifts
+                          ↓
+                  Optional: Previous Plan XLSX → PreviousPlanContext
+                          ↓                         (trailing assignments + carry-forward)
+                       Solver
+                          ↓
+                      Schedule → Validator → UI Display
 ```
 
 ## Session State (Streamlit)
 
 ```python
 st.session_state.staff_list: list[Staff] | None
-st.session_state.schedule: Schedule | None
-st.session_state.validation_result: ValidationResult | None
-```
+st.session_state.vacations: list[Vacation] | None
+st.session_state.pre_assigned: list[PreAssignedShift] | None
+st.session_state.previous_context: PreviousPlanContext | None
 st.session_state.schedule: Schedule | None
 st.session_state.validation_result: ValidationResult | None
 ```
