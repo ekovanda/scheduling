@@ -2,6 +2,7 @@
 
 import csv
 import json
+from dataclasses import dataclass
 from datetime import date, timedelta
 from enum import Enum
 from pathlib import Path
@@ -763,3 +764,17 @@ def build_previous_context_from_xlsx(
         assignments=assignments,
     )
     return build_previous_context(schedule, staff_list, vacations=None, trailing_days=trailing_days)
+
+
+@dataclass
+class SchedulerConfig:
+    """Configurable solver constraint parameters.
+
+    All fields correspond to hard constraints that may need adjustment
+    per quarter or per stakeholder request.
+    """
+
+    intern_min_nights: int = 6
+    intern_max_nights: int = 9
+    block_gap_days: int = 21
+    holiday_gap_days: int = 7

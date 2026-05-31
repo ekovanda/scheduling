@@ -16,6 +16,7 @@ from .models import (
     PreAssignedShift,
     PreviousPlanContext,
     Schedule,
+    SchedulerConfig,
     Shift,
     ShiftType,
     Staff,
@@ -26,6 +27,7 @@ from .models import (
     get_staff_unavailable_dates,
 )
 from .validator import validate_schedule
+from .feasibility import analyze_capacity
 
 
 class SolverResult:
@@ -37,15 +39,36 @@ class SolverResult:
         schedules: list[Schedule],
         penalties: list[float],
         unsatisfiable_constraints: list[str],
+        convergence_log: list[dict[str, float]] | None = None,
     ) -> None:
         self.success = success
         self.schedules = schedules
         self.penalties = penalties
         self.unsatisfiable_constraints = unsatisfiable_constraints
+        self.convergence_log: list[dict[str, float]] = convergence_log or []
 
     def get_best_schedule(self) -> Schedule | None:
         """Get the best schedule (lowest penalty)."""
         return self.schedules[0] if self.schedules else None
+
+
+class _SchedulingProgressCallback(cp_model.CpSolverSolutionCallback):
+    """Records each improving solution found during solving.
+
+    Populated via Solve(model, callback) and attached to SolverResult
+    as convergence_log for post-solve display in the UI.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.solutions: list[dict[str, float]] = []
+
+    def OnSolutionCallback(self) -> None:
+        self.solutions.append({
+            "wall_time": round(self.wall_time, 2),
+            "objective": float(self.objective_value),
+            "bound": float(self.best_objective_bound),
+        })
 
 
 def generate_schedule_cpsat(
@@ -56,6 +79,7 @@ def generate_schedule_cpsat(
     random_seed: int | None = None,
     previous_context: PreviousPlanContext | None = None,
     pre_assigned: list[PreAssignedShift] | None = None,
+    config: SchedulerConfig | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -73,7 +97,9 @@ def generate_schedule_cpsat(
         vacations = []
     if pre_assigned is None:
         pre_assigned = []
-    
+    if config is None:
+        config = SchedulerConfig()
+
     model = cp_model.CpModel()
 
     # Derive holiday dates from pre-assigned shifts for shift generation
@@ -384,8 +410,8 @@ def generate_schedule_cpsat(
                 if (staff.identifier, s.shift_date, s.shift_type) in x
             ]
             if intern_night_vars:
-                model.Add(sum(intern_night_vars) >= 6)
-                model.Add(sum(intern_night_vars) <= 9)
+                model.Add(sum(intern_night_vars) >= config.intern_min_nights)
+                model.Add(sum(intern_night_vars) <= config.intern_max_nights)
 
     # 5. Weekend isolation: weekend shifts cannot be adjacent to any other shift
     # This ensures weekend shifts are always single-shift blocks
@@ -445,6 +471,8 @@ def generate_schedule_cpsat(
         model, x, staff_list, shifts, quarter_start, quarter_end,
         trailing_work_dates=trailing_work_dates or None,
         pre_assigned_dates_by_staff=pre_assigned_dates_by_staff,
+        gap_days=config.block_gap_days,
+        holiday_gap_days=config.holiday_gap_days,
     )
 
     # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
@@ -633,7 +661,8 @@ def generate_schedule_cpsat(
     if random_seed is not None:
         solver.parameters.random_seed = random_seed
 
-    status = solver.Solve(model)
+    progress = _SchedulingProgressCallback()
+    status = solver.Solve(model, progress)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         # Extract solution
@@ -651,12 +680,18 @@ def generate_schedule_cpsat(
             schedules=[schedule],
             penalties=[penalty],
             unsatisfiable_constraints=[],
+            convergence_log=progress.solutions,
         )
     else:
         # Infeasible or timeout
         status_name = solver.StatusName(status)
         unsatisfiable = _diagnose_infeasibility(
-            model, staff_list, shifts, min_participation_info
+            model, staff_list, shifts, min_participation_info,
+            vacations=vacations,
+            pre_assigned=pre_assigned,
+            quarter_start=quarter_start,
+            quarter_end=quarter_end,
+            config=config,
         )
         unsatisfiable.insert(
             0,
@@ -719,6 +754,8 @@ def _add_block_constraints(
     quarter_end: date,
     trailing_work_dates: dict[str, set[date]] | None = None,
     pre_assigned_dates_by_staff: dict[str, set[date]] | None = None,
+    gap_days: int = 21,
+    holiday_gap_days: int = 7,
 ) -> list[tuple[cp_model.IntVar, int]]:
     """Add block gap constraints.
 
@@ -737,8 +774,8 @@ def _add_block_constraints(
     from the previous quarter (last 21 days) so the gap is enforced across
     the quarter boundary.
     """
-    DEFAULT_GAP = 21
-    HOLIDAY_GAP = 7
+    DEFAULT_GAP = gap_days
+    HOLIDAY_GAP = holiday_gap_days
 
     if pre_assigned_dates_by_staff is None:
         pre_assigned_dates_by_staff = {}
@@ -1489,59 +1526,63 @@ def _diagnose_infeasibility(
     staff_list: list[Staff],
     shifts: list[Shift],
     participation_info: dict[str, dict[str, bool]] | None = None,
+    vacations: list[Vacation] | None = None,
+    pre_assigned: list[PreAssignedShift] | None = None,
+    quarter_start: date | None = None,
+    quarter_end: date | None = None,
+    config: SchedulerConfig | None = None,
 ) -> list[str]:
-    """Attempt to diagnose why the model is infeasible."""
-    issues = []
+    """Attempt to diagnose why the model is infeasible.
 
-    # Check basic capacity
-    weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
-    night_shifts = [s for s in shifts if s.is_night_shift()]
+    When vacation, pre_assigned, quarter_start and config are provided the
+    analysis uses actual availability data (via analyze_capacity) for
+    per-staff block feasibility instead of only inspecting nd_exceptions.
+    """
+    issues: list[str] = []
 
-    # Weekend capacity check
-    saturday_shifts = [s for s in weekend_shifts if s.shift_type.value.startswith("Sa_")]
-    sunday_shifts = [s for s in weekend_shifts if s.shift_type.value.startswith("So_")]
+    # --- Capacity analysis with real availability data ---
+    if vacations is not None and quarter_start is not None and config is not None:
+        report = analyze_capacity(
+            staff_list,
+            vacations,
+            pre_assigned or [],
+            quarter_start,
+            config,
+        )
+        for check in report.checks:
+            if check.status in ("error", "warning"):
+                issues.append(check.message)
+                for detail in check.details:
+                    issues.append(f"  → {detail}")
 
-    # Saturday 10-19: Any Azubi can work this shift
-    sa_1019_eligible = [s for s in staff_list if s.beruf == Beruf.AZUBI]
-    if len(sa_1019_eligible) * 13 < len([s for s in saturday_shifts if s.shift_type == ShiftType.SATURDAY_10_19]):
-        issues.append(f"Insufficient Azubis for Sa_10-19 shifts. Have {len(sa_1019_eligible)}, need coverage for 13 weeks.")
-
-    # Sunday: adults only
-    adult_azubis = [s for s in staff_list if s.beruf == Beruf.AZUBI and s.adult]
-    if len(adult_azubis) == 0:
-        issues.append("No adult Azubis available for Sunday So_8-20:30 shifts.")
-
-    # Night capacity - need non-Azubis for all nights
-    non_azubi_nd_eligible = [s for s in staff_list if s.nd_possible and s.beruf != Beruf.AZUBI]
-    if len(non_azubi_nd_eligible) < 1:
-        issues.append("Insufficient non-Azubi night-capable staff. Need at least 1 TFA or Intern per night.")
-    
-    # Check for min consecutive nights constraint feasibility
+    # --- min_consecutive vs nd_exceptions (static check, no vacation data needed) ---
     for staff in staff_list:
         if not staff.nd_possible:
             continue
-        min_consec = staff.nd_min_consecutive
-        available_nights = 7 - len(staff.nd_exceptions)
-        if available_nights < min_consec and available_nights > 0:
+        available_night_types = 7 - len(staff.nd_exceptions)
+        if 0 < available_night_types < staff.nd_min_consecutive:
             issues.append(
-                f"{staff.name} ({staff.beruf.value}) has only {available_nights} available night types "
-                f"but requires {min_consec} consecutive nights. Consider reducing nd_min_consecutive."
+                f"{staff.name} ({staff.beruf.value}): nur {available_night_types} verfügbare "
+                f"Nacht-Wochentage, aber nd_min_consecutive={staff.nd_min_consecutive} — "
+                f"nd_min_consecutive reduzieren oder nd_exceptions anpassen."
             )
-    
-    # Check participation constraints vs vacation/availability
+
+    # --- Participation constraints vs limited availability ---
     if participation_info:
         for staff in staff_list:
             info = participation_info.get(staff.identifier, {})
             if info.get("night_required"):
-                available_nights = 7 - len(staff.nd_exceptions)
-                if available_nights <= 2:
+                available_night_types = 7 - len(staff.nd_exceptions)
+                if available_night_types <= 2:
                     issues.append(
-                        f"{staff.name} requires 1+ night shifts but has limited availability "
-                        f"({available_nights} night types). May conflict with vacation or "
-                        f"min-consecutive constraints."
+                        f"{staff.name}: Nacht-Pflicht aktiv, aber nur "
+                        f"{available_night_types} verfügbare Nacht-Wochentage."
                     )
 
     if not issues:
-        issues.append("Model infeasible. Check constraint interactions, vacation conflicts, or increase solve time.")
+        issues.append(
+            "Modell nicht lösbar. Constraint-Interaktionen, Urlaub-Konflikte "
+            "prüfen oder Solver-Zeitlimit erhöhen."
+        )
 
     return issues

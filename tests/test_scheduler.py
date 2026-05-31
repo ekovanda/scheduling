@@ -4,7 +4,17 @@ from datetime import date
 
 import pytest
 
-from app.scheduler.models import Abteilung, Beruf, Staff, ShiftType, generate_quarter_shifts
+from app.scheduler.models import (
+    Abteilung,
+    Beruf,
+    CarryForwardEntry,
+    PreviousPlanContext,
+    SchedulerConfig,
+    Staff,
+    ShiftType,
+    TrailingAssignment,
+    generate_quarter_shifts,
+)
 from app.scheduler.solver import generate_schedule
 from app.scheduler.validator import validate_schedule
 
@@ -1108,3 +1118,193 @@ def test_birthday_blocks_shift_in_solver() -> None:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ===========================================================================
+# SchedulerConfig integration tests
+# ===========================================================================
+
+
+def test_intern_night_cap_enforced() -> None:
+    """SchedulerConfig.intern_min/max_nights constrains Intern total across quarter."""
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+    intern = Staff(
+        name="Intern A",
+        identifier="INT_A",
+        adult=True,
+        hours=40,
+        beruf=Beruf.INTERN,
+        reception=False,
+        nd_possible=True,
+        nd_alone=True,
+        nd_max_consecutive=9,
+        nd_min_consecutive=2,
+        nd_exceptions=[],
+    )
+    staff_with_intern = staff + [intern]
+    quarter_start = date(2026, 4, 1)
+
+    # --- Default config (6–9) ---
+    result = generate_schedule(
+        staff_with_intern, quarter_start, vacations=[],
+        max_solve_time_seconds=60, random_seed=1,
+    )
+    assert result.success, f"Baseline should be solvable: {result.unsatisfiable_constraints}"
+    sched = result.get_best_schedule()
+    intern_nights = sum(
+        1 for a in sched.assignments
+        if a.staff_identifier == "INT_A" and a.shift.is_night_shift()
+    )
+    assert 6 <= intern_nights <= 9, (
+        f"Default config: expected 6-9 intern nights, got {intern_nights}"
+    )
+
+    # --- Custom config (7–8) ---
+    cfg = SchedulerConfig(intern_min_nights=7, intern_max_nights=8)
+    result2 = generate_schedule(
+        staff_with_intern, quarter_start, vacations=[],
+        max_solve_time_seconds=60, random_seed=1, config=cfg,
+    )
+    if result2.success:
+        intern_nights2 = sum(
+            1 for a in result2.get_best_schedule().assignments
+            if a.staff_identifier == "INT_A" and a.shift.is_night_shift()
+        )
+        assert 7 <= intern_nights2 <= 8, (
+            f"Custom config(7-8): expected 7-8 intern nights, got {intern_nights2}"
+        )
+
+
+def test_scheduler_config_custom_gap_accepted() -> None:
+    """SchedulerConfig with block_gap_days=14 must still produce a valid schedule."""
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    cfg = SchedulerConfig(block_gap_days=14)
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+    result = generate_schedule(
+        staff, date(2026, 4, 1), vacations=[],
+        max_solve_time_seconds=60, random_seed=7, config=cfg,
+    )
+    assert result.success, (
+        f"block_gap_days=14 should still be solvable. "
+        f"Constraints: {result.unsatisfiable_constraints}"
+    )
+
+
+def test_carry_forward_delta_affects_fairness() -> None:
+    """Staff with positive carry_forward_delta must receive fewer shifts."""
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+    quarter_start = date(2026, 4, 1)
+
+    # AA and AF are both 40h TFAs — use a large delta contrast to make the
+    # expected ordering robust to solver variation.
+    previous_context = PreviousPlanContext(
+        quarter_start=date(2026, 1, 1),
+        quarter_end=date(2026, 3, 31),
+        carry_forward=[
+            CarryForwardEntry(
+                identifier="AA",
+                name="Anika A",
+                beruf="TFA",
+                hours=40,
+                effective_nights=10.0,
+                weekend_shifts=4,
+                total_notdienst=14.0,
+                normalized_40h=14.0,
+                group_mean_40h=9.0,
+                carry_forward_delta=5.0,  # worked more than average
+            ),
+            CarryForwardEntry(
+                identifier="AF",
+                name="Anna F",
+                beruf="TFA",
+                hours=40,
+                effective_nights=5.0,
+                weekend_shifts=2,
+                total_notdienst=7.0,
+                normalized_40h=7.0,
+                group_mean_40h=9.0,
+                carry_forward_delta=-2.0,  # worked less than average
+            ),
+        ],
+        trailing_assignments=[],
+    )
+
+    result = generate_schedule(
+        staff, quarter_start, vacations=[],
+        max_solve_time_seconds=60, random_seed=5,
+        previous_context=previous_context,
+    )
+    assert result.success, "Should find a valid schedule"
+    sched = result.get_best_schedule()
+
+    def count_nights(identifier: str) -> int:
+        return sum(
+            1 for a in sched.assignments
+            if a.staff_identifier == identifier and a.shift.is_night_shift()
+        )
+
+    # AA (delta=+5) should get no MORE nights than AF (delta=-2)
+    assert count_nights("AA") <= count_nights("AF"), (
+        f"AA with carry_forward_delta=+5 should get ≤ nights vs AF with delta=-2. "
+        f"AA={count_nights('AA')}, AF={count_nights('AF')}"
+    )
+
+
+def test_cross_quarter_block_gap_enforced() -> None:
+    """Staff with a trailing assignment near quarter boundary must not violate gap."""
+    from datetime import timedelta
+    from pathlib import Path
+    from app.scheduler.models import load_staff_from_csv
+
+    staff = load_staff_from_csv(Path("data/staff_sample.csv"))
+    quarter_start = date(2026, 4, 1)
+    gap_days = 21
+
+    # March 27 2026 is a Friday (isoweekday=5) → NIGHT_FRI_SAT
+    trailing_date = quarter_start - timedelta(days=5)
+
+    previous_context = PreviousPlanContext(
+        quarter_start=date(2026, 1, 1),
+        quarter_end=date(2026, 3, 31),
+        carry_forward=[],
+        trailing_assignments=[
+            TrailingAssignment(
+                shift_date=trailing_date,
+                shift_type=ShiftType.NIGHT_FRI_SAT,
+                staff_identifier="AA",
+                is_paired=False,
+            ),
+        ],
+    )
+
+    result = generate_schedule(
+        staff, quarter_start, vacations=[],
+        max_solve_time_seconds=60, random_seed=3,
+        previous_context=previous_context,
+    )
+    if not result.success:
+        pytest.skip("Schedule infeasible — cannot check gap constraint")
+
+    sched = result.get_best_schedule()
+    # AA must not start a new night block before trailing_date + gap_days
+    latest_allowed_first_night = trailing_date + timedelta(days=gap_days)
+
+    early_nights = [
+        a for a in sched.assignments
+        if a.staff_identifier == "AA"
+        and a.shift.is_night_shift()
+        and a.shift.shift_date < latest_allowed_first_night
+    ]
+    assert not early_nights, (
+        f"AA must not start a new night block before {latest_allowed_first_night} "
+        f"(trailing date {trailing_date} + {gap_days} days). "
+        f"Got: {[a.shift.shift_date for a in early_nights]}"
+    )

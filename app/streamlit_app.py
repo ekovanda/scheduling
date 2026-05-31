@@ -12,6 +12,7 @@ from scheduler.models import (
     Beruf,
     PreAssignedShift,
     PreviousPlanContext,
+    SchedulerConfig,
     ShiftType,
     Staff,
     Vacation,
@@ -23,6 +24,7 @@ from scheduler.models import (
     load_vacations_from_file,
     validate_pre_assigned,
 )
+from scheduler.feasibility import analyze_capacity
 from scheduler.solver import generate_schedule
 from scheduler.validator import validate_schedule
 
@@ -864,20 +866,76 @@ def page_plan_erstellen() -> None:
     )
     max_solve_time_seconds = 60 if solve_mode == "Schnell (~1 Min.)" else 600
 
+    with st.expander("⚙️ Erweiterte Einstellungen", expanded=False):
+        col_cfg1, col_cfg2 = st.columns(2)
+        with col_cfg1:
+            intern_min_nights = st.number_input(
+                "Intern Min. Nächte", min_value=1, max_value=20, value=6, step=1,
+                help="Mindestnächte pro Intern-Mitarbeiter pro Quartal.",
+            )
+            intern_max_nights = st.number_input(
+                "Intern Max. Nächte", min_value=1, max_value=20, value=9, step=1,
+                help="Maximalnächte pro Intern-Mitarbeiter pro Quartal.",
+            )
+            block_gap_days = st.number_input(
+                "Block-Abstand (Tage)", min_value=7, max_value=42, value=21, step=1,
+                help="Mindestabstand zwischen zwei Nacht-Blocks desselben Mitarbeiters.",
+            )
+        with col_cfg2:
+            holiday_gap_days = st.number_input(
+                "Feiertag-Abstand (Tage)", min_value=1, max_value=21, value=7, step=1,
+                help="Verkürzter Mindestabstand nach einem Feiertagsdienst.",
+            )
+            random_seed_val = st.number_input(
+                "Zufallssamen (Seed)", min_value=0, max_value=9999, value=42, step=1,
+                help="Gleicher Seed ergibt bei gleichen Daten denselben Plan.",
+            )
+        scheduler_config = SchedulerConfig(
+            intern_min_nights=int(intern_min_nights),
+            intern_max_nights=int(intern_max_nights),
+            block_gap_days=int(block_gap_days),
+            holiday_gap_days=int(holiday_gap_days),
+        )
+        st.session_state["scheduler_config"] = scheduler_config
+
+    # Pre-solve capacity analysis
+    st.markdown("---")
+    st.markdown("### Kapazitätsanalyse")
+    with st.spinner("Analysiere Kapazität..."):
+        _cap_report = analyze_capacity(
+            st.session_state.staff_list,
+            vacations,
+            pre_assigned,
+            quarter_start,
+            scheduler_config,
+        )
+    for _chk in _cap_report.checks:
+        if _chk.status == "ok":
+            st.success(f"✅ **{_chk.name}**: {_chk.message}")
+        elif _chk.status == "warning":
+            st.warning(f"⚠️ **{_chk.name}**: {_chk.message}")
+            for _d in _chk.details:
+                st.caption(f"  ↳ {_d}")
+        else:
+            st.error(f"❌ **{_chk.name}**: {_chk.message}")
+            for _d in _chk.details:
+                st.caption(f"  ↳ {_d}")
     # Generate button
     st.markdown("---")
     if st.button("🚀 Plan generieren", type="primary"):
         with st.spinner(f"⏳ Generiere Dienstplan mit CP-SAT (max. {max_solve_time_seconds}s)..."):
             try:
                 staff_list: list[Staff] = st.session_state.staff_list
+                _cfg = st.session_state.get("scheduler_config") or SchedulerConfig()
                 result = generate_schedule(
                     staff_list,
                     quarter_start,
                     vacations=vacations,
                     max_solve_time_seconds=max_solve_time_seconds,
-                    random_seed=42,
+                    random_seed=int(random_seed_val),
                     previous_context=previous_context,
                     pre_assigned=pre_assigned,
+                    config=_cfg,
                 )
 
                 if result.success:
@@ -892,11 +950,30 @@ def page_plan_erstellen() -> None:
                         f"✅ Dienstplan erfolgreich erstellt! ({len(best_schedule.assignments)} Zuweisungen)"
                     )
 
+                    # Convergence log
+                    with st.expander("📈 Solver-Verlauf", expanded=False):
+                        if result.convergence_log:
+                            st.dataframe(
+                                pd.DataFrame(result.convergence_log).rename(columns={
+                                    "wall_time": "Zeit (s)",
+                                    "objective": "Zielwert",
+                                    "bound": "Untere Schranke",
+                                }),
+                                use_container_width=True,
+                            )
+                        else:
+                            st.info("Lösung auf Anhieb optimal — kein iterativer Verlauf verfügbar.")
+
                 else:
                     st.error("❌ Keine gültige Lösung gefunden!")
                     st.markdown("### Verletzungen der Hard Constraints:")
                     for constraint in result.unsatisfiable_constraints:
-                        st.text(f"• {constraint}")
+                        if constraint.startswith("  →"):
+                            st.caption(constraint)
+                        elif "warning" in constraint.lower() or "eng" in constraint.lower():
+                            st.warning(f"⚠️ {constraint}")
+                        else:
+                            st.error(f"❌ {constraint}")
 
             except Exception as e:
                 st.error(f"❌ Fehler beim Generieren: {e}")
