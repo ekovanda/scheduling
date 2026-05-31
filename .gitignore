@@ -48,6 +48,7 @@ Thumbs.db
 
 # Project specific
 temp_staff.csv
+temp/*.csv
 *.log
 
 data/

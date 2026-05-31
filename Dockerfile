@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir streamlit pandas pydantic python-dateutil xlsxwriter
+RUN pip install --no-cache-dir streamlit pandas openpyxl pydantic python-dateutil xlsxwriter ortools
 
 # Copy application
 COPY app/ ./app/

@@ -46,7 +46,7 @@ Scheduling must balance:
 5. **Non-Azubis (TFA/Intern)**: Must work at least 2 consecutive nights
 6. **nd_alone=False**: Must be paired on regular nights
 7. **nd_alone=True**: Must work **completely alone** on regular nights (no pairing allowed)
-8. **Block limit**: Max 1 consecutive shift block per 14-day rolling window
+8. **Block limit**: Max 1 consecutive shift block per 21-day rolling window (blocks must start ≥21 days apart)
 9. **Night/Day conflict**: No day shift on same or next day after night shift
 10. **nd_max_consecutive**: Max consecutive nights per staff member (soft preference)
 11. **nd_exceptions**: Respect weekday exclusions per staff member
@@ -72,7 +72,7 @@ Staff:
     adult: bool            # True if ≥18 years
     hours: int             # Weekly contracted hours (18-40)
     beruf: Beruf           # TFA, Azubi, or Intern
-    abteilung: Abteilung   # station, op, or other (NEW)
+    abteilung: Abteilung   # station, op, or other
     reception: bool        # Can work reception/Anmeldung
     nd_possible: bool      # Can do night shifts at all
     nd_alone: bool         # Must work alone on regular nights
@@ -117,7 +117,7 @@ Staff:
 
 ## Dependencies
 
-**Runtime**: `streamlit`, `pandas`, `pydantic`, `python-dateutil`, `xlsxwriter`, `ortools`
+**Runtime**: `streamlit`, `pandas`, `openpyxl`, `pydantic`, `python-dateutil`, `xlsxwriter`, `ortools`
 
 **Development**: `pytest`, `ruff`, `pylint`, `mypy`
 
