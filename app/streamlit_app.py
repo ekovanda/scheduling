@@ -830,9 +830,17 @@ def page_plan_erstellen() -> None:
     st.markdown("### Quartal auswählen")
     col1, col2 = st.columns(2)
     with col1:
-        quarter = st.selectbox("Quartal", ["Q1", "Q2", "Q3", "Q4"], index=1)
+        quarter: str | None = st.selectbox(
+            "Quartal", ["Q1", "Q2", "Q3", "Q4"], index=None, placeholder="Quartal wählen..."
+        )
     with col2:
-        year = st.number_input("Jahr", min_value=2024, max_value=2030, value=2026)
+        year: int | None = st.selectbox(
+            "Jahr", list(range(2026, 2031)), index=None, placeholder="Jahr wählen..."
+        )
+
+    if quarter is None or year is None:
+        st.warning("⚠️ Bitte Quartal und Jahr auswählen, um fortzufahren.")
+        return
 
     # Calculate quarter start
     quarter_starts = {
@@ -887,7 +895,7 @@ def page_plan_erstellen() -> None:
                 help="Verkürzter Mindestabstand nach einem Feiertagsdienst.",
             )
             random_seed_val = st.number_input(
-                "Zufallssamen (Seed)", min_value=0, max_value=9999, value=42, step=1,
+                "Seed", min_value=0, max_value=9999, value=42, step=1,
                 help="Gleicher Seed ergibt bei gleichen Daten denselben Plan.",
             )
         scheduler_config = SchedulerConfig(
@@ -953,14 +961,31 @@ def page_plan_erstellen() -> None:
                     # Convergence log
                     with st.expander("📈 Solver-Verlauf", expanded=False):
                         if result.convergence_log:
-                            st.dataframe(
-                                pd.DataFrame(result.convergence_log).rename(columns={
-                                    "wall_time": "Zeit (s)",
-                                    "objective": "Zielwert",
-                                    "bound": "Untere Schranke",
-                                }),
-                                use_container_width=True,
-                            )
+                            import matplotlib.pyplot as plt
+
+                            log_df = pd.DataFrame(result.convergence_log)
+                            # Drop the initial chaotic phase — only show solutions found after 5s
+                            log_df = log_df[log_df["wall_time"] >= 5.0]
+
+                            if log_df.empty:
+                                st.info("Alle Lösungen wurden in den ersten 5 Sekunden gefunden.")
+                            else:
+                                times = log_df["wall_time"].tolist()
+                                objectives = log_df["objective"].tolist()
+                                max_time = max(times)
+
+                                fig, ax = plt.subplots(figsize=(8, 4))
+                                ax.plot(times, objectives, marker="o", linewidth=2,
+                                        color="#5c6bc0", markersize=5)
+                                ax.set_xlabel("Zeit (s)")
+                                ax.set_ylabel("Lösungsqualität\n(niedrigere Werte = besser)")
+                                ax.set_xticks(range(0, int(max_time) + 10, 10))
+                                ax.yaxis.set_ticklabels([])
+                                ax.grid(True, linestyle="--", alpha=0.5)
+                                plt.tight_layout()
+                                st.pyplot(fig)
+                                plt.close(fig)
+                            st.caption("Jeder Punkt zeigt eine verbesserte Lösung. Niedrigere Werte sind besser.")
                         else:
                             st.info("Lösung auf Anhieb optimal — kein iterativer Verlauf verfügbar.")
 

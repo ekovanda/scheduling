@@ -63,7 +63,7 @@ class _SchedulingProgressCallback(cp_model.CpSolverSolutionCallback):
         super().__init__()
         self.solutions: list[dict[str, float]] = []
 
-    def OnSolutionCallback(self) -> None:
+    def on_solution_callback(self) -> None:
         self.solutions.append({
             "wall_time": round(self.wall_time, 2),
             "objective": float(self.objective_value),

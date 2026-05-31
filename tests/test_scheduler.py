@@ -443,7 +443,7 @@ def test_cpsat_fairness_within_tolerance() -> None:
     result = generate_schedule(
         staff,
         date(2026, 4, 1),
-        max_solve_time_seconds=120,
+        max_solve_time_seconds=60,
         random_seed=42,
     )
 
