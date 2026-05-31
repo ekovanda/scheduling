@@ -527,8 +527,8 @@ def parse_previous_plan_xlsx(
     concatenated before parsing, so either format works transparently.
 
     Each sheet (or the single sheet) uses the long format:
-        Datum        | Wochentag | Schicht | Mitarbeiter | Paarweise
-        01.04.2026   | Mi        | N_Mi-Do | SG          | Ja
+        Wochentag | Datum        | Mitarbeiter | Schicht | Paarweise
+        Mi        | 01.04.2026   | SG          | N_Mi-Do | Ja
 
     ``Wochentag`` is optional and ignored (derived from date).
     ``Paarweise``: "Ja" (case-insensitive) → is_paired=True, all else → False.

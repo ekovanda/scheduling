@@ -226,7 +226,7 @@ def page_daten_hochladen() -> None:
         "Arbeitseinsätze des vorherigen Quartals (xlsx)",
         type=["xlsx"],
         key="context_upload",
-        help="Exportierte xlsx des Vorquartals. Spalten: Datum, Wochentag, Schicht, Mitarbeiter, Paarweise.",
+        help="Exportierte xlsx des Vorquartals. Spalten: Wochentag, Datum, Mitarbeiter, Schicht, Paarweise.",
     )
     if context_file is not None:
         if st.session_state.staff_list is None:
@@ -1785,12 +1785,12 @@ def page_export() -> None:
     for assignment in sorted(schedule.assignments, key=lambda a: a.shift.shift_date):
         assignment_data.append(
             {
-                "Datum": assignment.shift.shift_date.strftime("%d.%m.%Y"),
                 "Wochentag": ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][
                     assignment.shift.shift_date.weekday()
                 ],
-                "Schicht": assignment.shift.shift_type.value,
+                "Datum": assignment.shift.shift_date.strftime("%d.%m.%Y"),
                 "Mitarbeiter": assignment.staff_identifier,
+                "Schicht": assignment.shift.shift_type.value,
                 "Paarweise": "Ja" if assignment.is_paired else "Nein",
             }
         )
