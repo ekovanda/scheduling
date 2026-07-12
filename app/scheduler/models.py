@@ -314,14 +314,22 @@ def generate_quarter_shifts(
         weekday = current_date.weekday()  # 0=Mon, 5=Sat, 6=Sun
         is_holiday = current_date in holiday_dates
 
+        # Public holiday: Sunday-pattern shifts take priority regardless of
+        # the actual weekday (holidays can fall on a Saturday too, e.g. the
+        # Tag der Deutschen Einheit or 2. Weihnachtsfeiertag).
+        if is_holiday:
+            shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_20, shift_date=current_date))
+            shifts.append(Shift(shift_type=ShiftType.SUNDAY_10_22, shift_date=current_date))
+            shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_2030, shift_date=current_date))
+
         # Saturday shifts
-        if weekday == 5:
+        elif weekday == 5:
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_10_21, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_10_22, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_10_19, shift_date=current_date))
 
-        # Sunday shifts (or holiday with Sunday pattern)
-        elif weekday == 6 or is_holiday:
+        # Sunday shifts
+        elif weekday == 6:
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_20, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_10_22, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_2030, shift_date=current_date))
@@ -493,11 +501,18 @@ def validate_pre_assigned(
 def get_pre_assigned_holiday_dates(
     pre_assigned: list[PreAssignedShift],
 ) -> set[date]:
-    """Extract unique holiday dates from pre-assigned shifts (weekdays only)."""
+    """Extract unique holiday dates from pre-assigned shifts.
+
+    A date is treated as a holiday whenever it carries a Sunday-pattern
+    (``So_``) shift type but is not already a natural Sunday (weekday 6).
+    This covers holidays falling on any weekday, including Saturdays
+    (e.g. Tag der Deutschen Einheit, 2. Weihnachtsfeiertag), so the
+    Sunday-pattern shift slots get generated and pre-assigned shifts can
+    be pinned as hard constraints.
+    """
     holidays: set[date] = set()
     for pa in pre_assigned:
-        # Only add as holiday if it's a weekday (Mon-Fri) with weekend-pattern shifts
-        if pa.shift_date.weekday() < 5 and pa.shift_type.value.startswith("So_"):
+        if pa.shift_date.weekday() != 6 and pa.shift_type.value.startswith("So_"):
             holidays.add(pa.shift_date)
     return holidays
 
