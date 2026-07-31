@@ -47,6 +47,7 @@ htmlcov/
 Thumbs.db
 
 # Project specific
+documentation/CODE_REVIEW_FINDINGS.md
 temp_staff.csv
 temp/*.csv
 *.log
