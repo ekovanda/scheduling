@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 import hashlib
 import os
+from release_info import APP_NAME, CURRENT_VERSION, RELEASES
 from scheduler.models import (
     Beruf,
     PreAssignedShift,
@@ -30,6 +31,37 @@ from scheduler.validator import validate_schedule
 
 # Page config
 st.set_page_config(page_title="Dienstplan Generator", page_icon="📅", layout="wide")
+
+
+def page_about() -> None:
+    """Show application information and the business-facing release history."""
+    current_release = RELEASES[0]
+
+    st.title(f"ℹ️ Über {APP_NAME}")
+    st.write("Erstellt faire Quartalspläne für Nacht- und Wochenenddienste.")
+
+    col_version, col_release_date = st.columns(2)
+    with col_version:
+        st.metric("Aktuelle Version", CURRENT_VERSION)
+    with col_release_date:
+        st.metric("Stand", current_release.date)
+
+    st.markdown("---")
+    st.markdown(f"## Neu in Version {current_release.version}")
+    st.markdown(f"### {current_release.summary}")
+    for highlight in current_release.highlights:
+        st.markdown(f"- {highlight}")
+
+    st.markdown("---")
+    st.markdown("## Versionsverlauf")
+    st.caption("Die neuesten Änderungen stehen oben. Öffnen Sie einen Eintrag für Details.")
+    for release in RELEASES:
+        with st.expander(
+            f"Version {release.version} · {release.date} · {release.summary}",
+            expanded=False,
+        ):
+            for highlight in release.highlights:
+                st.markdown(f"- {highlight}")
 
 
 def main() -> None:
@@ -90,6 +122,7 @@ def main() -> None:
         "Plan erstellen",
         "Plan anzeigen",
         "Export",
+        "Über diese App",
     ]
     if "nav_target" in st.session_state:
         target = st.session_state.pop("nav_target")
@@ -131,6 +164,8 @@ def main() -> None:
         page_plan_anzeigen()
     elif page == "Export":
         page_export()
+    elif page == "Über diese App":
+        page_about()
 
 
 def page_daten_hochladen() -> None:
