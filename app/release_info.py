@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.1.0"
+CURRENT_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.2.0",
+        date="31. Juli 2026",
+        summary="Hinweise auf Ausnahmen an Quartalsgrenzen",
+        highlights=(
+            "Ausnahmen beim Dienstblock-Abstand zum Vorquartal sind im Kalender sofort mit einem Warnsymbol erkennbar.",
+            "Eine Detailansicht zeigt betroffene Mitarbeitende sowie den tatsächlichen und erforderlichen Abstand.",
+            "Der Excel-Export bleibt unverändert und enthält keine zusätzlichen Hinweiskennzeichen.",
+        ),
+    ),
     Release(
         version="1.1.0",
         date="31. Juli 2026",

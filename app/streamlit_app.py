@@ -27,7 +27,7 @@ from scheduler.models import (
 )
 from scheduler.feasibility import analyze_capacity
 from scheduler.solver import generate_schedule
-from scheduler.validator import validate_schedule
+from scheduler.validator import find_cross_quarter_block_gap_exceptions, validate_schedule
 
 # Page config
 st.set_page_config(page_title="Dienstplan Generator", page_icon="📅", layout="wide")
@@ -1084,6 +1084,15 @@ def page_plan_anzeigen() -> None:
     schedule = st.session_state.schedule
     staff_list: list[Staff] = st.session_state.staff_list
     validation_result = st.session_state.validation_result
+    boundary_exceptions = find_cross_quarter_block_gap_exceptions(
+        schedule,
+        st.session_state.previous_context,
+        st.session_state.get("scheduler_config") or SchedulerConfig(),
+    )
+    boundary_exception_dates = {
+        (exception.staff_identifier, exception.current_block_start)
+        for exception in boundary_exceptions
+    }
 
     # Tabs for different views
     tab_calendar, tab_stats, tab_validation = st.tabs(
@@ -1130,6 +1139,7 @@ def page_plan_anzeigen() -> None:
         shift_map: dict[tuple, list[str]] = {}
         # Track which (Date, ShiftType) has at least one pre-assigned entry
         pre_assigned_cells: set[tuple] = set()
+        boundary_exception_cells: set[tuple] = set()
         unique_dates = sorted({a.shift.shift_date for a in schedule.assignments})
 
         for assignment in schedule.assignments:
@@ -1144,34 +1154,43 @@ def page_plan_anzeigen() -> None:
             shift_map[key].append(display_value)
             if assignment.is_pre_assigned:
                 pre_assigned_cells.add(key)
+            if (assignment.staff_identifier, assignment.shift.shift_date) in boundary_exception_dates:
+                boundary_exception_cells.add(key)
 
         # Build rows: Date | 🌙 Nacht | 6× ☀️ Weekend
         all_cols = [NIGHT_COL] + [label for _, label in WE_COLS]
         calendar_rows = []
         # Track pre-assigned per row for cell-level styling
         pre_assigned_flags: list[dict[str, bool]] = []
+        boundary_exception_flags: list[dict[str, bool]] = []
         for d in unique_dates:
             weekday_str = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d.weekday()]
             row: dict[str, str] = {"Datum": f"{d.strftime('%d.%m.')} {weekday_str}"}
             flags: dict[str, bool] = {}
+            exception_flags: dict[str, bool] = {}
 
             # Single night column: find the night shift for this date
             for ns in NIGHT_SHIFTS:
                 staff_ids = shift_map.get((d, ns), [])
                 if staff_ids:
-                    row[NIGHT_COL] = " + ".join(staff_ids)
+                    warning_icon = " ⚠️" if (d, ns) in boundary_exception_cells else ""
+                    row[NIGHT_COL] = " + ".join(staff_ids) + warning_icon
                     flags[NIGHT_COL] = (d, ns) in pre_assigned_cells
+                    exception_flags[NIGHT_COL] = (d, ns) in boundary_exception_cells
                     break
 
             # Weekend columns
             for s_type, col_label in WE_COLS:
                 staff_ids = shift_map.get((d, s_type), [])
                 if staff_ids:
-                    row[col_label] = " + ".join(staff_ids)
+                    warning_icon = " ⚠️" if (d, s_type) in boundary_exception_cells else ""
+                    row[col_label] = " + ".join(staff_ids) + warning_icon
                     flags[col_label] = (d, s_type) in pre_assigned_cells
+                    exception_flags[col_label] = (d, s_type) in boundary_exception_cells
 
             calendar_rows.append(row)
             pre_assigned_flags.append(flags)
+            boundary_exception_flags.append(exception_flags)
 
         if calendar_rows:
             df_calendar = pd.DataFrame(calendar_rows).set_index("Datum")
@@ -1186,6 +1205,10 @@ def page_plan_anzeigen() -> None:
             for flags in pre_assigned_flags:
                 pa_flag_rows.append({col: flags.get(col, False) for col in all_cols})
             df_pa_flags = pd.DataFrame(pa_flag_rows, index=df_calendar.index)
+            exception_flag_rows = []
+            for flags in boundary_exception_flags:
+                exception_flag_rows.append({col: flags.get(col, False) for col in all_cols})
+            df_exception_flags = pd.DataFrame(exception_flag_rows, index=df_calendar.index)
 
             # Style: different backgrounds for night/weekend + highlight pre-assigned
             we_col_names = [label for _, label in WE_COLS]
@@ -1195,7 +1218,14 @@ def page_plan_anzeigen() -> None:
                 for row_idx in df.index:
                     for col in df.columns:
                         is_pa = df_pa_flags.at[row_idx, col] if col in df_pa_flags.columns else False
-                        if is_pa:
+                        is_boundary_exception = (
+                            df_exception_flags.at[row_idx, col]
+                            if col in df_exception_flags.columns
+                            else False
+                        )
+                        if is_boundary_exception:
+                            styles.at[row_idx, col] = "background-color: #ffcc80; font-weight: bold"
+                        elif is_pa:
                             # Pre-assigned: distinct teal background
                             styles.at[row_idx, col] = "background-color: #b2dfdb"
                         elif col == NIGHT_COL:
@@ -1230,7 +1260,26 @@ def page_plan_anzeigen() -> None:
             ]
             if has_pre_assigned:
                 legend_parts.append("🟢 Türkis = Vorgegeben (Feiertag)")
+            if boundary_exceptions:
+                legend_parts.append("⚠️ Orange = Ausnahme beim Block-Abstand zum Vorquartal")
             st.caption(" · ".join(legend_parts))
+            if boundary_exceptions:
+                with st.expander("⚠️ Ausnahmen beim Block-Abstand zum Vorquartal"):
+                    st.warning(
+                        "Diese Dienste nutzen die solverseitige Ausnahme für den "
+                        "Block-Abstand über die Quartalsgrenze. Sie werden nicht exportiert."
+                    )
+                    for exception in boundary_exceptions:
+                        staff_name = id_to_name.get(
+                            exception.staff_identifier, exception.staff_identifier
+                        )
+                        st.write(
+                            f"- **{staff_name}**: neuer Block am "
+                            f"{exception.current_block_start.strftime('%d.%m.%Y')} nach Blockstart "
+                            f"am {exception.previous_block_start.strftime('%d.%m.%Y')} "
+                            f"({exception.actual_gap_days} statt mindestens "
+                            f"{exception.required_gap_days} Tage)."
+                        )
         else:
             st.info("Keine Einträge.")
 

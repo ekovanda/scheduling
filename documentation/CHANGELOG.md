@@ -9,6 +9,22 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.2.0] - 2026-07-31
+
+### Added: visual review of cross-quarter block-gap exceptions
+
+Current working-tree change set; intended release commit has not yet been created.
+
+- Added `CrossQuarterBlockGapException` and `find_cross_quarter_block_gap_exceptions()` in `app/scheduler/validator.py`.
+  - The display-only analysis reconstructs block starts from the generated schedule and imported trailing assignments, using the active `SchedulerConfig` gap values.
+  - It identifies only the solver's relaxed Q2→Q3 block-gap cases; a continuous block across the quarter boundary is not reported.
+- Updated `page_plan_anzeigen()` in `app/streamlit_app.py`:
+  - Affected calendar cells display `⚠️` with an orange highlight and a legend entry.
+  - An expander lists the employee, previous and current block start, and actual versus required gap for each exception.
+  - The export path is unchanged; indicator data is derived only while displaying the plan.
+- Added `TestCrossQuarterBlockGapDisplay` in `tests/test_carry_forward.py` for a detected relaxed gap and a non-flagged continuous boundary block.
+- Updated `tests/test_release_info.py`, `pyproject.toml`, `uv.lock`, and `app/release_info.py` for version `1.2.0`.
+
 ## [1.1.0] - 2026-07-31
 
 ### Added: dedicated About page and release metadata

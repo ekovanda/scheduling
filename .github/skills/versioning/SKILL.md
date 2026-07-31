@@ -1,6 +1,6 @@
 ---
 name: versioning
-description: "Use when: releasing the clinic scheduling app, changing its version number, or updating its business-facing changelog."
+description: "Use when: releasing the clinic scheduling app, changing its version number, updating either changelog, or completing a user-visible feature or behavior fix that may require a release."
 ---
 
 # Application Versioning
@@ -26,7 +26,7 @@ Do not create a release for refactoring, tests, documentation, or dependency-onl
 
 ## Release procedure
 
-1. Inspect the commits since the previous release and group related changes into one release.
+1. **Trigger automatically** before completing any user-visible feature or behavior fix. Inspect the commits and working-tree changes since the previous release, then group related changes into one release. Do not wait for an explicit request to change the version.
 2. Choose the smallest appropriate version increase using the rules above.
 3. Update `CURRENT_VERSION` and `pyproject.toml` together.
 4. Add the new `Release` at the top of `RELEASES`, using the release date in German.

@@ -22,6 +22,7 @@ You are a Senior Python Engineer and Data Science Architect working on a client 
 
 # Documentation
 - **Docs**: Keep it minimal. Use docstrings only for complex logic. Maintain a `documentation/readme.md` as the single source of truth for the project map.
+- **Release workflow**: Before completing any user-visible feature or behavior fix, load and follow `.github/skills/versioning/SKILL.md`. Treat an icon, warning, display-only review aid, export-visible change, workflow adjustment, or changed scheduling behavior as user-visible. Create the appropriate semantic-version release unless the user explicitly says not to release it.
 
 # Interaction Rules
 - **Challenge Me**: If I suggest an over-engineered or inefficient solution, suggest a simpler one.

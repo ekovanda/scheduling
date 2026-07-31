@@ -1,10 +1,20 @@
 """Constraint validation for schedules."""
 
 from collections import defaultdict
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any
 
-from .models import Abteilung, Assignment, Beruf, Schedule, ShiftType, Staff
+from .models import (
+    Abteilung,
+    Assignment,
+    Beruf,
+    PreviousPlanContext,
+    Schedule,
+    SchedulerConfig,
+    ShiftType,
+    Staff,
+)
 
 
 class ConstraintViolation:
@@ -34,6 +44,83 @@ class ValidationResult:
         if self.is_valid():
             return f"Valid schedule (Soft penalty: {self.soft_penalty:.2f})"
         return f"Invalid schedule ({len(self.hard_violations)} violations)"
+
+
+@dataclass(frozen=True)
+class CrossQuarterBlockGapException:
+    """A displayed schedule block that used the cross-quarter gap relaxation."""
+
+    staff_identifier: str
+    previous_block_start: date
+    current_block_start: date
+    required_gap_days: int
+    actual_gap_days: int
+
+
+def find_cross_quarter_block_gap_exceptions(
+    schedule: Schedule,
+    previous_context: PreviousPlanContext | None,
+    config: SchedulerConfig | None = None,
+) -> list[CrossQuarterBlockGapException]:
+    """Find boundary block gaps that the solver may relax with a penalty.
+
+    This is presentation-only analysis. It mirrors the solver's block-start
+    calculation without changing schedule validation or exported assignments.
+    """
+    if previous_context is None:
+        return []
+
+    config = config or SchedulerConfig()
+    trailing_dates_by_staff: dict[str, set[date]] = defaultdict(set)
+    for assignment in previous_context.trailing_assignments:
+        if 0 < (schedule.quarter_start - assignment.shift_date).days <= config.block_gap_days:
+            trailing_dates_by_staff[assignment.staff_identifier].add(assignment.shift_date)
+
+    current_dates_by_staff: dict[str, set[date]] = defaultdict(set)
+    pre_assigned_dates_by_staff: dict[str, set[date]] = defaultdict(set)
+    for assignment in schedule.assignments:
+        current_dates_by_staff[assignment.staff_identifier].add(assignment.shift.shift_date)
+        if assignment.is_pre_assigned:
+            pre_assigned_dates_by_staff[assignment.staff_identifier].add(
+                assignment.shift.shift_date
+            )
+
+    exceptions: list[CrossQuarterBlockGapException] = []
+    for staff_identifier, current_dates in current_dates_by_staff.items():
+        all_work_dates = sorted(
+            trailing_dates_by_staff.get(staff_identifier, set()) | current_dates
+        )
+        block_starts = [
+            work_date
+            for work_date in all_work_dates
+            if work_date - timedelta(days=1) not in all_work_dates
+        ]
+
+        for previous_block_start in block_starts:
+            if previous_block_start >= schedule.quarter_start:
+                continue
+            for current_block_start in block_starts:
+                if current_block_start < schedule.quarter_start:
+                    continue
+                actual_gap_days = (current_block_start - previous_block_start).days
+                required_gap_days = (
+                    config.holiday_gap_days
+                    if current_block_start
+                    in pre_assigned_dates_by_staff.get(staff_identifier, set())
+                    else config.block_gap_days
+                )
+                if actual_gap_days < required_gap_days:
+                    exceptions.append(
+                        CrossQuarterBlockGapException(
+                            staff_identifier=staff_identifier,
+                            previous_block_start=previous_block_start,
+                            current_block_start=current_block_start,
+                            required_gap_days=required_gap_days,
+                            actual_gap_days=actual_gap_days,
+                        )
+                    )
+
+    return exceptions
 
 
 def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> ValidationResult:

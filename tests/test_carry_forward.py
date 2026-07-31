@@ -21,6 +21,7 @@ from app.scheduler.models import (
     generate_quarter_shifts,
 )
 from app.scheduler.solver_cpsat import _add_min_consecutive_nights_constraints
+from app.scheduler.validator import find_cross_quarter_block_gap_exceptions
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +604,61 @@ class TestTrailingBlockGap:
             "Intra-Q3 gap enforcement must remain active. "
             "Two Q3 block starts within 21 days must not both be allowed."
         )
+
+
+class TestCrossQuarterBlockGapDisplay:
+    """Tests for display-only detection of boundary gap exceptions."""
+
+    def test_detects_relaxed_cross_quarter_block_gap(self) -> None:
+        """A new block within 21 days of the trailing block is marked."""
+        schedule = _make_schedule(
+            [_night_assignment("A", date(2026, 7, 5))],
+            quarter_start=date(2026, 7, 1),
+            quarter_end=date(2026, 9, 29),
+        )
+        previous_context = PreviousPlanContext(
+            quarter_start=date(2026, 4, 1),
+            quarter_end=date(2026, 6, 30),
+            carry_forward=[],
+            trailing_assignments=[
+                TrailingAssignment(
+                    shift_date=date(2026, 6, 28),
+                    shift_type=ShiftType.NIGHT_SUN_MON,
+                    staff_identifier="A",
+                )
+            ],
+        )
+
+        exceptions = find_cross_quarter_block_gap_exceptions(schedule, previous_context)
+
+        assert len(exceptions) == 1
+        assert exceptions[0].staff_identifier == "A"
+        assert exceptions[0].previous_block_start == date(2026, 6, 28)
+        assert exceptions[0].current_block_start == date(2026, 7, 5)
+        assert exceptions[0].actual_gap_days == 7
+        assert exceptions[0].required_gap_days == 21
+
+    def test_does_not_mark_a_continuing_boundary_block(self) -> None:
+        """Consecutive shifts across the boundary remain one block."""
+        schedule = _make_schedule(
+            [_night_assignment("A", date(2026, 7, 1))],
+            quarter_start=date(2026, 7, 1),
+            quarter_end=date(2026, 9, 29),
+        )
+        previous_context = PreviousPlanContext(
+            quarter_start=date(2026, 4, 1),
+            quarter_end=date(2026, 6, 30),
+            carry_forward=[],
+            trailing_assignments=[
+                TrailingAssignment(
+                    shift_date=date(2026, 6, 30),
+                    shift_type=ShiftType.NIGHT_TUE_WED,
+                    staff_identifier="A",
+                )
+            ],
+        )
+
+        assert not find_cross_quarter_block_gap_exceptions(schedule, previous_context)
 
 
 # ---------------------------------------------------------------------------
