@@ -38,9 +38,11 @@ class ShiftType(str, Enum):
     SATURDAY_10_21 = "Sa_10-21"  # Anmeldung + Rufbereitschaft
     SATURDAY_10_22 = "Sa_10-22"  # Rufbereitschaft
     SATURDAY_10_19 = "Sa_10-19"  # Azubidienst
+    SATURDAY_INTERN = "Sa_Intern"  # Intern weekend shift 08:30-20:30
     SUNDAY_8_20 = "So_8-20"
     SUNDAY_10_22 = "So_10-22"  # Rufbereitschaft
     SUNDAY_8_2030 = "So_8-20:30"  # Azubi (8-12 onsite, 12-20:30 Rufbereitschaft)
+    SUNDAY_INTERN = "So_Intern"  # Intern weekend shift 08:30-20:30
     NIGHT_SUN_MON = "N_So-Mo"  # Sun→Mon (TA onsite)
     NIGHT_MON_TUE = "N_Mo-Di"  # Mon→Tue (TA onsite)
     NIGHT_TUE_WED = "N_Di-Mi"
@@ -150,7 +152,11 @@ class Staff(BaseModel):
         if not self.adult and shift_type.value.startswith("So_"):
             return False
 
-        # Interns never work weekends
+        # Intern weekend shifts (Sa_Intern / So_Intern): only Interns can work them
+        if shift_type in (ShiftType.SATURDAY_INTERN, ShiftType.SUNDAY_INTERN):
+            return self.beruf == Beruf.INTERN
+
+        # All other weekend shifts: Interns cannot work them
         if self.beruf == Beruf.INTERN and (
             shift_type.value.startswith("Sa_") or shift_type.value.startswith("So_")
         ):
@@ -201,6 +207,10 @@ class Shift(BaseModel):
     shift_type: ShiftType
     shift_date: date
     requires_pair: bool = False  # Night shifts may require pairing
+
+    def is_intern_weekend_shift(self) -> bool:
+        """Check if this is an Intern-specific weekend shift (Sa_Intern or So_Intern)."""
+        return self.shift_type in (ShiftType.SATURDAY_INTERN, ShiftType.SUNDAY_INTERN)
 
     def is_night_shift(self) -> bool:
         """Check if this is a night shift."""
@@ -355,6 +365,13 @@ def generate_quarter_shifts(
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_20, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_10_22, shift_date=current_date))
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_2030, shift_date=current_date))
+
+        # Intern weekend shifts (natural full weekends only, independent of is_holiday)
+        # Quarter-Boundary Guard: Sa_Intern and So_Intern only generated when both d and d+1 fall within [quarter_start, quarter_end)
+        if weekday == 5 and (current_date + timedelta(days=1)) < quarter_end:
+            shifts.append(Shift(shift_type=ShiftType.SATURDAY_INTERN, shift_date=current_date))
+        elif weekday == 6 and (current_date - timedelta(days=1)) >= quarter_start:
+            shifts.append(Shift(shift_type=ShiftType.SUNDAY_INTERN, shift_date=current_date))
 
         # Night shifts (every night)
         # Determine shift type based on day
@@ -664,8 +681,14 @@ def compute_carry_forward(
 
         presence_factor = avail_days / total_days if total_days > 0 else 1.0
 
+        # Two-Track fairness: For Interns, carry-forward normalized_40h (Track 1 night fairness)
+        # is computed from effective_nights only, excluding weekend shifts.
+        fairness_load = (
+            effective_nights if staff.beruf == Beruf.INTERN else total_notdienst
+        )
+
         if staff.hours > 0 and presence_factor > 0:
-            normalized_40h = (total_notdienst / staff.hours / presence_factor) * 40
+            normalized_40h = (fairness_load / staff.hours / presence_factor) * 40
         else:
             normalized_40h = 0.0
 
@@ -814,4 +837,5 @@ class SchedulerConfig:
     intern_min_nights: int = 6
     intern_max_nights: int = 9
     block_gap_days: int = 21
+    intern_block_gap_days: int = 10
     holiday_gap_days: int = 7

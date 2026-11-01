@@ -171,7 +171,13 @@ def generate_schedule_cpsat(
 
     # Separate shifts by category
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
+    regular_weekend_shifts = [s for s in weekend_shifts if not s.is_intern_weekend_shift()]
+    intern_weekend_shifts = [s for s in weekend_shifts if s.is_intern_weekend_shift()]
+    intern_sat_shifts = [s for s in intern_weekend_shifts if s.shift_type == ShiftType.SATURDAY_INTERN]
     night_shifts = [s for s in shifts if s.is_night_shift()]
+
+    # Staff subsets
+    intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
 
     # Night shifts categorized into open and closed nights
     open_nights = [s for s in night_shifts if s.is_open_night()]
@@ -252,7 +258,7 @@ def generate_schedule_cpsat(
                 model.Add(sum(vars_for_day) <= 1)
 
     # 1. Weekend shift coverage
-    # Default: exactly 1 person per shift.
+    # Regular TFA/Azubi shifts: default exactly 1 person per shift.
     # Pre-assigned holidays may have >1 person pinned; adjust target accordingly.
     pre_assigned_count: dict[tuple[date, ShiftType], int] = {}
     for pa in pre_assigned:
@@ -260,7 +266,7 @@ def generate_schedule_cpsat(
         pre_assigned_count[key] = pre_assigned_count.get(key, 0) + 1
     pre_assigned_shift_slots: set[tuple[date, ShiftType]] = set(pre_assigned_count.keys())
 
-    for shift in weekend_shifts:
+    for shift in regular_weekend_shifts:
         staff_for_shift = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
             for s in staff_list
@@ -271,6 +277,49 @@ def generate_schedule_cpsat(
                 (shift.shift_date, shift.shift_type), 1
             )
             model.Add(sum(staff_for_shift) == target)
+
+    # Intern weekend shifts (soft coverage: at most 1 Intern per shift)
+    if intern_staff:
+        for shift in intern_weekend_shifts:
+            staff_for_shift = [
+                x[(s.identifier, shift.shift_date, shift.shift_type)]
+                for s in intern_staff
+                if (s.identifier, shift.shift_date, shift.shift_type) in x
+            ]
+            if staff_for_shift:
+                model.Add(sum(staff_for_shift) <= 1)
+
+        # 1b. Intern coupled weekend blocks: Saturday == Sunday for same Intern
+        # Vacation guard: If unavailable on one day, cannot work the other day either
+        for sat_shift in intern_sat_shifts:
+            d_sat = sat_shift.shift_date
+            d_sun = d_sat + timedelta(days=1)
+            for s in intern_staff:
+                sat_key = (s.identifier, d_sat, ShiftType.SATURDAY_INTERN)
+                sun_key = (s.identifier, d_sun, ShiftType.SUNDAY_INTERN)
+                if sat_key in x and sun_key in x:
+                    model.Add(x[sat_key] == x[sun_key])
+                elif sat_key in x:
+                    model.Add(x[sat_key] == 0)
+                elif sun_key in x:
+                    model.Add(x[sun_key] == 0)
+
+        # Monthly cap: max 1 coupled weekend (Saturday + Sunday) per calendar month per Intern
+        intern_sat_by_month: dict[tuple[int, int], list[date]] = defaultdict(list)
+        for sat_shift in intern_sat_shifts:
+            intern_sat_by_month[(sat_shift.shift_date.year, sat_shift.shift_date.month)].append(
+                sat_shift.shift_date
+            )
+
+        for s in intern_staff:
+            for _year_month, sat_dates in intern_sat_by_month.items():
+                month_sat_vars = [
+                    x[(s.identifier, d, ShiftType.SATURDAY_INTERN)]
+                    for d in sat_dates
+                    if (s.identifier, d, ShiftType.SATURDAY_INTERN) in x
+                ]
+                if month_sat_vars:
+                    model.Add(sum(month_sat_vars) <= 1)
 
     # 2. Night shift coverage:
     #    - Open nights (Sun-Mon, Mon-Tue): exactly 2 people, at least 1 TFA, max 1 Azubi
@@ -470,6 +519,7 @@ def generate_schedule_cpsat(
         pre_assigned_dates_by_staff=pre_assigned_dates_by_staff,
         gap_days=config.block_gap_days,
         holiday_gap_days=config.holiday_gap_days,
+        intern_block_gap_days=config.intern_block_gap_days,
     )
 
     # 8. nd_max_consecutive constraint: consecutive night blocks cannot exceed nd_max_consecutive
@@ -599,6 +649,19 @@ def generate_schedule_cpsat(
     for viol_var, gap_diff in cross_quarter_violations:
         objective_terms.append(viol_var * gap_diff * 10000000)
 
+    # Soft coverage fill incentive (W_unfilled = 100_000 per unassigned Intern weekend)
+    if intern_staff:
+        for sat_shift in intern_sat_shifts:
+            d_sat = sat_shift.shift_date
+            unfilled_we = model.NewBoolVar(f"unfilled_intern_we_{d_sat}")
+            intern_sat_vars = [
+                x[(s.identifier, d_sat, ShiftType.SATURDAY_INTERN)]
+                for s in intern_staff
+                if (s.identifier, d_sat, ShiftType.SATURDAY_INTERN) in x
+            ]
+            model.Add(sum(intern_sat_vars) + unfilled_we == 1)
+            objective_terms.append(100000 * unfilled_we)
+
     # Group staff by role for fairness within groups
     tfa_staff = [s for s in staff_list if s.beruf == Beruf.TFA]
     azubi_staff = [s for s in staff_list if s.beruf == Beruf.AZUBI]
@@ -610,12 +673,12 @@ def generate_schedule_cpsat(
             continue
         
         # Combined Notdienste fairness (weekends + nights together)
-        # For Interns: only nights (they don't do weekends)
+        # Track 1: For Interns, use night_half_counts (not pooled notdienst_half_counts)
         if group_name == "Intern":
             nd_eligible = [s for s in group if s.nd_possible]
             if len(nd_eligible) >= 2:
                 _add_group_fairness_objective_with_presence(
-                    model, objective_terms, notdienst_half_counts, nd_eligible, 
+                    model, objective_terms, night_half_counts, nd_eligible, 
                     SCALE, presence_factors, f"ND_{group_name}",
                     carry_forward_deltas=carry_forward_deltas or None,
                 )
@@ -627,6 +690,38 @@ def generate_schedule_cpsat(
                     SCALE, presence_factors, f"ND_{group_name}",
                     carry_forward_deltas=carry_forward_deltas or None,
                 )
+
+    # Track 2: Intern Weekend Fairness (min-max range, W_intern_we_fairness = 100)
+    if len(intern_staff) >= 2:
+        max_we = model.NewIntVar(0, 50, "max_intern_we")
+        min_we = model.NewIntVar(0, 50, "min_intern_we")
+        for s in intern_staff:
+            model.Add(max_we >= weekend_half_counts[s.identifier])
+            model.Add(min_we <= weekend_half_counts[s.identifier])
+        we_range = model.NewIntVar(0, 50, "range_intern_we")
+        model.Add(we_range == max_we - min_we)
+        objective_terms.append(100 * we_range)
+
+    # Secondary Spacing Preference: push night blocks away from weekend blocks (>= 14 days)
+    W_intern_spacing = 5
+    for s in intern_staff:
+        for sat_shift in intern_sat_shifts:
+            sat_key = (s.identifier, sat_shift.shift_date, sat_shift.shift_type)
+            if sat_key not in x:
+                continue
+            d_sat = sat_shift.shift_date
+            for n_shift in night_shifts:
+                n_key = (s.identifier, n_shift.shift_date, n_shift.shift_type)
+                if n_key not in x:
+                    continue
+                d_night = n_shift.shift_date
+                gap = abs((d_night - d_sat).days)
+                if 10 <= gap < 14:
+                    close_var = model.NewBoolVar(
+                        f"close_intern_{s.identifier}_{d_sat}_{d_night}"
+                    )
+                    model.Add(x[sat_key] + x[n_key] - 1 <= close_var)
+                    objective_terms.append(W_intern_spacing * (14 - gap) * close_var)
 
     # =========================================================================
     # SECONDARY OBJECTIVE: Type balance (nights vs weekends) within groups
@@ -669,7 +764,7 @@ def generate_schedule_cpsat(
         )
 
         # Validate (should pass, but good to confirm)
-        validation = validate_schedule(schedule, staff_list)
+        validation = validate_schedule(schedule, staff_list, config=config)
         penalty = validation.soft_penalty
 
         return SolverResult(
@@ -736,6 +831,19 @@ def _add_weekend_isolation_constraints(
             for adj_date in [prev_date, next_date]:
                 if adj_date in shifts_by_date:
                     for other_shift in shifts_by_date[adj_date]:
+                        # Allow coupled Intern weekend pair (Sa_Intern on Sat and So_Intern on Sun)
+                        is_coupled_intern_pair = (
+                            (we_shift.shift_type == ShiftType.SATURDAY_INTERN
+                             and other_shift.shift_type == ShiftType.SUNDAY_INTERN
+                             and other_shift.shift_date == we_shift.shift_date + timedelta(days=1))
+                            or
+                            (we_shift.shift_type == ShiftType.SUNDAY_INTERN
+                             and other_shift.shift_type == ShiftType.SATURDAY_INTERN
+                             and other_shift.shift_date == we_shift.shift_date - timedelta(days=1))
+                        )
+                        if is_coupled_intern_pair:
+                            continue
+
                         other_key = (staff.identifier, other_shift.shift_date, other_shift.shift_type)
                         if other_key in x and other_key != we_key:
                             # Weekend shift and adjacent shift cannot both be assigned
@@ -753,13 +861,15 @@ def _add_block_constraints(
     pre_assigned_dates_by_staff: dict[str, set[date]] | None = None,
     gap_days: int = 21,
     holiday_gap_days: int = 7,
+    intern_block_gap_days: int = 10,
 ) -> list[tuple[cp_model.IntVar, int]]:
     """Add block gap constraints.
 
     The constraint: if you have blocks B1 and B2, and B2 starts
     within GAP days of B1's START, that's a violation.
 
-    Default GAP is 21 days (3 weeks).  When a block starts on a
+    Default GAP is 21 days (3 weeks) for TFA/Azubi, and 10 days for
+    Interns (intern_block_gap_days). When a block starts on a
     pre-assigned (holiday) date for that staff member, the gap to/from
     that block is relaxed to 7 days (1 week).
 
@@ -771,7 +881,6 @@ def _add_block_constraints(
     from the previous quarter (last 21 days) so the gap is enforced across
     the quarter boundary.
     """
-    DEFAULT_GAP = gap_days
     HOLIDAY_GAP = holiday_gap_days
 
     if pre_assigned_dates_by_staff is None:
@@ -787,6 +896,12 @@ def _add_block_constraints(
     all_dates = sorted(shifts_by_date.keys())
 
     for staff in staff_list:
+        staff_gap_days = (
+            intern_block_gap_days
+            if staff.beruf == Beruf.INTERN
+            else gap_days
+        )
+
         # Get all dates where this staff has a possible assignment
         staff_dates = []
         for d in all_dates:
@@ -817,7 +932,7 @@ def _add_block_constraints(
         # Inject trailing work dates as fixed variables (previous quarter)
         if trailing_work_dates:
             for d in trailing_work_dates.get(staff.identifier, set()):
-                if (quarter_start - d).days <= 21 and d < quarter_start:
+                if (quarter_start - d).days <= staff_gap_days and d < quarter_start:
                     fixed = model.NewBoolVar(f"trail_work_{staff.identifier}_{d}")
                     model.Add(fixed == 1)
                     works_on[d] = fixed
@@ -842,8 +957,8 @@ def _add_block_constraints(
                 # No previous day in schedule, so if working, it's a block start
                 block_starts[d] = works_on[d]
 
-        # Enforce block gap: default 21 days, relaxed to 7 if either
-        # block starts on a pre-assigned (holiday) date for this staff.
+        # Enforce block gap: default 21 days for TFA/Azubi, 10 days for Interns,
+        # relaxed to 7 if either block starts on a pre-assigned (holiday) date for this staff.
         # Block-gap enforcement across quarter boundaries:
         #   Q2 → Q2: SKIP. Both block starts are fixed history (both = 1). Adding
         #            block_starts[d1] + block_starts[d2] <= 1 with both fixed=1
@@ -857,7 +972,7 @@ def _add_block_constraints(
         for i, d1 in enumerate(block_start_dates):
             for d2 in block_start_dates[i + 1:]:
                 gap = (d2 - d1).days
-                if gap >= DEFAULT_GAP:
+                if gap >= staff_gap_days:
                     break  # No need to check further
                 # Skip only when both dates are Q2 trailing (fixed history)
                 if d1 < quarter_start and d2 < quarter_start:
@@ -866,7 +981,7 @@ def _add_block_constraints(
                 required_gap = (
                     HOLIDAY_GAP
                     if d1 in staff_pa_dates or d2 in staff_pa_dates
-                    else DEFAULT_GAP
+                    else staff_gap_days
                 )
                 if gap < required_gap:
                     is_cross_quarter = d1 < quarter_start and d2 >= quarter_start

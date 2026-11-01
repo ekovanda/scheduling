@@ -61,6 +61,7 @@ def find_cross_quarter_block_gap_exceptions(
     schedule: Schedule,
     previous_context: PreviousPlanContext | None,
     config: SchedulerConfig | None = None,
+    staff_list: list[Staff] | None = None,
 ) -> list[CrossQuarterBlockGapException]:
     """Find boundary block gaps that the solver may relax with a penalty.
 
@@ -71,9 +72,17 @@ def find_cross_quarter_block_gap_exceptions(
         return []
 
     config = config or SchedulerConfig()
+    staff_dict = {s.identifier: s for s in staff_list} if staff_list else {}
+
     trailing_dates_by_staff: dict[str, set[date]] = defaultdict(set)
     for assignment in previous_context.trailing_assignments:
-        if 0 < (schedule.quarter_start - assignment.shift_date).days <= config.block_gap_days:
+        staff = staff_dict.get(assignment.staff_identifier)
+        staff_gap = (
+            config.intern_block_gap_days
+            if staff and staff.beruf == Beruf.INTERN
+            else config.block_gap_days
+        )
+        if 0 < (schedule.quarter_start - assignment.shift_date).days <= staff_gap:
             trailing_dates_by_staff[assignment.staff_identifier].add(assignment.shift_date)
 
     current_dates_by_staff: dict[str, set[date]] = defaultdict(set)
@@ -96,6 +105,13 @@ def find_cross_quarter_block_gap_exceptions(
             if work_date - timedelta(days=1) not in all_work_dates
         ]
 
+        staff = staff_dict.get(staff_identifier)
+        staff_gap = (
+            config.intern_block_gap_days
+            if staff and staff.beruf == Beruf.INTERN
+            else config.block_gap_days
+        )
+
         for previous_block_start in block_starts:
             if previous_block_start >= schedule.quarter_start:
                 continue
@@ -107,7 +123,7 @@ def find_cross_quarter_block_gap_exceptions(
                     config.holiday_gap_days
                     if current_block_start
                     in pre_assigned_dates_by_staff.get(staff_identifier, set())
-                    else config.block_gap_days
+                    else staff_gap
                 )
                 if actual_gap_days < required_gap_days:
                     exceptions.append(
@@ -123,23 +139,30 @@ def find_cross_quarter_block_gap_exceptions(
     return exceptions
 
 
-def validate_schedule(schedule: Schedule, staff_list: list[Staff]) -> ValidationResult:
+def validate_schedule(
+    schedule: Schedule,
+    staff_list: list[Staff],
+    config: SchedulerConfig | None = None,
+) -> ValidationResult:
     """Validate schedule against all constraints.
 
     Returns ValidationResult with hard violations and soft penalty score.
     """
     violations: list[ConstraintViolation] = []
     staff_dict = {s.identifier: s for s in staff_list}
+    config = config or SchedulerConfig()
 
     # Check hard constraints
     violations.extend(_check_minor_sunday_constraint(schedule, staff_dict))
     violations.extend(_check_intern_weekend_constraint(schedule, staff_dict))
+    violations.extend(_check_intern_coupled_weekend_constraint(schedule, staff_dict))
+    violations.extend(_check_intern_monthly_weekend_cap(schedule, staff_dict))
     violations.extend(_check_night_pairing_constraint(schedule, staff_dict))
     violations.extend(_check_nd_alone_improper_pairing(schedule, staff_dict))
     violations.extend(_check_same_day_double_booking(schedule))
     violations.extend(_check_open_night_capacity(schedule, staff_dict))
     violations.extend(_check_same_day_next_day_constraint(schedule))
-    violations.extend(_check_three_week_block_constraint(schedule))
+    violations.extend(_check_three_week_block_constraint(schedule, staff_dict, config))
     violations.extend(_check_weekend_isolation_constraint(schedule))
     violations.extend(_check_min_consecutive_nights_constraint(schedule, staff_dict))
     # violations.extend(_check_nd_max_consecutive_constraint(schedule, staff_dict))  # Relaxed to soft
@@ -322,19 +345,126 @@ def _check_open_night_capacity(
 def _check_intern_weekend_constraint(
     schedule: Schedule, staff_dict: dict[str, Staff]
 ) -> list[ConstraintViolation]:
-    """Interns never work weekends."""
+    """Interns can only work Sa_Intern / So_Intern among weekend shifts,
+    and non-Interns cannot work Sa_Intern / So_Intern."""
     violations: list[ConstraintViolation] = []
     for assignment in schedule.assignments:
         if assignment.shift.is_weekend_shift():
             staff = staff_dict.get(assignment.staff_identifier)
-            if staff and staff.beruf == Beruf.INTERN:
+            if not staff:
+                continue
+            if staff.beruf == Beruf.INTERN:
+                if not assignment.shift.is_intern_weekend_shift():
+                    violations.append(
+                        ConstraintViolation(
+                            "Intern Weekend Ban",
+                            f"Intern {staff.name} assigned to regular weekend shift on "
+                            f"{assignment.shift.shift_date.strftime('%d.%m.%Y')} "
+                            f"({assignment.shift.shift_type.value})",
+                        )
+                    )
+            else:
+                if assignment.shift.is_intern_weekend_shift():
+                    violations.append(
+                        ConstraintViolation(
+                            "Intern Weekend Exclusivity",
+                            f"Non-Intern {staff.name} ({staff.beruf.value}) assigned to Intern weekend shift on "
+                            f"{assignment.shift.shift_date.strftime('%d.%m.%Y')} "
+                            f"({assignment.shift.shift_type.value})",
+                        )
+                    )
+    return violations
+
+
+def _check_intern_coupled_weekend_constraint(
+    schedule: Schedule, staff_dict: dict[str, Staff]
+) -> list[ConstraintViolation]:
+    """Intern assigned to Saturday must also work Sunday of that same weekend."""
+    violations: list[ConstraintViolation] = []
+
+    # Map Saturday dates to Sa_Intern and So_Intern assignments
+    intern_we_by_sat: dict[date, dict[ShiftType, list[Assignment]]] = defaultdict(lambda: defaultdict(list))
+    for a in schedule.assignments:
+        if a.shift.shift_type == ShiftType.SATURDAY_INTERN:
+            intern_we_by_sat[a.shift.shift_date][ShiftType.SATURDAY_INTERN].append(a)
+        elif a.shift.shift_type == ShiftType.SUNDAY_INTERN:
+            # Saturday of this Sunday is shift_date - 1 day
+            sat_date = a.shift.shift_date - timedelta(days=1)
+            intern_we_by_sat[sat_date][ShiftType.SUNDAY_INTERN].append(a)
+
+    for sat_date, shifts in intern_we_by_sat.items():
+        sun_date = sat_date + timedelta(days=1)
+        sat_assigns = shifts.get(ShiftType.SATURDAY_INTERN, [])
+        sun_assigns = shifts.get(ShiftType.SUNDAY_INTERN, [])
+
+        # Both empty is allowed (soft coverage)
+        if not sat_assigns and not sun_assigns:
+            continue
+
+        if sat_assigns and not sun_assigns:
+            sid = sat_assigns[0].staff_identifier
+            s_name = staff_dict[sid].name if sid in staff_dict else sid
+            violations.append(
+                ConstraintViolation(
+                    "Intern Coupled Weekend",
+                    f"Intern {s_name} assigned to Sa_Intern on {sat_date.strftime('%d.%m.%Y')} "
+                    f"without corresponding So_Intern on {sun_date.strftime('%d.%m.%Y')}",
+                )
+            )
+        elif sun_assigns and not sat_assigns:
+            sid = sun_assigns[0].staff_identifier
+            s_name = staff_dict[sid].name if sid in staff_dict else sid
+            violations.append(
+                ConstraintViolation(
+                    "Intern Coupled Weekend",
+                    f"Intern {s_name} assigned to So_Intern on {sun_date.strftime('%d.%m.%Y')} "
+                    f"without corresponding Sa_Intern on {sat_date.strftime('%d.%m.%Y')}",
+                )
+            )
+        else:
+            # Both assigned: check if assigned to the same staff member
+            sat_staff = sat_assigns[0].staff_identifier
+            sun_staff = sun_assigns[0].staff_identifier
+            if sat_staff != sun_staff:
+                s1_name = staff_dict[sat_staff].name if sat_staff in staff_dict else sat_staff
+                s2_name = staff_dict[sun_staff].name if sun_staff in staff_dict else sun_staff
                 violations.append(
                     ConstraintViolation(
-                        "Intern Weekend Ban",
-                        f"Intern {staff.name} assigned to weekend shift on "
-                        f"{assignment.shift.shift_date.strftime('%d.%m.%Y')}",
+                        "Intern Coupled Weekend",
+                        f"Intern weekend uncoupled on {sat_date.strftime('%d.%m.%Y')}/{sun_date.strftime('%d.%m.%Y')}: "
+                        f"Saturday has {s1_name}, but Sunday has {s2_name}",
                     )
                 )
+
+    return violations
+
+
+def _check_intern_monthly_weekend_cap(
+    schedule: Schedule, staff_dict: dict[str, Staff]
+) -> list[ConstraintViolation]:
+    """Each Intern works at most one weekend (Saturday + Sunday) per calendar month."""
+    violations: list[ConstraintViolation] = []
+    # Month is defined by Saturday date
+    intern_months: dict[str, dict[tuple[int, int], int]] = defaultdict(lambda: defaultdict(int))
+
+    for a in schedule.assignments:
+        if a.shift.shift_type == ShiftType.SATURDAY_INTERN:
+            d = a.shift.shift_date
+            intern_months[a.staff_identifier][(d.year, d.month)] += 1
+
+    for staff_id, months in intern_months.items():
+        staff = staff_dict.get(staff_id)
+        name = staff.name if staff else staff_id
+        for (year, month), count in months.items():
+            if count > 1:
+                violations.append(
+                    ConstraintViolation(
+                        "Intern Monthly Weekend Cap",
+                        f"Intern {name} assigned to {count} weekend blocks in "
+                        f"{month:02d}/{year}, maximum is 1 per calendar month",
+                    )
+                )
+
     return violations
 
 
@@ -450,14 +580,20 @@ def _check_same_day_next_day_constraint(schedule: Schedule) -> list[ConstraintVi
     return violations
 
 
-def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintViolation]:
-    """Each staff can have max 1 consecutive block per rolling 3-week window.
+def _check_three_week_block_constraint(
+    schedule: Schedule,
+    staff_dict: dict[str, Staff] | None = None,
+    config: SchedulerConfig | None = None,
+) -> list[ConstraintViolation]:
+    """Each staff can have max 1 consecutive block per rolling window.
     
-    Blocks must be separated by at least 21 days (from start to start).
-    Note: Weekend shifts are already constrained to be isolated (single-shift blocks)
-    by _check_weekend_isolation_constraint. This function handles the general case.
+    Blocks must be separated by at least 21 days for TFA/Azubi, or
+    intern_block_gap_days (10 days) for Interns (from start to start).
+    Note: Weekend shifts are already constrained to be isolated (single-shift blocks,
+    or coupled 2-day blocks for Interns) by _check_weekend_isolation_constraint.
     """
     violations: list[ConstraintViolation] = []
+    config = config or SchedulerConfig()
 
     # Group assignments by staff
     staff_assignments: dict[str, list[Assignment]] = defaultdict(list)
@@ -471,7 +607,14 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
         # Find consecutive blocks
         blocks = _find_consecutive_blocks(sorted_assignments)
 
-        # Check rolling 2-week windows
+        staff = staff_dict.get(staff_id) if staff_dict else None
+        required_gap = (
+            config.intern_block_gap_days
+            if staff and staff.beruf == Beruf.INTERN
+            else config.block_gap_days
+        )
+
+        # Check rolling windows
         for i, block1 in enumerate(blocks):
             block1_start = block1[0].shift.shift_date
             block1_end = block1[-1].shift.shift_date
@@ -479,12 +622,12 @@ def _check_three_week_block_constraint(schedule: Schedule) -> list[ConstraintVio
             for block2 in blocks[i + 1 :]:
                 block2_start = block2[0].shift.shift_date
 
-                # Check if block2 starts within 3 weeks (21 days) of block1 start
-                if (block2_start - block1_start).days < 21:
+                # Check if block2 starts within required_gap days of block1 start
+                if (block2_start - block1_start).days < required_gap:
                     violations.append(
                         ConstraintViolation(
-                            "3-Week Block Limit",
-                            f"{staff_id} has multiple shift blocks within 3 weeks: "
+                            "3-Week Block Limit" if required_gap >= 21 else "10-Day Block Limit",
+                            f"{staff_id} has multiple shift blocks within {required_gap} days: "
                             f"{block1_start.strftime('%d.%m.%Y')}-{block1_end.strftime('%d.%m.%Y')} "
                             f"and {block2_start.strftime('%d.%m.%Y')}",
                         )
@@ -498,7 +641,8 @@ def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintVi
     """Weekend shifts must always be isolated (single-shift, not part of a block).
     
     A weekend shift cannot be adjacent (same day or next day) to any other shift
-    for the same person. This prevents weekend shifts from being part of night blocks.
+    for the same person. For Interns, the coupled Sa_Intern + So_Intern weekend pair
+    is allowed, but adjacencies to night shifts (e.g. Friday or Monday) remain forbidden.
     """
     violations: list[ConstraintViolation] = []
 
@@ -510,7 +654,9 @@ def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintVi
     for staff_id, assignments in staff_assignments.items():
         # Get weekend shifts and all dates worked
         weekend_assignments = [a for a in assignments if a.shift.is_weekend_shift()]
-        all_dates_worked = {a.shift.shift_date for a in assignments}
+        shifts_by_date: dict[date, list[ShiftType]] = defaultdict(list)
+        for a in assignments:
+            shifts_by_date[a.shift.shift_date].append(a.shift.shift_type)
 
         for we_assignment in weekend_assignments:
             we_date = we_assignment.shift.shift_date
@@ -519,10 +665,23 @@ def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintVi
 
             # Check if adjacent to another shift (forming a block)
             adjacent_worked = []
-            if prev_date in all_dates_worked:
-                adjacent_worked.append(prev_date.strftime('%d.%m.%Y'))
-            if next_date in all_dates_worked:
-                adjacent_worked.append(next_date.strftime('%d.%m.%Y'))
+            if prev_date in shifts_by_date:
+                prev_types = shifts_by_date[prev_date]
+                is_coupled = (
+                    we_assignment.shift.shift_type == ShiftType.SUNDAY_INTERN
+                    and prev_types == [ShiftType.SATURDAY_INTERN]
+                )
+                if not is_coupled:
+                    adjacent_worked.append(prev_date.strftime('%d.%m.%Y'))
+
+            if next_date in shifts_by_date:
+                next_types = shifts_by_date[next_date]
+                is_coupled = (
+                    we_assignment.shift.shift_type == ShiftType.SATURDAY_INTERN
+                    and next_types == [ShiftType.SUNDAY_INTERN]
+                )
+                if not is_coupled:
+                    adjacent_worked.append(next_date.strftime('%d.%m.%Y'))
 
             if adjacent_worked:
                 violations.append(
@@ -854,18 +1013,32 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
         penalty += deviation**2
 
     # Penalty for unfairness within role groups
-    role_groups: dict[Beruf, list[float]] = defaultdict(list)
-    for staff in staff_list:
-        notdienst_count = schedule.count_total_notdienst(staff.identifier, staff)
-        role_groups[staff.beruf].append(notdienst_count)
-
-    # Add standard deviation penalty for each group
-    for _role, counts in role_groups.items():
+    for role in [Beruf.TFA, Beruf.AZUBI]:
+        counts = [
+            schedule.count_total_notdienst(s.identifier, s)
+            for s in staff_list
+            if s.beruf == role
+        ]
         if len(counts) > 1:
             mean = sum(counts) / len(counts)
             variance = sum((x - mean) ** 2 for x in counts) / len(counts)
             std_dev = variance**0.5
-            penalty += std_dev * 10  # Weight std dev heavily
+            penalty += std_dev * 10
+
+    # For Interns: Two-Track separate fairness (Track 1 Nights, Track 2 Weekends)
+    intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
+    if len(intern_staff) > 1:
+        # Track 1: Night fairness
+        night_counts = [schedule.count_effective_nights(s.identifier, s) for s in intern_staff]
+        n_mean = sum(night_counts) / len(night_counts)
+        n_variance = sum((x - n_mean) ** 2 for x in night_counts) / len(night_counts)
+        penalty += (n_variance**0.5) * 10
+
+        # Track 2: Weekend fairness
+        we_counts = [schedule.count_weekend_shifts(s.identifier) for s in intern_staff]
+        w_mean = sum(we_counts) / len(we_counts)
+        w_variance = sum((x - w_mean) ** 2 for x in we_counts) / len(we_counts)
+        penalty += (w_variance**0.5) * 10
     
     # NEW: Soft penalty for nd_count violations (moved from hard constraints)
     violations = _check_nd_count_constraint(schedule, staff_dict)

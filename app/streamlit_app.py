@@ -717,17 +717,21 @@ def page_regeln() -> None:
 | **Sa 10-19** (Azubidienst) | Nur Azubis |
 | **Sa 10-21** (Anmeldung) | TFA **oder** Azubi mit `reception=True` |
 | **Sa 10-22** (Rufbereitschaft) | Nur TFA |
+| **Sa 08:30-20:30** (Intern) | Nur Interns |
 | **So 8-20** | Nur TFA |
 | **So 8-20:30** (Azubidienst) | Nur erwachsene Azubis (`adult=True`) |
 | **So 10-22** (Rufbereitschaft) | Nur TFA |
+| **So 08:30-20:30** (Intern) | Nur Interns |
 
 **Feiertage** (Werktage, die als Feiertag markiert sind) erhalten dasselbe Schichtmuster wie ein Sonntag.
 
 **Weitere Einschränkungen:**
 - Minderjährige (`adult=False`) dürfen **keine** Sonntagsschicht übernehmen.
-- Interns arbeiten **nie** am Wochenende.
+- Interns arbeiten am Wochenende **ausschließlich** auf den Intern-Schichten (`Sa_Intern`, `So_Intern`). Andere Berufsgruppen dürfen nicht auf Intern-Schichten eingeplant werden.
+- **Intern-Wochenend-Block**: `Sa_Intern` und `So_Intern` müssen als gekoppeltes Wochenende (Samstag + Sonntag) von derselben Person besetzt werden.
+- **Intern-Monatslimit**: Maximal 1 Wochenende (Sa+So) pro Kalendermonat pro Intern.
 - Max. **1 Schicht pro Person pro Tag** (kein Doppeleinsatz).
-- **Wochenend-Isolation**: Jede WE-Schicht muss einzeln stehen — kein angrenzendes Schicht am Vor- oder Folgetag.
+- **Wochenend-Isolation**: Jede reguläre WE-Schicht muss einzeln stehen — kein angrenzender Dienst am Vor- oder Folgetag. Für Interns bildet das Sa+So-Paar einen gemeinsamen 2-Tage-Block; Nächte direkt vor (Fr-Sa) oder nach (Mo-Di) dem Wochenende sind streng verboten.
         """)
 
     with st.expander("🌙 Nachtdienste – Besetzung & Rollen"):
@@ -758,9 +762,10 @@ def page_regeln() -> None:
 
     with st.expander("⏱️ Zeitliche Regeln (Sperren & Abstände)"):
         st.markdown("""
-**3-Wochen-Regel (Blockabstand):**
-- Pro Person darf max. 1 zusammenhängender Schichtblock in einem rollierenden **21-Tage-Fenster** beginnen.
-- *Ausnahme Feiertage*: Wurde ein Schichtblock durch einen vorab zugewiesenen Feiertag erzwungen, gilt ein entspanntes Fenster von nur **7 Tagen** (statt 21).
+**Blockabstand (Mindestabstand zwischen Schichtblöcken):**
+- **TFA & Azubi**: Pro Person darf max. 1 zusammenhängender Schichtblock in einem rollierenden **21-Tage-Fenster** beginnen.
+- **Intern**: Gilt ein verkürzter Mindestabstand von **10 Tagen** (`intern_block_gap_days`) zwischen zwei Blöcken (Nachtblock oder Wochenende).
+- *Ausnahme Feiertage*: Wurde ein Schichtblock durch einen vorab zugewiesenen Feiertag erzwungen, gilt ein entspanntes Fenster von nur **7 Tagen**.
 - Über Quartalsgrenzen hinweg wird die Regel weich erzwungen (Verletzungen sind stark bestraft, aber nicht absolut verboten).
 
 **Nacht/Tag-Konflikt:**
@@ -933,6 +938,10 @@ def page_plan_erstellen() -> None:
                 "Feiertag-Abstand (Tage)", min_value=1, max_value=21, value=7, step=1,
                 help="Verkürzter Mindestabstand nach einem Feiertagsdienst.",
             )
+            intern_block_gap_days = st.number_input(
+                "Intern Block-Abstand (Tage)", min_value=5, max_value=30, value=10, step=1,
+                help="Mindestabstand zwischen zwei Blöcken (Nacht oder WE) für Interns (Standard: 10).",
+            )
             random_seed_val = st.number_input(
                 "Seed", min_value=0, max_value=9999, value=42, step=1,
                 help="Gleicher Seed ergibt bei gleichen Daten denselben Plan.",
@@ -942,6 +951,7 @@ def page_plan_erstellen() -> None:
             intern_max_nights=int(intern_max_nights),
             block_gap_days=int(block_gap_days),
             holiday_gap_days=int(holiday_gap_days),
+            intern_block_gap_days=int(intern_block_gap_days),
         )
         st.session_state["scheduler_config"] = scheduler_config
 
@@ -990,7 +1000,7 @@ def page_plan_erstellen() -> None:
                     st.session_state.schedule = best_schedule
 
                     # Validate
-                    validation = validate_schedule(best_schedule, staff_list)
+                    validation = validate_schedule(best_schedule, staff_list, config=_cfg)
                     st.session_state.validation_result = validation
 
                     st.success(
@@ -1092,6 +1102,7 @@ def page_plan_anzeigen() -> None:
         schedule,
         st.session_state.previous_context,
         st.session_state.get("scheduler_config") or SchedulerConfig(),
+        staff_list=staff_list,
     )
     boundary_exception_dates = {
         (exception.staff_identifier, exception.current_block_start)
@@ -1134,9 +1145,11 @@ def page_plan_anzeigen() -> None:
             (ShiftType.SATURDAY_10_19, "☀️ Sa 10-19: Azubidienst"),
             (ShiftType.SATURDAY_10_21, "☀️ Sa 10-21: Anmeldung/Ruf"),
             (ShiftType.SATURDAY_10_22, "☀️ Sa 10-22: Rufbereitschaft"),
+            (ShiftType.SATURDAY_INTERN, "☀️ Sa 08:30-20:30: Intern"),
             (ShiftType.SUNDAY_8_20, "☀️ So 08-20: Dienst"),
             (ShiftType.SUNDAY_10_22, "☀️ So 10-22: Rufbereitschaft"),
             (ShiftType.SUNDAY_8_2030, "☀️ So 08-20:30: Azubi/Ruf"),
+            (ShiftType.SUNDAY_INTERN, "☀️ So 08:30-20:30: Intern"),
         ]
 
         # Map (Date, Shift) -> [Staff1, Staff2]
@@ -1321,9 +1334,12 @@ def page_plan_anzeigen() -> None:
                 vacation_days = total_quarter_days - avail_days
                 presence_factor = avail_days / total_quarter_days if total_quarter_days > 0 else 1.0
                 
+                # For Interns, Track 1 fairness is strictly effective nights
+                relevant_service = effective_nights if staff.beruf == Beruf.INTERN else total_notdienst
+
                 # FTE Scaling: normalize by hours AND presence
                 if staff.hours > 0 and presence_factor > 0:
-                    total_notdienst_fte = (total_notdienst / staff.hours / presence_factor) * 40
+                    total_notdienst_fte = (relevant_service / staff.hours / presence_factor) * 40
                 else:
                     total_notdienst_fte = 0.0
                 
@@ -1420,14 +1436,26 @@ def page_plan_anzeigen() -> None:
                         spread = g_vals.max() - g_vals.min()
                         c1, c2 = st.columns(2)
                         with c1:
-                            st.metric("Ø Norm./40h", f"{g_wmean:.2f}",
+                            st.metric("Ø Norm./40h" if beruf != Beruf.INTERN else "Track 1: Ø Nächte/40h", f"{g_wmean:.2f}",
                                       help="Gewichteter Durchschnitt (Std. × Anwesenheit)")
                             st.metric("Min", f"{g_vals.min():.2f}")
                         with c2:
                             st.metric("Spread", f"{spread:.2f}", help="Max - Min (niedriger = fairer)")
                             st.metric("Max", f"{g_vals.max():.2f}")
+                        if beruf == Beruf.INTERN:
+                            we_vals = group_df["WE"]
+                            we_spread = we_vals.max() - we_vals.min()
+                            w1, w2 = st.columns(2)
+                            with w1:
+                                st.metric("Track 2: Ø WE", f"{we_vals.mean():.1f}")
+                                st.metric("Min WE", f"{we_vals.min():.0f}")
+                            with w2:
+                                st.metric("WE-Spread", f"{we_spread:.0f}")
+                                st.metric("Max WE", f"{we_vals.max():.0f}")
                     elif len(group_df) == 1:
-                        st.metric("Norm./40h", f"{group_df['Norm./40h'].iloc[0]:.2f}")
+                        st.metric("Norm./40h" if beruf != Beruf.INTERN else "Track 1: Nächte/40h", f"{group_df['Norm./40h'].iloc[0]:.2f}")
+                        if beruf == Beruf.INTERN:
+                            st.metric("Track 2: WE", f"{group_df['WE'].iloc[0]:.0f}")
                         st.caption("Nur 1 MA — kein Vergleich möglich")
                     else:
                         st.caption("Keine Mitarbeiter in dieser Gruppe")
@@ -1799,7 +1827,9 @@ def page_plan_anzeigen() -> None:
             # Map Constraint Name -> Description
             known_constraints = {
                 "Minor Sunday Ban": "Keine Minderjährigen am Sonntag",
-                "Intern Weekend Ban": "Keine Interns am Wochenende",
+                "Intern Weekend Exclusivity": "Interns nur auf Sa_Intern/So_Intern, andere Rollen nicht auf Intern-WE",
+                "Intern Coupled Weekend": "Intern Sa_Intern und So_Intern müssen als Paar vergeben werden",
+                "Intern Monthly Weekend Cap": "Max. 1 Intern-Wochenende pro Kalendermonat",
                 "Azubi Night Pairing": "Azubi Nachtdienst nur mit TFA/Intern",
                 "Multiple Azubis on Night": "Max. 1 Azubi pro Nachtschicht",
                 "Open Night Headcount": "Offene Nacht: Exakt 2 Personen (So-Mo, Mo-Di)",
@@ -1808,6 +1838,8 @@ def page_plan_anzeigen() -> None:
                 "ND Alone Improper Pairing": "nd_alone=True muss alleine arbeiten",
                 "Min Consecutive Nights": "Min. aufeinanderfolgende Nächte (nd_min_consecutive)",
                 "Night/Day Conflict": "Ruhezeiten: Kein Tagdienst an/nach Nachtdienst",
+                "3-Week Block Limit": "Mindestabstand zwischen Blöcken (TFA/Azubi 21 Tage)",
+                "10-Day Block Limit": "Mindestabstand zwischen Blöcken (Intern 10 Tage)",
                 "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
                 "Weekend Isolation": "Wochenend-Schichten nicht in Blöcken",
                 "ND Exception Weekday": "Beachtung blockierter Wochentage (nd_exceptions)",

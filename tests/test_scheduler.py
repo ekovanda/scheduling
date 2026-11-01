@@ -189,9 +189,9 @@ def test_generate_quarter_shifts() -> None:
 
     # Q2 has 91 days (April=30, May=31, June=30)
     # Each day: 1 night shift
-    # Each Saturday (13): 3 shifts
-    # Each Sunday (13): 3 shifts
-    # Total: 91 nights + 13*3 Sat + 13*3 Sun = 91 + 39 + 39 = 169
+    # Each Saturday (13): 4 shifts (3 regular + 1 Sa_Intern)
+    # Each Sunday (13): 4 shifts (3 regular + 1 So_Intern)
+    # Total: 91 nights + 13*4 Sat + 13*4 Sun = 91 + 52 + 52 = 195
 
     # Count shift types
     night_shifts = [s for s in shifts if s.is_night_shift()]
@@ -199,9 +199,9 @@ def test_generate_quarter_shifts() -> None:
     sunday_shifts = [s for s in shifts if s.shift_type.value.startswith("So_")]
 
     assert len(night_shifts) == 91
-    assert len(saturday_shifts) == 39  # 13 weeks * 3 shifts
-    assert len(sunday_shifts) == 39  # 13 weeks * 3 shifts
-    assert len(shifts) == 169
+    assert len(saturday_shifts) == 52  # 13 weeks * 4 shifts
+    assert len(sunday_shifts) == 52  # 13 weeks * 4 shifts
+    assert len(shifts) == 195
 
 
 def test_three_week_block_constraint() -> None:

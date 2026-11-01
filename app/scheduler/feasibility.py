@@ -169,9 +169,14 @@ def analyze_capacity(
     # Pre-compute per-staff block counts (used in Check A and Check B)
     per_staff_blocks: dict[str, tuple[int, int]] = {}
     for staff in non_azubi_nd + azubi_nd:
+        gap = (
+            config.intern_block_gap_days
+            if staff.beruf == Beruf.INTERN
+            else config.block_gap_days
+        )
         n_blocks, avail = _count_viable_blocks(
             staff, vacations, pre_assigned, quarter_start, quarter_end,
-            config.block_gap_days,
+            gap,
         )
         per_staff_blocks[staff.identifier] = (n_blocks, len(avail))
 
@@ -308,12 +313,14 @@ def analyze_capacity(
     if intern_nd:
         intern_max_total = len(intern_nd) * config.intern_max_nights
         intern_min_total = len(intern_nd) * config.intern_min_nights
+        intern_we_max = len(intern_nd) * 3
         checks.append(FeasibilityCheck(
-            name="Intern Nacht-Kapazität",
+            name="Intern Kapazität (Nächte & Wochenenden)",
             status="ok",
             message=(
                 f"{len(intern_nd)} Intern(s): {intern_min_total}–{intern_max_total} "
-                f"Nächte gesamt ({config.intern_min_nights}–{config.intern_max_nights}/Person)."
+                f"Nächte ({config.intern_min_nights}–{config.intern_max_nights}/Person) & "
+                f"max. {intern_we_max} Wochenenden (≤1/Monat/Person)."
             ),
         ))
 
