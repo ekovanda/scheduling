@@ -178,6 +178,7 @@ def generate_schedule_cpsat(
 
     # Staff subsets
     intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
+    vet_staff = [s for s in staff_list if s.beruf == Beruf.VET]
 
     # Night shifts categorized into open and closed nights
     open_nights = [s for s in night_shifts if s.is_open_night()]
@@ -320,6 +321,132 @@ def generate_schedule_cpsat(
                 ]
                 if month_sat_vars:
                     model.Add(sum(month_sat_vars) <= 1)
+
+    # 1c. Tierarzt-Nachtdienst-Entlastung (Midweek Vet Night Shift Relief)
+    # H-TA-1 (2-night atomic blocks), H-TA-3 (1x per 2 months), H-TA-4 (Cross-quarter transition)
+    b_DiMi: dict[tuple[str, tuple[int, int]], cp_model.BoolVar] = {}
+    b_MiDo: dict[tuple[str, tuple[int, int]], cp_model.BoolVar] = {}
+    vet_blocks_by_month: dict[tuple[str, tuple[int, int]], list[cp_model.BoolVar]] = defaultdict(list)
+    all_vet_b_vars: list[cp_model.BoolVar] = []
+
+    if vet_staff:
+        # Collect distinct weeks that have any Di, Mi, or Do night in the quarter
+        weeks_map: dict[tuple[int, int], dict[int, date]] = defaultdict(dict)
+        for s in night_shifts:
+            wd = s.shift_date.weekday()  # 1=Tue, 2=Wed, 3=Thu
+            if wd in (1, 2, 3):
+                iso = s.shift_date.isocalendar()
+                w_key = (iso.year, iso.week)
+                weeks_map[w_key][wd] = s.shift_date
+
+        sorted_w_keys = sorted(weeks_map.keys())
+
+        for w_key in sorted_w_keys:
+            d_di = weeks_map[w_key].get(1)
+            d_mi = weeks_map[w_key].get(2)
+            d_do = weeks_map[w_key].get(3)
+
+            for v in vet_staff:
+                # b_DiMi exists iff both Tue and Wed exist in quarter and v can work both (no vacation)
+                if (
+                    d_di is not None
+                    and (v.identifier, d_di, ShiftType.NIGHT_TUE_WED) in x
+                    and d_mi is not None
+                    and (v.identifier, d_mi, ShiftType.NIGHT_WED_THU) in x
+                ):
+                    b_dimi_var = model.NewBoolVar(f"b_dimi_{v.identifier}_{w_key[0]}_{w_key[1]}")
+                    b_DiMi[(v.identifier, w_key)] = b_dimi_var
+                    all_vet_b_vars.append(b_dimi_var)
+                    vet_blocks_by_month[(v.identifier, (d_di.year, d_di.month))].append(b_dimi_var)
+
+                # b_MiDo exists iff both Wed and Thu exist in quarter and v can work both (no vacation)
+                if (
+                    d_mi is not None
+                    and (v.identifier, d_mi, ShiftType.NIGHT_WED_THU) in x
+                    and d_do is not None
+                    and (v.identifier, d_do, ShiftType.NIGHT_THU_FRI) in x
+                ):
+                    b_mido_var = model.NewBoolVar(f"b_mido_{v.identifier}_{w_key[0]}_{w_key[1]}")
+                    b_MiDo[(v.identifier, w_key)] = b_mido_var
+                    all_vet_b_vars.append(b_mido_var)
+                    vet_blocks_by_month[(v.identifier, (d_mi.year, d_mi.month))].append(b_mido_var)
+
+                # At most 1 block per week per vet: b_DiMi + b_MiDo <= 1
+                v_week_b = [
+                    b for b in [b_DiMi.get((v.identifier, w_key)), b_MiDo.get((v.identifier, w_key))]
+                    if b is not None
+                ]
+                if len(v_week_b) > 1:
+                    model.Add(sum(v_week_b) <= 1)
+
+                # H-TA-1: Link shift decision variables x to block indicators
+                if d_di is not None and (v.identifier, d_di, ShiftType.NIGHT_TUE_WED) in x:
+                    if (v.identifier, w_key) in b_DiMi:
+                        model.Add(x[(v.identifier, d_di, ShiftType.NIGHT_TUE_WED)] == b_DiMi[(v.identifier, w_key)])
+                    else:
+                        model.Add(x[(v.identifier, d_di, ShiftType.NIGHT_TUE_WED)] == 0)
+
+                if d_mi is not None and (v.identifier, d_mi, ShiftType.NIGHT_WED_THU) in x:
+                    active_wed = [
+                        b for b in [b_DiMi.get((v.identifier, w_key)), b_MiDo.get((v.identifier, w_key))]
+                        if b is not None
+                    ]
+                    if active_wed:
+                        model.Add(x[(v.identifier, d_mi, ShiftType.NIGHT_WED_THU)] == sum(active_wed))
+                    else:
+                        model.Add(x[(v.identifier, d_mi, ShiftType.NIGHT_WED_THU)] == 0)
+
+                if d_do is not None and (v.identifier, d_do, ShiftType.NIGHT_THU_FRI) in x:
+                    if (v.identifier, w_key) in b_MiDo:
+                        model.Add(x[(v.identifier, d_do, ShiftType.NIGHT_THU_FRI)] == b_MiDo[(v.identifier, w_key)])
+                    else:
+                        model.Add(x[(v.identifier, d_do, ShiftType.NIGHT_THU_FRI)] == 0)
+
+            # At most 1 Vet block per week across all Tierärzte
+            all_b_in_week = [
+                b for v in vet_staff
+                for b in [b_DiMi.get((v.identifier, w_key)), b_MiDo.get((v.identifier, w_key))]
+                if b is not None
+            ]
+            if len(all_b_in_week) > 1:
+                model.Add(sum(all_b_in_week) <= 1)
+
+        # H-TA-3: 1x per 2 months per Vet (calendar month boundary)
+        sorted_months = sorted(list({(s.shift_date.year, s.shift_date.month) for s in shifts}))
+        for i in range(len(sorted_months) - 1):
+            m1 = sorted_months[i]
+            m2 = sorted_months[i + 1]
+            if (m2[0] * 12 + m2[1]) == (m1[0] * 12 + m1[1]) + 1:
+                for v in vet_staff:
+                    m1_m2_blocks = (
+                        vet_blocks_by_month.get((v.identifier, m1), [])
+                        + vet_blocks_by_month.get((v.identifier, m2), [])
+                    )
+                    if len(m1_m2_blocks) > 1:
+                        model.Add(sum(m1_m2_blocks) <= 1)
+
+        # H-TA-4: Cross-quarter transition (PreviousPlanContext)
+        if previous_context:
+            active_vet_ids = set(getattr(previous_context, "vet_active_last_month_ids", []))
+            last_prev_month = previous_context.quarter_end.month
+            for ta in previous_context.trailing_assignments:
+                if (
+                    ta.shift_date.month == last_prev_month
+                    and ta.shift_type in (
+                        ShiftType.NIGHT_TUE_WED,
+                        ShiftType.NIGHT_WED_THU,
+                        ShiftType.NIGHT_THU_FRI,
+                    )
+                    and any(s.identifier == ta.staff_identifier and s.beruf == Beruf.VET for s in staff_list)
+                ):
+                    active_vet_ids.add(ta.staff_identifier)
+
+            m_first = (quarter_start.year, quarter_start.month)
+            for v in vet_staff:
+                if v.identifier in active_vet_ids:
+                    first_month_b = vet_blocks_by_month.get((v.identifier, m_first), [])
+                    for b in first_month_b:
+                        model.Add(b == 0)
 
     # 2. Night shift coverage:
     #    - Open nights (Sun-Mon, Mon-Tue): exactly 2 people, at least 1 TFA, max 1 Azubi
@@ -723,6 +850,35 @@ def generate_schedule_cpsat(
                     model.Add(x[sat_key] + x[n_key] - 1 <= close_var)
                     objective_terms.append(W_intern_spacing * (14 - gap) * close_var)
 
+    # -------------------------------------------------------------------------
+    # Tierarzt Relief & Fairness Objectives (PRD 4.3)
+    # -------------------------------------------------------------------------
+    # 1. Primary: Maximize Vet relief blocks (W_vet = 100_000)
+    for b in all_vet_b_vars:
+        objective_terms.append(-100000 * b)
+
+    # 2. Secondary: Vet block fairness across available Tierärzte (W_vet_fairness = 500)
+    if len(vet_staff) >= 2 and vet_staff:
+        vet_block_counts: dict[str, cp_model.IntVar] = {}
+        for v in vet_staff:
+            v_all_b = [
+                b for w_key in sorted_w_keys
+                for b in [b_DiMi.get((v.identifier, w_key)), b_MiDo.get((v.identifier, w_key))]
+                if b is not None
+            ]
+            v_cnt = model.NewIntVar(0, len(sorted_w_keys), f"vet_blocks_{v.identifier}")
+            model.Add(v_cnt == sum(v_all_b))
+            vet_block_counts[v.identifier] = v_cnt
+
+        max_vb = model.NewIntVar(0, len(sorted_w_keys), "max_vet_blocks")
+        min_vb = model.NewIntVar(0, len(sorted_w_keys), "min_vet_blocks")
+        for v in vet_staff:
+            model.Add(max_vb >= vet_block_counts[v.identifier])
+            model.Add(min_vb <= vet_block_counts[v.identifier])
+        diff_vb = model.NewIntVar(0, len(sorted_w_keys), "range_vet_blocks")
+        model.Add(diff_vb == max_vb - min_vb)
+        objective_terms.append(500 * diff_vb)
+
     # =========================================================================
     # SECONDARY OBJECTIVE: Type balance (nights vs weekends) within groups
     # =========================================================================
@@ -896,6 +1052,8 @@ def _add_block_constraints(
     all_dates = sorted(shifts_by_date.keys())
 
     for staff in staff_list:
+        if staff.beruf == Beruf.VET:
+            continue
         staff_gap_days = (
             intern_block_gap_days
             if staff.beruf == Beruf.INTERN
@@ -1012,7 +1170,7 @@ def _add_nd_max_consecutive_constraints(
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
 
     for staff in staff_list:
-        if not staff.nd_possible or staff.nd_max_consecutive is None:
+        if not staff.nd_possible or staff.beruf == Beruf.VET or staff.nd_max_consecutive is None:
             continue
 
         max_consecutive = staff.nd_max_consecutive
@@ -1086,7 +1244,7 @@ def _add_min_consecutive_nights_constraints(
     sorted_nights = sorted(night_shifts, key=lambda s: s.shift_date)
     
     for staff in staff_list:
-        if not staff.nd_possible:
+        if not staff.nd_possible or staff.beruf == Beruf.VET:
             continue
         
         min_consecutive = staff.nd_min_consecutive
@@ -1556,13 +1714,13 @@ def _add_min_participation_constraints(
             if (staff.identifier, s.shift_date, s.shift_type) in x
         ]
         
-        if weekend_vars and staff.beruf != Beruf.INTERN:
+        if weekend_vars and staff.beruf not in (Beruf.INTERN, Beruf.VET):
             # Require at least 1 weekend shift
             model.Add(sum(weekend_vars) >= 1)
             info["weekend_required"] = True
         
-        # Night participation: staff with nd_possible=True
-        if staff.nd_possible:
+        # Night participation: staff with nd_possible=True (excluding VET)
+        if staff.nd_possible and staff.beruf != Beruf.VET:
             # Collect the dates for which decision variables exist
             # (vacation days are already excluded during variable creation)
             night_dates_with_vars: list[date] = sorted({
@@ -1669,7 +1827,7 @@ def _diagnose_infeasibility(
 
     # --- min_consecutive vs nd_exceptions (static check, no vacation data needed) ---
     for staff in staff_list:
-        if not staff.nd_possible:
+        if not staff.nd_possible or staff.beruf == Beruf.VET:
             continue
         available_night_types = 7 - len(staff.nd_exceptions)
         if 0 < available_night_types < staff.nd_min_consecutive:

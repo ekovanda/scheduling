@@ -1203,15 +1203,15 @@ def test_carry_forward_delta_affects_fairness() -> None:
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
     quarter_start = date(2026, 4, 1)
 
-    # AA and AF are both 40h TFAs — use a large delta contrast to make the
-    # expected ordering robust to solver variation.
+    # JH and AF are both 40h TFAs with identical constraints (nd_min=2, nd_max=3, nd_alone=True)
+    # — use a large delta contrast to make the expected ordering robust to solver variation.
     previous_context = PreviousPlanContext(
         quarter_start=date(2026, 1, 1),
         quarter_end=date(2026, 3, 31),
         carry_forward=[
             CarryForwardEntry(
-                identifier="AA",
-                name="Anika A",
+                identifier="JH",
+                name="Julia H",
                 beruf="TFA",
                 hours=40,
                 effective_nights=10.0,
@@ -1251,10 +1251,10 @@ def test_carry_forward_delta_affects_fairness() -> None:
             if a.staff_identifier == identifier and a.shift.is_night_shift()
         )
 
-    # AA (delta=+5) should get no MORE nights than AF (delta=-2)
-    assert count_nights("AA") <= count_nights("AF"), (
-        f"AA with carry_forward_delta=+5 should get ≤ nights vs AF with delta=-2. "
-        f"AA={count_nights('AA')}, AF={count_nights('AF')}"
+    # JH (delta=+5) should get no MORE nights than AF (delta=-2)
+    assert count_nights("JH") <= count_nights("AF"), (
+        f"JH with carry_forward_delta=+5 should get ≤ nights vs AF with delta=-2. "
+        f"JH={count_nights('JH')}, AF={count_nights('AF')}"
     )
 
 

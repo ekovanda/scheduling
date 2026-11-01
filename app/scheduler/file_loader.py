@@ -270,12 +270,25 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
                     f"Expected JSON array or comma-separated integers."
                 ) from e
 
+        raw_beruf = (_safe_get_value(row, col_beruf) or "TFA").strip()
+        beruf_upper = raw_beruf.upper()
+        if beruf_upper in ("VET", "TIERARZT", "TA_ENTLASTUNG"):
+            beruf_val = "Vet"
+        elif beruf_upper == "TA":
+            beruf_val = "Intern"
+        elif beruf_upper in ("AZUBI", "AUSZUBILDENDE", "AUSZUBILDENDER"):
+            beruf_val = "Azubi"
+        elif beruf_upper == "TFA":
+            beruf_val = "TFA"
+        else:
+            beruf_val = raw_beruf
+
         staff_dict[identifier] = {
             "name": _safe_get_value(row, col_name) or identifier,
             "identifier": identifier,
             "adult": parse_bool(_safe_get_value(row, col_adult)),
             "hours": hours,
-            "beruf": (_safe_get_value(row, col_beruf) or "TFA").strip(),
+            "beruf": beruf_val,
             "abteilung": _safe_get_value(row, col_abteilung, "other"),
             "reception": parse_bool(_safe_get_value(row, col_reception)),
             "nd_possible": parse_bool(_safe_get_value(row, col_nd_possible)),

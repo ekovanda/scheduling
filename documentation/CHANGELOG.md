@@ -9,6 +9,57 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.5.0] - 2026-11-01
+
+### Added: Offene/Geschlossene Nächte, Intern-Wochenenden & Tierarzt-Entlastung
+
+Umfassendes Release mit drei zentralen Erweiterungen der Dienstplanungslogik zur Entlastung des Teams und präzisen Abbildung des klinischen Notdienstbetriebs:
+
+#### 1. Offene und geschlossene Nachtdienste (`PRD_FEATURE_OPEN_CLOSED_NIGHTS`)
+- **Schicht-Kategorisierung:**
+  - **Offene Nächte:** Sonntag→Montag (`N_So-Mo`) und Montag→Dienstag (`N_Mo-Di`) mit aktivem Klinik-/Praxisbetrieb erfordern zwingend eine Kopfzahl von exakt 2 Personen.
+  - **Geschlossene Nächte:** Dienstag→Mittwoch bis Samstag→Sonntag (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`, `N_Fr-Sa`, `N_Sa-So`).
+- **Besetzungsregeln & Qualifikation:**
+  - Auf offenen Nächten ist mindestens eine erfahrene TFA verpflichtend (`Open Night Missing TFA`).
+  - Zulässige Besetzungen für offene Nächte: TFA + TFA, TFA + Intern, TFA + Azubi. Verboten: Intern + Intern sowie Intern + Azubi.
+  - Mitarbeiter mit `nd_alone=True` dürfen auf offenen Nächten im Team eingeteilt werden (auf geschlossenen Nächten müssen sie weiterhin strikt allein arbeiten).
+- **Differenzierte Fairness-Gewichtung:**
+  - Auf offenen Nächten zählt der Dienst für TFAs als halber Notdienst (Gewichtung 0.5×), für Azubis und Interns jedoch voll (Gewichtung 1.0× als Ausbildungs-/Weiterbildungsdienst).
+
+#### 2. Intern-Wochenenddienste & 2-Track-Fairness (`PRD_INTERN_WEEKEND_SHIFTS`)
+- **Spezifische Wochenendschichten:**
+  - Einführung von `ShiftType.SATURDAY_INTERN` (`Sa_Intern`) und `ShiftType.SUNDAY_INTERN` (`So_Intern`).
+  - Strikte Rollen-Exklusivität: Nur Interns dürfen diese Schichten besetzen; reguläre Wochenendschichten (`Sa_10-21`, `So_8-20` etc.) bleiben TFAs und volljährigen Azubis vorbehalten.
+- **Atomare Wochenend-Kopplung (H-INT-1):**
+  - Samstag und Sonntag eines Wochenendes werden stets als unteilbares Paar an denselben Intern vergeben; Einzeltage und gesplittete Wochenenden sind ausgeschlossen.
+- **Monatliche Obergrenze & Mindestabstand (H-INT-2 & H-INT-4):**
+  - Maximal 1 Intern-Wochenende pro Kalendermonat (ca. 3 Wochenenden pro Quartal bei 4 Interns).
+  - Interns erhalten einen verkürzten Mindestabstand zwischen Einsätzen von 10 Tagen (im Vergleich zu 21 Tagen bei TFAs/Azubis).
+- **Zwei-Track-Fairness:**
+  - Track 1 steuert die Nachtdienste (strikter Korridor von 6–9 Nächten pro Quartal).
+  - Track 2 steuert die Intern-Wochenenden mit gleichmäßiger Verteilung (Differenz maximal 1 Wochenende).
+
+#### 3. Tierarzt-Nachtdienst-Entlastung (`PRD_tierarzt_nachtdienst_entlastung`)
+- **Neue Mitarbeiterrolle `Beruf.VET` ("Vet"):**
+  - Feste Invarianten über Modell-Validierung: `adult=True`, `hours=0`, `abteilung=OTHER`, `reception=False`, `nd_possible=True`, `nd_alone=True`, `nd_min_consecutive=2`, `nd_max_consecutive=2`.
+  - Rollen-Synonyme ("Vet", "Tierarzt", "TA_Entlastung") werden beim Datenimport automatisch normalisiert.
+- **Gezielte Midweek-Entlastung (Dienstag–Donnerstag):**
+  - Tierärzte dürfen ausschließlich geschlossene Nächte im Zeitfenster `N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr` übernehmen.
+  - **Exakte 2-Nächte-Blöcke:** Einsätze erfolgen zwingend als 2-Nächte-Block am Stück (Di+Mi oder Mi+Do); Einzeltage oder 3er-Blöcke sind unzulässig.
+  - **Strikter Alleindienst:** Bei Tierarzt-Einsatz ist die Kopfzahl exakt 1 (keine Begleitung durch TFA, Intern oder Azubi).
+- **Häufigkeitsgrenze & Quartalsübergang:**
+  - Maximal 1 Block alle 2 Monate pro Tierarzt (strikte Kalendermonatsgrenze: Einsatz im Monat $m$ sperrt $m+1$).
+  - Historische Dienste am Ende des Vorquartals werden über `PreviousPlanContext.vet_active_last_month_ids` importiert und sperren den Tierarzt im ersten Monat des Folgequartals.
+- **Solver-Priorisierung & Ausweichlogik:**
+  - Hohe Zielgewichtung ($-100\,000$ pro Block) maximiert die TFA-Entlastung durch verfügbare Tierärzte; Sekundärziel ($500$) sorgt für faire Verteilung unter Tierärzten.
+  - In Wochen ohne verfügbaren Tierarzt greifen nahtlos die regulären TFA/Intern-Besetzungsregeln.
+- **Kapazitätsanalyse (Check F):**
+  - Neuer Check F in der Machbarkeitsprüfung quantifiziert verfügbare Tierärzte, Entlastungsblöcke und Nächte und rechnet diese auf den geschlossenen Nachtbedarf an.
+- **UI- und Export-Anpassungen:**
+  - Anzeige von Tierärzten in der Personal- und Kalenderansicht (Präfix `🩺 [TA]`).
+  - Eigene Tierarzt-Statistiktabelle ohne Division durch 0-Stunden.
+  - Vollständiger Re-Import und Excel-Export von Tierarzt-Einsätzen.
+
 ## [1.2.0] - 2026-07-31
 
 ### Added: visual review of cross-quarter block-gap exceptions

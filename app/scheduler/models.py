@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .file_loader import load_staff_from_file as _load_staff_dict
 from .file_loader import load_vacations_from_file as _load_vacations_dict
@@ -22,6 +22,7 @@ class Beruf(str, Enum):
     TFA = "TFA"
     AZUBI = "Azubi"
     INTERN = "Intern"  # Formerly "TA" - veterinary interns
+    VET = "Vet"  # Tierärzte für Nachtdienst-Entlastung
 
 
 class Abteilung(str, Enum):
@@ -57,18 +58,58 @@ class Staff(BaseModel):
 
     name: str
     identifier: str
-    adult: bool
-    hours: int  # Weekly contracted hours
-    beruf: Beruf
+    adult: bool = True
+    hours: int = 40  # Weekly contracted hours
+    beruf: Beruf = Beruf.TFA
     abteilung: Abteilung = Abteilung.OTHER  # Department assignment
-    reception: bool  # Can work reception/Anmeldung
-    nd_possible: bool  # Can do night shifts at all
-    nd_alone: bool  # Can work nights solo (False = must pair)
+    reception: bool = False  # Can work reception/Anmeldung
+    nd_possible: bool = True  # Can do night shifts at all
+    nd_alone: bool = True  # Can work nights solo (False = must pair)
     nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
     nd_min_consecutive: int = 2  # Min consecutive nights required (Azubis=1, most TFA/Intern=2)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
     birthday: str | None = None  # Birthday in MM-DD format (no year), e.g. "04-15"
     available_from: date | None = None  # First date available for scheduling (new employees)
+
+    @field_validator("beruf", mode="before")
+    @classmethod
+    def parse_beruf(cls, v: Any) -> Any:
+        """Parse role/profession and normalize synonyms."""
+        if isinstance(v, str):
+            val = v.strip()
+            val_upper = val.upper()
+            if val_upper in ("VET", "TIERARZT", "TA_ENTLASTUNG"):
+                return Beruf.VET
+            if val_upper == "TA":
+                return Beruf.INTERN
+            if val_upper in ("AZUBI", "AUSZUBILDENDE", "AUSZUBILDENDER"):
+                return Beruf.AZUBI
+            if val_upper == "TFA":
+                return Beruf.TFA
+            return Beruf(val)
+        return v
+
+    @field_validator("hours", mode="before")
+    @classmethod
+    def parse_hours(cls, v: Any) -> int:
+        """Parse contracted hours from CSV (handles empty strings and floats)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return 0
+        return int(float(v))
+
+    @model_validator(mode="after")
+    def _enforce_vet_invariants(self) -> "Staff":
+        """Enforce strict invariant attributes for Tierärzte (Beruf.VET)."""
+        if self.beruf == Beruf.VET:
+            self.adult = True
+            self.hours = 0
+            self.abteilung = Abteilung.OTHER
+            self.reception = False
+            self.nd_possible = True
+            self.nd_alone = True
+            self.nd_min_consecutive = 2
+            self.nd_max_consecutive = 2
+        return self
 
     @field_validator("birthday", mode="before")
     @classmethod
@@ -148,6 +189,17 @@ class Staff(BaseModel):
 
     def can_work_shift(self, shift_type: ShiftType, shift_date: date) -> bool:
         """Check basic eligibility for a shift type on a given date."""
+        if self.beruf == Beruf.VET:
+            if not self.nd_possible:
+                return False
+            if shift_date.isoweekday() in self.nd_exceptions:
+                return False
+            return shift_type in (
+                ShiftType.NIGHT_TUE_WED,
+                ShiftType.NIGHT_WED_THU,
+                ShiftType.NIGHT_THU_FRI,
+            )
+
         # Minors cannot work Sundays
         if not self.adult and shift_type.value.startswith("So_"):
             return False
@@ -303,11 +355,11 @@ def load_staff_from_csv(csv_path: Path) -> list[Staff]:
         reader = csv.DictReader(f)
         for row in reader:
             # Convert string booleans
-            row["adult"] = row["adult"].lower() == "true"
-            row["reception"] = row["reception"].lower() == "true"
-            row["nd_possible"] = row["nd_possible"].lower() == "true"
-            row["nd_alone"] = row["nd_alone"].lower() == "true"
-            row["hours"] = int(row["hours"])
+            row["adult"] = str(row.get("adult", "true")).lower() == "true"
+            row["reception"] = str(row.get("reception", "false")).lower() == "true"
+            row["nd_possible"] = str(row.get("nd_possible", "true")).lower() == "true"
+            row["nd_alone"] = str(row.get("nd_alone", "true")).lower() == "true"
+            row["hours"] = int(row["hours"]) if row.get("hours") else 0
             # birthday column is optional for backwards compatibility
             if "birthday" not in row:
                 row["birthday"] = None
@@ -641,6 +693,7 @@ class PreviousPlanContext(BaseModel):
     quarter_end: date
     carry_forward: list[CarryForwardEntry]
     trailing_assignments: list[TrailingAssignment]
+    vet_active_last_month_ids: list[str] = Field(default_factory=list)
 
 
 def compute_carry_forward(
@@ -666,6 +719,9 @@ def compute_carry_forward(
     all_entries: list[dict] = []
 
     for staff in staff_list:
+        if staff.beruf == Beruf.VET:
+            continue
+
         avail_days = calculate_available_days(
             staff.identifier, vacations, quarter_start, quarter_end,
             effective_start=staff.available_from,
@@ -764,11 +820,31 @@ def build_previous_context(
                 )
             )
 
+    vet_identifiers = {s.identifier for s in staff_list if s.beruf == Beruf.VET}
+    vet_active_last_month: set[str] = set()
+    last_month = quarter_end.month
+    for a in schedule.assignments:
+        if (
+            a.shift.shift_date.month == last_month
+            and a.shift.shift_type in (
+                ShiftType.NIGHT_TUE_WED,
+                ShiftType.NIGHT_WED_THU,
+                ShiftType.NIGHT_THU_FRI,
+            )
+        ):
+            if a.staff_identifier in vet_identifiers:
+                vet_active_last_month.add(a.staff_identifier)
+            else:
+                matching = [s for s in staff_list if s.identifier == a.staff_identifier]
+                if not matching and (a.staff_identifier.startswith("TA_") or "vet" in a.staff_identifier.lower()):
+                    vet_active_last_month.add(a.staff_identifier)
+
     return PreviousPlanContext(
         quarter_start=schedule.quarter_start,
         quarter_end=schedule.quarter_end,
         carry_forward=compute_carry_forward(schedule, staff_list, vacations),
         trailing_assignments=trailing,
+        vet_active_last_month_ids=sorted(vet_active_last_month),
     )
 
 

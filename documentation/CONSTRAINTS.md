@@ -7,19 +7,19 @@
 | ID | Constraint | Rationale |
 |----|------------|-----------|
 | H1 | Minors cannot work Sundays | German labor law |
-| H2 | Interns never work weekends | Contract/role definition |
+| H2 | Interns work only dedicated `Sa_Intern` / `So_Intern` weekends; non-interns forbidden on them | Contract/role definition |
 | H3 | Azubis must pair with non-Azubi on nights | Safety requirement |
-| H4 | Two Azubis can never pair on nights | Supervision requirement |
-| H5 | nd_alone=False must be paired (regular nights) | Employee capability |
-| H6 | nd_alone=True must work **completely alone** (regular nights) | Employee preference |
+| H4 | Two Azubis can never pair on nights (max 1 Azubi per night) | Supervision requirement |
+| H5 | nd_alone=False must be paired (on closed nights) | Employee capability |
+| H6 | nd_alone=True must work **completely alone** on closed nights (may pair on open nights) | Employee preference & clinic status |
 | H7 | Min consecutive nights per employee (`nd_min_consecutive`) | Block scheduling |
-| H8 | Max 1 block per **21-day** window (3 weeks); **7 days** for holiday-forced blocks | Workload distribution |
+| H8 | Max 1 block per **21-day** window (TFA/Azubi); **10 days** for Interns; **7 days** for holiday-forced blocks | Workload distribution |
 | H9 | No day shift on same day or next day after night shift | Rest requirement |
 | H10 | Respect `nd_exceptions` weekday exclusions | Employee availability |
-| H11 | All shifts must be covered (weekends exactly 1; nights 1–2) | Operational requirement |
+| H11 | All shifts must be covered (regular weekends 1; open nights 2; closed nights 1–2) | Operational requirement |
 | H12 | At least 1 non-Azubi per night | Supervision requirement |
 | H13 | Max 1 shift per person per day | Workload limit |
-| H14 | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional 0–1 Azubi | Vet on-site requirement |
+| H14 | Open Nights (Sun-Mon, Mon-Tue): Headcount exactly 2, with at least 1 TFA mandatory | Clinic in operation |
 | H15 | Weekend shifts isolated (no adjacent shift day before or after) | Prevents fatigue |
 | H16 | Sa 10-22, So 8-20, So 10-22: TFA only; So 8-20:30: adult Azubi only | Role eligibility |
 | H17 | Abteilung (op/station) cannot work same night | Capacity protection |
@@ -30,6 +30,14 @@
 | H22 | Night-eligible staff must work ≥1 night shift per quarter (viability-exempt) | Participation fairness |
 | H23 | Interns must work 6–9 night shifts per quarter (≈2–3/month) | Contract/role definition |
 | H24 | `available_from` blocks all shifts before employee start date | New-hire absence |
+| H-INT-1 | Intern weekend coupling: `Sa_Intern` and `So_Intern` must be assigned as a pair to the same Intern | Fair and contiguous weekend rest |
+| H-INT-2 | Max 1 Intern weekend block per calendar month | Workload distribution |
+| H-INT-3 | Weekend vacation guard: vacation on Sat or Sun blocks both days for Intern | Contiguous rest |
+| H-TA-1 | Tierarzt midweek blocks: strictly exact 2-night blocks (`Di+Mi` or `Mi+Do`) in `N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr` | Clinically viable relief blocks |
+| H-TA-2 | Tierarzt solo duty: Headcount = exactly 1 on Tierarzt nights (no TFA, Intern, or Azubi) | Physician-only night shift |
+| H-TA-3 | Tierarzt frequency: Max 1 block per 2 consecutive calendar months | Sustainable relief rotation |
+| H-TA-4 | Tierarzt cross-quarter lockout: duty in last month of previous quarter blocks month 1 of next quarter | Respects 2-month boundary |
+| H-TA-5 | Tierarzt exclusions: Excluded from TFA/Azubi FTE fairness and minimum participation | Voluntary auxiliary relief |
 
 > **H8 relaxation**: When a block is forced by a pre-assigned holiday shift, the required gap drops
 > from 21 days to 7 days for that block only.
@@ -48,16 +56,20 @@ The CP-SAT solver enforces all hard constraints during solving. The post-solve v
   **100 soft-penalty points per violation** via `_calculate_soft_penalty`. This catches violations
   only in externally-imported or manually-edited schedules.
 
-### Soft Constraints (Optimized)
+### Soft Constraints & Optimization Objectives
 
 | ID | Constraint | Mechanism |
 |----|------------|-----------|
+| O1 | Maximale Tierarzt-Entlastung (Highest Priority) | Objective term: $-100\,000 \cdot \sum b$ (maximizes midweek TFA relief) |
+| O2 | Cross-Quarter Boundary Block-Gap Soft Penalty | Near-hard penalty: `gap_diff × 10,000,000` |
 | S1 | Proportional to hours AND presence (vacation-adjusted) | FTE-normalization in objective |
 | S2 | Within-group fairness for combined Notdienste (TFA / Azubi / Intern) | **Hard ceiling**: range ≤ 1.5 FTE-units; **Soft**: minimize range |
-| S3 | Effective nights (TFA/Intern paired=0.5, Azubi always 1.0) | Built into half-unit counting |
+| S3 | Effective nights weighting | Open nights: TFA=0.5, Intern=1.0, Azubi=1.0. Closed nights: paired TFA/Intern=0.5, solo=1.0, Azubi=1.0 |
 | S4 | `nd_max_consecutive` not exceeded | Hard in solver; +100 pts/violation in validator |
 | S5 | Night-shift type balance within groups (secondary objective) | Minimize FTE-scaled night range |
 | S6 | Cross-quarter carry-forward: compensate prior-quarter imbalance | Per-person delta offset on fairness variable |
+| S7 | Intern weekend fairness (Track 2) | Objective term: $300 \cdot (\max_i w_i - \min_i w_i)$ (balanced weekend rotation $\le 1$) |
+| S8 | Tierarzt block fairness | Objective term: $500 \cdot (\max_v b_v - \min_v b_v)$ |
 
 ---
 
@@ -66,16 +78,16 @@ The CP-SAT solver enforces all hard constraints during solving. The post-solve v
 ```python
 class Staff:
     name: str              # Full name
-    identifier: str        # Short code (e.g., "Jul", "AA")
+    identifier: str        # Short code (e.g., "Jul", "AA", "TA_MUE")
     adult: bool            # True if 18 years old
-    hours: int             # Weekly contracted hours (18-40)
-    beruf: Beruf           # TFA, Azubi, or Intern
+    hours: int             # Weekly contracted hours (18-40; 0 for Vet)
+    beruf: Beruf           # TFA, Azubi, Intern, or Vet
     abteilung: Abteilung   # station, op, or other
     reception: bool        # Can work reception/Anmeldung (Sa 10-21 eligibility)
     nd_possible: bool      # Can do night shifts at all
     nd_alone: bool         # True = must work completely alone; False = must be paired
-    nd_max_consecutive: int | None  # Hard limit on consecutive nights (None = no limit)
-    nd_min_consecutive: int  # Min consecutive nights per block (default 2; Azubi default 1)
+    nd_max_consecutive: int | None  # Hard limit on consecutive nights (2 for Vet)
+    nd_min_consecutive: int  # Min consecutive nights per block (2 for Vet)
     nd_exceptions: list[int]  # Weekdays blocked for nights (1=Mon, 7=Sun)
     birthday: str | None   # Birthday in MM-DD format (no year), e.g. "04-15"
     available_from: date | None  # First schedulable date (new employees; None = full quarter)
@@ -88,6 +100,7 @@ class Staff:
 | Azubi | 1 | Single nights allowed (always paired anyway) |
 | TFA | 2 | Must work at least 2 consecutive nights |
 | Intern | 2 | Must work at least 2 consecutive nights |
+| Vet | 2 | Must work exactly 2 consecutive nights (Di+Mi or Mi+Do) |
 | Special (e.g., Anika Alles) | 3 | Must work at least 3 consecutive nights |
 
 ### Vacation / Unavailability

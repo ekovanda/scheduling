@@ -170,6 +170,7 @@ def validate_schedule(
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
     violations.extend(_check_shift_coverage(schedule))
     violations.extend(_check_abteilung_night_constraint(schedule, staff_dict))
+    violations.extend(_check_vet_shift_constraints(schedule, staff_dict))
 
     # Calculate soft penalty
     soft_penalty = _calculate_soft_penalty(schedule, staff_list)
@@ -601,13 +602,16 @@ def _check_three_week_block_constraint(
         staff_assignments[assignment.staff_identifier].append(assignment)
 
     for staff_id, assignments in staff_assignments.items():
+        staff = staff_dict.get(staff_id) if staff_dict else None
+        if staff and staff.beruf == Beruf.VET:
+            continue
+
         # Sort by date
         sorted_assignments = sorted(assignments, key=lambda a: a.shift.shift_date)
 
         # Find consecutive blocks
         blocks = _find_consecutive_blocks(sorted_assignments)
 
-        staff = staff_dict.get(staff_id) if staff_dict else None
         required_gap = (
             config.intern_block_gap_days
             if staff and staff.beruf == Beruf.INTERN
@@ -741,7 +745,7 @@ def _check_min_consecutive_nights_constraint(
 
     for staff_id, night_assignments in staff_night_assignments.items():
         staff = staff_dict.get(staff_id)
-        if not staff:
+        if not staff or staff.beruf == Beruf.VET:
             continue
 
         min_consecutive = staff.nd_min_consecutive
@@ -784,7 +788,7 @@ def _check_nd_max_consecutive_constraint(
 
     for staff_id, night_assignments in staff_night_assignments.items():
         staff = staff_dict.get(staff_id)
-        if not staff or staff.nd_max_consecutive is None:
+        if not staff or staff.beruf == Beruf.VET or staff.nd_max_consecutive is None:
             continue
 
         # Sort by date
@@ -997,16 +1001,18 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
     penalty = 0.0
     staff_dict = {s.identifier: s for s in staff_list}
 
-    # Calculate target Notdienst per staff based on hours
-    total_hours = sum(s.hours for s in staff_list)
+    # Calculate target Notdienst per staff based on hours (excluding Tierärzte who have hours=0)
+    total_hours = sum(s.hours for s in staff_list if s.beruf != Beruf.VET)
 
     # Penalty for deviation from proportional target
     for staff in staff_list:
+        if staff.beruf == Beruf.VET:
+            continue
         actual_notdienst = schedule.count_total_notdienst(staff.identifier, staff)
         total_notdienst_needed = len(schedule.assignments)
 
         # Target proportional to hours
-        target = (staff.hours / total_hours) * total_notdienst_needed
+        target = (staff.hours / total_hours) * total_notdienst_needed if total_hours > 0 else 0.0
 
         # Squared deviation penalty
         deviation = abs(actual_notdienst - target)
@@ -1047,3 +1053,93 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
         penalty += 100.0
 
     return penalty
+
+
+def _check_vet_shift_constraints(
+    schedule: Schedule, staff_dict: dict[str, Staff]
+) -> list[ConstraintViolation]:
+    """Validate specific constraints for Tierärzte (Beruf.VET):
+    - Shift types: only N_Di-Mi, N_Mi-Do, N_Do-Fr allowed.
+    - Exact 2-night blocks: each block must be exactly 2 consecutive nights (neither 1 nor >= 3).
+    - Solo duty: exactly 1 person on any night where a Vet is assigned.
+    - 2-month rule (calendar months): max 1 block start in any two consecutive calendar months (m, m+1).
+    """
+    violations: list[ConstraintViolation] = []
+    allowed_vet_shifts = {
+        ShiftType.NIGHT_TUE_WED,
+        ShiftType.NIGHT_WED_THU,
+        ShiftType.NIGHT_THU_FRI,
+    }
+
+    # Group all assignments by shift (date, shift_type)
+    assignments_by_shift: dict[tuple[date, ShiftType], list[Assignment]] = defaultdict(list)
+    vet_assignments_by_id: dict[str, list[Assignment]] = defaultdict(list)
+
+    for a in schedule.assignments:
+        assignments_by_shift[(a.shift.shift_date, a.shift.shift_type)].append(a)
+        staff = staff_dict.get(a.staff_identifier)
+        if staff and staff.beruf == Beruf.VET:
+            vet_assignments_by_id[a.staff_identifier].append(a)
+
+    # 1. Solo duty on shifts where a Vet is assigned
+    for (shift_date, shift_type), shift_assignments in assignments_by_shift.items():
+        has_vet = any(
+            staff_dict.get(a.staff_identifier) and staff_dict[a.staff_identifier].beruf == Beruf.VET
+            for a in shift_assignments
+        )
+        if has_vet and len(shift_assignments) > 1:
+            all_names = [
+                staff_dict[a.staff_identifier].name if a.staff_identifier in staff_dict else a.staff_identifier
+                for a in shift_assignments
+            ]
+            violations.append(
+                ConstraintViolation(
+                    "Vet Shift Constraint",
+                    f"Tierarzt muss Alleindienst leisten, aber {len(shift_assignments)} Personen eingeteilt am "
+                    f"{shift_date.strftime('%d.%m.%Y')} {shift_type.value}: {', '.join(all_names)}",
+                )
+            )
+
+    # 2. Per-Vet checks: shift type, exact 2-night blocks, 2-month rule
+    for staff_id, assignments in vet_assignments_by_id.items():
+        staff = staff_dict[staff_id]
+
+        for a in assignments:
+            if a.shift.shift_type not in allowed_vet_shifts:
+                violations.append(
+                    ConstraintViolation(
+                        "Vet Shift Constraint",
+                        f"Tierarzt {staff.name} ({staff_id}) für unzulässige Schicht {a.shift.shift_type.value} am "
+                        f"{a.shift.shift_date.strftime('%d.%m.%Y')} eingeteilt. Zulässig sind nur Di-Mi, Mi-Do, Do-Fr.",
+                    )
+                )
+
+        sorted_assignments = sorted(assignments, key=lambda x: x.shift.shift_date)
+        blocks = _find_consecutive_blocks(sorted_assignments)
+
+        for block in blocks:
+            if len(block) != 2:
+                violations.append(
+                    ConstraintViolation(
+                        "Vet Shift Constraint",
+                        f"Tierarzt {staff.name} ({staff_id}) hat Block der Länge {len(block)} ab "
+                        f"{block[0].shift.shift_date.strftime('%d.%m.%Y')}. Erlaubt sind exakt 2 Nächte am Stück.",
+                    )
+                )
+
+        # 2-month calendar boundary check
+        block_starts = [b[0].shift.shift_date for b in blocks]
+        for i, d1 in enumerate(block_starts):
+            for d2 in block_starts[i + 1 :]:
+                month_diff = abs((d2.year * 12 + d2.month) - (d1.year * 12 + d1.month))
+                if month_diff <= 1:
+                    violations.append(
+                        ConstraintViolation(
+                            "Vet Shift Constraint",
+                            f"Tierarzt {staff.name} ({staff_id}) hat Blöcke in aufeinanderfolgenden oder gleichen "
+                            f"Kalendermonaten ({d1.strftime('%m.%Y')} und {d2.strftime('%m.%Y')}). "
+                            f"Maximal 1 Block alle 2 Monate erlaubt.",
+                        )
+                    )
+
+    return violations

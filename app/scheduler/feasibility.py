@@ -163,8 +163,9 @@ def analyze_capacity(
     night_shifts = [s for s in shifts if s.is_night_shift()]
     total_nights = len(night_shifts)
 
-    non_azubi_nd = [s for s in staff_list if s.nd_possible and s.beruf != Beruf.AZUBI]
+    non_azubi_nd = [s for s in staff_list if s.nd_possible and s.beruf in (Beruf.TFA, Beruf.INTERN)]
     azubi_nd = [s for s in staff_list if s.nd_possible and s.beruf == Beruf.AZUBI]
+    vet_nd = [s for s in staff_list if s.beruf == Beruf.VET and s.nd_possible]
 
     # Pre-compute per-staff block counts (used in Check A and Check B)
     per_staff_blocks: dict[str, tuple[int, int]] = {}
@@ -180,6 +181,33 @@ def analyze_capacity(
         )
         per_staff_blocks[staff.identifier] = (n_blocks, len(avail))
 
+    # Pre-compute Tierarzt relief capacity (Check F & Check A reduction)
+    total_vet_blocks = 0
+    total_vet_nights = 0
+    vet_details: list[str] = []
+    if vet_nd:
+        months_in_quarter = sorted(list({(s.shift_date.year, s.shift_date.month) for s in night_shifts}))
+        for v in vet_nd:
+            v_vacations = get_staff_unavailable_dates(vacations, v.identifier)
+            avail_months = 0
+            for yr, mo in months_in_quarter:
+                has_slot = False
+                for s in night_shifts:
+                    if s.shift_date.year == yr and s.shift_date.month == mo:
+                        d = s.shift_date
+                        if d.weekday() == 1 and (d not in v_vacations) and ((d + timedelta(days=1)) not in v_vacations):
+                            has_slot = True
+                            break
+                        elif d.weekday() == 2 and (d not in v_vacations) and ((d + timedelta(days=1)) not in v_vacations):
+                            has_slot = True
+                            break
+                if has_slot:
+                    avail_months += 1
+            max_v_blocks = 2 if avail_months >= 2 else avail_months
+            total_vet_blocks += max_v_blocks
+            vet_details.append(f"{v.name}: bis zu {max_v_blocks} Blöcke ({max_v_blocks * 2} Nächte)")
+        total_vet_nights = total_vet_blocks * 2
+
     checks: list[FeasibilityCheck] = []
 
     # -------------------------------------------------------------------------
@@ -191,7 +219,8 @@ def analyze_capacity(
     open_nights_count = sum(1 for s in night_shifts if s.is_open_night())
     closed_nights_count = len(night_shifts) - open_nights_count
     min_tfa_demand_open = open_nights_count
-    total_slots_demand = (open_nights_count * 2) + closed_nights_count
+    effective_closed_demand = max(0, closed_nights_count - total_vet_nights)
+    total_slots_demand = (open_nights_count * 2) + effective_closed_demand
 
     tfa_nd = [s for s in non_azubi_nd if s.beruf == Beruf.TFA]
     total_tfa_coverage = sum(
@@ -347,5 +376,19 @@ def analyze_capacity(
                     f"{len(azubi_nd)} nachtfähige Azubis verfügbar."
                 ),
             ))
+
+    # -------------------------------------------------------------------------
+    # Check F: Tierarzt-Nachtdienst-Entlastung
+    # -------------------------------------------------------------------------
+    if vet_nd:
+        checks.append(FeasibilityCheck(
+            name="Tierarzt-Nachtdienst-Entlastung",
+            status="ok",
+            message=(
+                f"{len(vet_nd)} Tierarzt/Tierärzte: bis zu {total_vet_blocks} Blöcke "
+                f"({total_vet_nights} Nächte Entlastung) im Di–Do-Fenster (1x/2 Monate, 2er-Block)."
+            ),
+            details=vet_details,
+        ))
 
     return CapacityReport(checks=checks)

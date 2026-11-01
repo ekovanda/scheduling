@@ -22,34 +22,34 @@ app/
 ### 1. models.py - Data Structures
 
 **Enums:**
-- `Beruf`: Staff roles (TFA, Azubi, Intern)
-- `Abteilung`: Department (station, op, other)
-- `ShiftType`: All shift types (Sa_10-21, N_So-Mo, etc.)
+- `Beruf`: Staff roles (`TFA`, `Azubi`, `Intern`, `Vet`)
+- `Abteilung`: Department (`station`, `op`, `other`)
+- `ShiftType`: All shift types (`Sa_10-21`, `So_8-20`, `Sa_Intern`, `So_Intern`, `N_So-Mo`, `N_Mo-Di`, `N_Di-Mi`, etc.)
 
 **Pydantic Models:**
-- `Staff`: Employee with constraints (abteilung, nd_max_consecutive, nd_exceptions, etc.)
-- `Shift`: A specific shift slot (type + date)
+- `Staff`: Employee with constraints (`abteilung`, `nd_max_consecutive`, `nd_exceptions`, etc.)
+  - Special invariants for `Beruf.VET`: `hours=0.0`, `adult=True`, `nd_alone=True`, `nd_min_consecutive=2`, `nd_max_consecutive=2`, `reception=False`, `abteilung=OTHER`.
+- `Shift`: A specific shift slot (type + date).
+  - Categorization helpers: `is_open_night()` (`N_So-Mo`, `N_Mo-Di`) and `is_closed_night()` (`N_Di-Mi` through `N_Sa-So`).
+  - Weekend helpers: `is_intern_weekend_shift()` (`Sa_Intern`, `So_Intern`).
 - `Assignment`: Staff → Shift mapping with `is_paired` flag
 - `Schedule`: Full quarter schedule with helper methods
-
-- `nd_max_consecutive: int | None  # Hard limit on consecutive nights (enforced in solver; +100 soft pts in validator)`
-- `nd_min_consecutive: int          # Min consecutive nights per block`
-- `birthday: str | None             # MM-DD, treated like vacation`
-- `available_from: date | None      # Blocks all shifts before this date (new hires)`
 
 **Cross-Quarter Models:**
 ```python
 TrailingAssignment  # Last 21 days of previous quarter — boundary constraint source
 CarryForwardEntry   # Per-person FTE delta from prior quarter
-PreviousPlanContext # Combines trailing assignments + carry-forward entries
+PreviousPlanContext # Trailing assignments + carry-forward + vet_active_last_month_ids
 ```
 
 **Key Methods:**
 ```python
 Staff.can_work_shift(shift_type, date) -> bool  # Eligibility check
-Staff.effective_nights_weight(is_paired) -> float  # TFA/Intern: 0.5 if paired, 1.0 if solo; Azubi: 1.0
+Staff.effective_nights_weight(is_paired, is_open_night) -> float
+# Open nights: TFA: 0.5, Intern: 1.0, Azubi: 1.0
+# Closed nights: TFA/Intern paired: 0.5, solo: 1.0; Azubi: 1.0
 Schedule.count_effective_nights(staff_id, staff) -> float  # Sum of weighted nights
-build_previous_context(schedule, staff_list) -> PreviousPlanContext  # Export carry-forward
+build_previous_context(schedule, staff_list) -> PreviousPlanContext  # Export carry-forward & active Vets
 build_previous_context_from_xlsx(source, staff_list) -> PreviousPlanContext  # Import from xlsx
 ```
 
@@ -59,24 +59,28 @@ build_previous_context_from_xlsx(source, staff_list) -> PreviousPlanContext  # I
 | Function | Rule |
 |----------|------|
 | `_check_minor_sunday_constraint` | Minors cannot work Sundays |
-| `_check_intern_weekend_constraint` | Interns never work weekends |
-| `_check_night_pairing_constraint` | Azubis must pair with non-Azubi |
-| `_check_nd_alone_improper_pairing` | nd_alone=True must work **completely alone** on regular nights |
-| `_check_intern_night_capacity` | Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional 0-1 Azubi |
-| `_check_min_consecutive_nights_constraint` | Per-staff nd_min_consecutive: blocks of fewer nights than the minimum are flagged |
-| `_check_same_day_next_day_constraint` | No day shift after night shift |
-| `_check_three_week_block_constraint` | Max 1 block per **21-day** rolling window |
+| `_check_intern_weekend_exclusivity` | Interns only on `Sa_Intern`/`So_Intern`; non-interns forbidden on Intern shifts |
+| `_check_intern_coupled_weekend` | `Sa_Intern` and `So_Intern` of the same weekend must be assigned as an atomic pair to the same Intern |
+| `_check_intern_monthly_weekend_cap` | Max 1 Intern weekend block per calendar month |
+| `_check_open_night_headcount` | Open nights (`N_So-Mo`, `N_Mo-Di`) require exactly 2 persons (headcount = 2) |
+| `_check_open_night_missing_tfa` | Open nights require at least 1 TFA (valid: TFA+TFA, TFA+Intern, TFA+Azubi; forbidden: Intern+Intern, Intern+Azubi) |
+| `_check_night_pairing_constraint` | Azubis must pair with non-Azubi (TFA or Intern); max 1 Azubi per night |
+| `_check_nd_alone_improper_pairing` | `nd_alone=True` staff must work **completely alone** on closed nights (may be paired on open nights) |
+| `_check_vet_shift_constraints` | Tierärzte (`Beruf.VET`): only Di-Do (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`), exact 2-night blocks, strictly solo (headcount = 1), max 1 block per 2 calendar months |
+| `_check_min_consecutive_nights_constraint` | Per-staff `nd_min_consecutive` blocks enforced |
+| `_check_same_day_next_day_constraint` | No day shift on same day or next day after night shift |
+| `_check_three_week_block_constraint` | Min gap between blocks: 21 days for TFA/Azubi, 10 days for Interns |
 | `_check_weekend_isolation_constraint` | Weekend shifts cannot be adjacent to other shifts |
 | `_check_nd_exceptions_constraint` | Respect weekday exclusions |
-| `_check_shift_eligibility` | General eligibility check (Sa 10-22, So 8-20, So 10-22 = TFA only) |
+| `_check_shift_eligibility` | General eligibility check |
 | `_check_shift_coverage` | All shifts must be covered |
 | `_check_abteilung_night_constraint` | Same abteilung (op/station) cannot work together or consecutively |
 | `_check_same_day_double_booking` | Max 1 shift per person per day |
 
 **Soft Penalty Calculation:**
-- Squared deviation from proportional target
+- Squared deviation from proportional target (excluding `Beruf.VET` with `hours=0`)
 - Standard deviation within role groups × 10
-- nd_max_consecutive violations × 100
+- `nd_max_consecutive` violations × 100
 
 ### 3. solver.py - Solver Facade
 
@@ -87,6 +91,10 @@ Thin facade that delegates to the CP-SAT solver.
 def generate_schedule(
     staff_list: list[Staff],
     quarter_start: date,
+    vacations: list[Vacation] | None = None,
+    pre_assigned: list[PreAssignedShift] | None = None,
+    previous_context: PreviousPlanContext | None = None,
+    config: SchedulerConfig | None = None,
     max_solve_time_seconds: int = 120,
     random_seed: int | None = None,
 ) -> SolverResult
@@ -97,34 +105,35 @@ def generate_schedule(
 **Decision Variables:**
 - `x[staff, date, shift_type]`: Binary, 1 if assigned
 - `is_paired[staff, date]`: Binary, 1 if working paired night
+- `w_int[intern, weekend_idx]`: Binary, coupled weekend assignment for Interns
+- `b_dimi[vet, week]`, `b_mido[vet, week]`: Binary, exact 2-night midweek relief blocks for Tierärzte
 
 **Constraint Encoding:**
-- Weekend coverage: `sum(x[*, date, type]) == 1`
-- Night coverage: `1 <= sum(x[*, date, type]) <= 2`, at least 1 non-Azubi
-- Sun-Mon/Mon-Tue: exactly 1 non-Azubi + optional 0-1 Azubi
-- Azubi pairing: Azubi assigned => non-Azubi assigned
-- Pairing logic: `x[s,d,t] => is_paired[s,d]` for nd_alone=False
-- nd_alone=True: Must work alone (sum of all others == 0)
-- Min consecutive: Non-Azubis must have adjacent night if assigned
-- Block constraint: Track block starts; forbid two block starts within **21 days** of each other
-  (relaxed to **7 days** for pre-assigned holiday blocks; cross-quarter violations are soft)
-- Weekend isolation: Weekend shifts cannot be adjacent to other shifts
-- nd_max_consecutive: Sliding-window sum ≤ nd_max_consecutive (**hard** in solver)
-- Abteilung constraint: Same abteilung (op/station) ≤ 1 per night, no consecutive days
-- Intern night cap: 6 ≤ sum(intern_night_vars) ≤ 9 per quarter
-- `available_from`: All dates before start date added to vacation set (variable excluded)
-- Min participation: ≥1 weekend (TFA/Azubi); ≥1 night (nd_possible, viability-guarded)
+- **Open Nights:** Exactly 2 persons (`sum(x) == 2`), at least 1 TFA (`sum(x_tfa) >= 1`), at most 1 Azubi (`sum(x_azubi) <= 1`).
+- **Closed Nights:** Headcount 1 for `nd_alone=True` and Vets; headcount 2 for `nd_alone=False` and Azubi pairings.
+- **Intern Coupled Weekends:** $x[\text{Sa\_Intern}] == w_{\text{int}}$ and $x[\text{So\_Intern}] == w_{\text{int}}$; single-day vacations block the entire weekend; max 1 weekend per calendar month.
+- **Vet Midweek Relief:** $x[\text{Di}] == b_{\text{DiMi}}$, $x[\text{Mi}] == b_{\text{DiMi}} + b_{\text{MiDo}}$, $x[\text{Do}] == b_{\text{MiDo}}$; $b_{\text{DiMi}} + b_{\text{MiDo}} \le 1$ per week; max 1 block in any two consecutive calendar months; locked out in Month 1 if active in last month of previous quarter.
+- **Block Spacing:** 21-day rolling gap for TFA/Azubi; 10-day rolling gap for Interns.
+- **Night Quota:** Interns restricted to 6–9 night shifts per quarter.
 
-**Objective Function:**
-Minimize `sum(range_var)` where `range_var = max_fte − min_fte` for combined Notdienste
-within each role group (TFA / Azubi / Intern separately).
+**Objective Hierarchy:**
+1. **Tierarzt-Entlastung (Highest Priority):**
+   $$\text{Minimize} \quad -100\,000 \cdot \sum_{w, v} b[v, w]$$
+2. **Cross-Quarter Boundary Feasibility:** Gap violation penalty `gap_diff * 10,000,000`.
+3. **Primary Fairness:** FTE-scaled Notdienste range per group (presence + carry-forward adjusted).
+4. **Secondary Fairness:** FTE-scaled night-shift range per group (type balance).
+5. **Intern Weekend Fairness:** $300 \cdot (\max_{i} w_i - \min_{i} w_i)$ (balanced weekend rotation $\le 1$).
+6. **Tierarzt Block Fairness:** $500 \cdot (\max_{v} b_v - \min_{v} b_v)$ (balanced relief distribution).
 
-Two objectives stacked (both minimized together):
-1. **Primary**: FTE-scaled Notdienste range per group (presence + carry-forward adjusted).
-2. **Secondary** (weight 1): FTE-scaled night-shift range per group (type-balance).
+### 5. feasibility.py - Pre-Solve Diagnostics
 
-Cross-quarter block violations are penalized with `gap_diff × 10,000,000` — far above fairness
-terms — to treat them as near-hard without risking infeasibility.
+Fast pre-solve validation:
+- **Check A:** Closed night coverage vs TFA/Intern capacity (automatically discounted by Vet relief capacity).
+- **Check B:** Weekend shift capacity.
+- **Check C:** Azubi pairing capacity.
+- **Check D:** Open night TFA presence capacity.
+- **Check E:** Intern night and weekend capacity.
+- **Check F:** Tierarzt-Nachtdienst-Entlastung capacity (reporting available Vets, max blocks, and relief nights).
 
 ## Algorithms
 
