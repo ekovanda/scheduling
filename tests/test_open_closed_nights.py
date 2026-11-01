@@ -531,3 +531,105 @@ def test_t1_and_t2_solver_open_night_headcount_and_tfa() -> None:
         # At most 1 Azubi
         azubi_count = sum(1 for r in assigned_roles if r == Beruf.AZUBI)
         assert azubi_count <= 1
+
+
+def test_q4_real_data_open_closed_nights() -> None:
+    """End-to-end integration test with real Q4/2026 clinic scheduling data.
+
+    Verifies open nights (exact headcount 2, mandatory TFA, max 1 Azubi, is_paired=True),
+    closed nights (nd_alone strictly respected), and Intern fairness on real data.
+    """
+    from pathlib import Path
+    from app.scheduler.models import (
+        load_staff_from_file,
+        load_vacations_from_file,
+        load_pre_assigned_from_file,
+        build_previous_context_from_xlsx,
+    )
+
+    data_dir = Path("data/2026-Q4/klinikschedulingdata")
+    if not (data_dir / "MA_excel (2).xlsx").exists():
+        pytest.skip("Real Q4 dataset not present")
+
+    staff = load_staff_from_file(data_dir / "MA_excel (2).xlsx")
+    vacations = load_vacations_from_file(data_dir / "Urlaube_excel (2).xlsx")
+    pre_assigned = load_pre_assigned_from_file(data_dir / "Feiertage_Excel (2).xlsx")
+    prev_context = build_previous_context_from_xlsx(data_dir / "Q3_Arbeitseinsätze.xlsx", staff_list=staff)
+
+    result = generate_schedule(
+        staff_list=staff,
+        quarter_start=date(2026, 10, 1),
+        vacations=vacations,
+        pre_assigned=pre_assigned,
+        previous_context=prev_context,
+        max_solve_time_seconds=60,
+        random_seed=42,
+    )
+
+    assert result.success, f"Q4 solve failed: {result.unsatisfiable_constraints}"
+    schedule = result.get_best_schedule()
+    assert schedule is not None
+
+    staff_dict = {s.identifier: s for s in staff}
+
+    # Verify every open night
+    open_nights: dict[tuple[date, ShiftType], list[Assignment]] = {}
+    closed_nights: dict[tuple[date, ShiftType], list[Assignment]] = {}
+    for a in schedule.assignments:
+        if a.shift.is_open_night():
+            open_nights.setdefault((a.shift.shift_date, a.shift.shift_type), []).append(a)
+        elif a.shift.is_night_shift():
+            closed_nights.setdefault((a.shift.shift_date, a.shift.shift_type), []).append(a)
+
+    # 13 weeks = 26 open nights
+    assert len(open_nights) == 26
+
+    for (shift_date, shift_type), assignments in open_nights.items():
+        # Exact headcount 2
+        assert len(assignments) == 2, f"Open night on {shift_date} must have exactly 2 persons"
+        for a in assignments:
+            assert a.is_paired is True, "Open night assignment must be paired"
+
+        assigned_roles = [staff_dict[a.staff_identifier].beruf for a in assignments]
+        tfa_count = sum(1 for r in assigned_roles if r == Beruf.TFA)
+        azubi_count = sum(1 for r in assigned_roles if r == Beruf.AZUBI)
+        intern_count = sum(1 for r in assigned_roles if r == Beruf.INTERN)
+
+        # Mandatory TFA
+        assert tfa_count >= 1, f"Open night on {shift_date} must have at least 1 TFA"
+        # Max 1 Azubi
+        assert azubi_count <= 1
+        # No forbidden combinations
+        assert not (intern_count == 2), "Intern + Intern forbidden on open nights"
+        assert not (intern_count == 1 and azubi_count == 1), "Intern + Azubi forbidden on open nights"
+        assert not (azubi_count == 2), "Azubi + Azubi forbidden on open nights"
+
+    # Closed nights nd_alone rule
+    for (shift_date, shift_type), assignments in closed_nights.items():
+        assigned_staff = [staff_dict[a.staff_identifier] for a in assignments]
+        for s in assigned_staff:
+            if s.nd_alone:
+                assert len(assignments) == 1, (
+                    f"Staff {s.name} (nd_alone=True) must work alone on closed night {shift_date}"
+                )
+            elif s.beruf != Beruf.AZUBI:
+                assert len(assignments) >= 2, (
+                    f"Staff {s.name} (nd_alone=False) must be paired on closed night {shift_date}"
+                )
+
+    # Intern quarterly night cap and effective nights count
+    for s in staff:
+        if s.beruf == Beruf.INTERN:
+            int_nights = [a for a in schedule.get_staff_assignments(s.identifier) if a.shift.is_night_shift()]
+            open_int_nights = [a for a in int_nights if a.shift.is_open_night()]
+            closed_int_nights = [a for a in int_nights if a.shift.is_closed_night()]
+
+            assert 6 <= len(int_nights) <= 9, f"Intern {s.name} nights {len(int_nights)} out of [6, 9] range"
+
+            # Check that each open night counted as 1.0 effective night
+            eff_nights = schedule.count_effective_nights(s.identifier, staff=s)
+            expected_eff = len(open_int_nights) * 1.0 + sum(
+                0.5 if a.is_paired else 1.0 for a in closed_int_nights
+            )
+            assert eff_nights == expected_eff
+
