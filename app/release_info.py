@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.5.0"
+CURRENT_VERSION = "1.5.1"
 
 
 @dataclass(frozen=True)
@@ -19,13 +19,22 @@ class Release:
 
 RELEASES: tuple[Release, ...] = (
     Release(
+        version="1.5.1",
+        date="01. November 2026",
+        summary="Rollen-Klarstellung Vets/Interns & Eingabeprüfung",
+        highlights=(
+            "Eindeutige Rollentrennung: Vets (Entlastung) und Interns (Ausbildung) in Kalender und Auswertungen.",
+            "Strengere Prüfung von Personaldateien verhindert unvollständige Zeilen ohne Arbeitszeit.",
+        ),
+    ),
+    Release(
         version="1.5.0",
         date="01. November 2026",
-        summary="Offene Nächte, Intern-Wochenenden & Tierarzt-Entlastung",
+        summary="Offene Nächte, Intern-Wochenenden & Vet-Entlastung",
         highlights=(
             "Offene Nächte (So-Mo, Mo-Di) mit 2er-Besetzung (mind. 1 TFA) und geschlossene Nächte.",
             "Interns übernehmen gekoppelte Wochenend-Paare (Sa_Intern & So_Intern) mit 2-Track-Fairness.",
-            "Tierärzte entlasten das TFA-Team an Di-Do in 2er-Blöcken im Alleindienst (1x/2 Monate).",
+            "Vets entlasten das TFA-Team an Di-Do in 2er-Blöcken im Alleindienst (1x/2 Monate).",
         ),
     ),
     Release(

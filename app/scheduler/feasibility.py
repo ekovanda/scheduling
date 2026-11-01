@@ -181,7 +181,7 @@ def analyze_capacity(
         )
         per_staff_blocks[staff.identifier] = (n_blocks, len(avail))
 
-    # Pre-compute Tierarzt relief capacity (Check F & Check A reduction)
+    # Pre-compute Vet relief capacity (Check F & Check A reduction)
     total_vet_blocks = 0
     total_vet_nights = 0
     vet_details: list[str] = []
@@ -378,14 +378,14 @@ def analyze_capacity(
             ))
 
     # -------------------------------------------------------------------------
-    # Check F: Tierarzt-Nachtdienst-Entlastung
+    # Check F: Vet-Nachtdienst-Entlastung
     # -------------------------------------------------------------------------
     if vet_nd:
         checks.append(FeasibilityCheck(
-            name="Tierarzt-Nachtdienst-Entlastung",
+            name="Vet-Nachtdienst-Entlastung",
             status="ok",
             message=(
-                f"{len(vet_nd)} Tierarzt/Tierärzte: bis zu {total_vet_blocks} Blöcke "
+                f"{len(vet_nd)} Vet/Vets: bis zu {total_vet_blocks} Blöcke "
                 f"({total_vet_nights} Nächte Entlastung) im Di–Do-Fenster (1x/2 Monate, 2er-Block)."
             ),
             details=vet_details,

@@ -33,11 +33,11 @@
 | H-INT-1 | Intern weekend coupling: `Sa_Intern` and `So_Intern` must be assigned as a pair to the same Intern | Fair and contiguous weekend rest |
 | H-INT-2 | Max 1 Intern weekend block per calendar month | Workload distribution |
 | H-INT-3 | Weekend vacation guard: vacation on Sat or Sun blocks both days for Intern | Contiguous rest |
-| H-TA-1 | Tierarzt midweek blocks: strictly exact 2-night blocks (`Di+Mi` or `Mi+Do`) in `N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr` | Clinically viable relief blocks |
-| H-TA-2 | Tierarzt solo duty: Headcount = exactly 1 on Tierarzt nights (no TFA, Intern, or Azubi) | Physician-only night shift |
-| H-TA-3 | Tierarzt frequency: Max 1 block per 2 consecutive calendar months | Sustainable relief rotation |
-| H-TA-4 | Tierarzt cross-quarter lockout: duty in last month of previous quarter blocks month 1 of next quarter | Respects 2-month boundary |
-| H-TA-5 | Tierarzt exclusions: Excluded from TFA/Azubi FTE fairness and minimum participation | Voluntary auxiliary relief |
+| H-VET-1 | Vet midweek blocks: strictly exact 2-night blocks (`Di+Mi` or `Mi+Do`) in `N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr` | Clinically viable relief blocks |
+| H-VET-2 | Vet solo duty: Headcount = exactly 1 on Vet nights (no TFA, Intern, or Azubi) | Vet-only night shift |
+| H-VET-3 | Vet frequency: Max 1 block per 2 consecutive calendar months | Sustainable relief rotation |
+| H-VET-4 | Vet cross-quarter lockout: duty in last month of previous quarter blocks month 1 of next quarter | Respects 2-month boundary |
+| H-VET-5 | Vet exclusions: Excluded from TFA/Azubi FTE fairness and minimum participation | Voluntary auxiliary relief |
 
 > **H8 relaxation**: When a block is forced by a pre-assigned holiday shift, the required gap drops
 > from 21 days to 7 days for that block only.
@@ -60,7 +60,7 @@ The CP-SAT solver enforces all hard constraints during solving. The post-solve v
 
 | ID | Constraint | Mechanism |
 |----|------------|-----------|
-| O1 | Maximale Tierarzt-Entlastung (Highest Priority) | Objective term: $-100\,000 \cdot \sum b$ (maximizes midweek TFA relief) |
+| O1 | Maximale Vet-Entlastung (Highest Priority) | Objective term: $-100\,000 \cdot \sum b$ (maximizes midweek TFA relief) |
 | O2 | Cross-Quarter Boundary Block-Gap Soft Penalty | Near-hard penalty: `gap_diff × 10,000,000` |
 | S1 | Proportional to hours AND presence (vacation-adjusted) | FTE-normalization in objective |
 | S2 | Within-group fairness for combined Notdienste (TFA / Azubi / Intern) | **Hard ceiling**: range ≤ 1.5 FTE-units; **Soft**: minimize range |
@@ -69,7 +69,7 @@ The CP-SAT solver enforces all hard constraints during solving. The post-solve v
 | S5 | Night-shift type balance within groups (secondary objective) | Minimize FTE-scaled night range |
 | S6 | Cross-quarter carry-forward: compensate prior-quarter imbalance | Per-person delta offset on fairness variable |
 | S7 | Intern weekend fairness (Track 2) | Objective term: $300 \cdot (\max_i w_i - \min_i w_i)$ (balanced weekend rotation $\le 1$) |
-| S8 | Tierarzt block fairness | Objective term: $500 \cdot (\max_v b_v - \min_v b_v)$ |
+| S8 | Vet block fairness | Objective term: $500 \cdot (\max_v b_v - \min_v b_v)$ |
 
 ---
 

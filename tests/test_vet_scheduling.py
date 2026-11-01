@@ -20,6 +20,7 @@ from app.scheduler.models import (
     compute_carry_forward,
     load_staff_from_csv,
 )
+from app.scheduler.exceptions import StaffValidationError
 from app.scheduler.feasibility import analyze_capacity
 from app.scheduler.file_loader import load_staff_from_file
 from app.scheduler.solver import generate_schedule
@@ -116,14 +117,19 @@ def test_vet_enum_and_model_invariants() -> None:
 
 
 def test_vet_role_normalization() -> None:
-    """Verify role synonyms 'Vet', 'Tierarzt', 'TA_Entlastung' normalize to Beruf.VET."""
+    """Verify role 'Vet' normalizes to Beruf.VET, and ambiguous shortcuts raise StaffValidationError."""
     s1 = Staff(name="Vet 1", identifier="V1", beruf="Vet")  # type: ignore[arg-type]
-    s2 = Staff(name="Vet 2", identifier="V2", beruf="Tierarzt")  # type: ignore[arg-type]
-    s3 = Staff(name="Vet 3", identifier="V3", beruf="TA_Entlastung")  # type: ignore[arg-type]
-
     assert s1.beruf == Beruf.VET
-    assert s2.beruf == Beruf.VET
-    assert s3.beruf == Beruf.VET
+
+    # Legacy ambiguous shortcuts 'TA', 'Tierarzt', 'TA_Entlastung' must be rejected
+    with pytest.raises(StaffValidationError, match="deprecated and ambiguous"):
+        Staff(name="Vet 2", identifier="V2", beruf="Tierarzt")  # type: ignore[arg-type]
+
+    with pytest.raises(StaffValidationError, match="deprecated and ambiguous"):
+        Staff(name="Vet 3", identifier="V3", beruf="TA_Entlastung")  # type: ignore[arg-type]
+
+    with pytest.raises(StaffValidationError, match="deprecated and ambiguous"):
+        Staff(name="Old TA", identifier="T1", adult=True, hours=40, beruf="TA", reception=False, nd_possible=True, nd_alone=True)  # type: ignore[arg-type]
 
 
 def test_vet_shift_eligibility() -> None:
@@ -219,7 +225,7 @@ def test_vet_validator_solo_duty() -> None:
     )
     val = validate_schedule(sched_paired, [vet, tfa])
     vet_violations = [v for v in val.hard_violations if v.constraint_name == "Vet Shift Constraint"]
-    assert any("Tierarzt muss Alleindienst leisten" in v.description for v in vet_violations)
+    assert any("Vet muss Alleindienst leisten" in v.description for v in vet_violations)
 
 
 def test_vet_validator_disallowed_shift() -> None:
@@ -275,6 +281,43 @@ def test_vet_validator_two_month_frequency_rule() -> None:
     assert not freq_violations_spaced
 
 
+def test_vet_validator_cross_quarter_lockout() -> None:
+    """Verify validator flags Vet assigned in month 1 if locked out from previous quarter (B3/E2)."""
+    vet = _make_vet("V1")
+    tfa = _make_tfa("TFA1")
+
+    # V1 assigned in April (month 4)
+    sched = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 6, 30),
+        assignments=[
+            _asgn(ShiftType.NIGHT_TUE_WED, date(2026, 4, 7), "V1"),
+            _asgn(ShiftType.NIGHT_WED_THU, date(2026, 4, 8), "V1"),
+        ],
+    )
+
+    prev_ctx = PreviousPlanContext(
+        quarter_start=date(2026, 1, 1),
+        quarter_end=date(2026, 3, 31),
+        carry_forward=[],
+        trailing_assignments=[],
+        vet_active_last_month_ids=["V1"],
+    )
+
+    # Locked out vet assigned in month 1 -> Hard violation
+    val = validate_schedule(sched, [vet, tfa], previous_context=prev_ctx)
+    lockout_violations = [
+        v for v in val.hard_violations
+        if v.constraint_name == "Vet Shift Constraint" and "Vorquartalsdienst gesperrt" in v.description
+    ]
+    assert len(lockout_violations) == 1
+    assert "V1" in lockout_violations[0].description
+
+    # Without previous context (or vet not locked out), validation passes
+    val_ok = validate_schedule(sched, [vet, tfa])
+    assert not any("Vorquartalsdienst gesperrt" in v.description for v in val_ok.hard_violations)
+
+
 # ---------------------------------------------------------------------------
 # 3. Carry Forward & Soft Penalty Exclusion Tests
 # ---------------------------------------------------------------------------
@@ -328,11 +371,13 @@ def test_feasibility_check_f_with_vets() -> None:
     )
 
     # Check F should be present in results
-    check_f = next((c for c in res.checks if c.name == "Tierarzt-Nachtdienst-Entlastung"), None)
+    check_f = next((c for c in res.checks if c.name == "Vet-Nachtdienst-Entlastung"), None)
     assert check_f is not None
     assert check_f.status == "ok"
-    assert "2 Tierarzt/Tierärzte" in check_f.message
+    assert "2 Vet/Vets: bis zu 4 Blöcke (8 Nächte Entlastung)" in check_f.message
     assert len(check_f.details) == 2
+    assert "Dr. Vet One: bis zu 2 Blöcke (4 Nächte)" in check_f.details[0]
+    assert "Dr. Vet One: bis zu 2 Blöcke (4 Nächte)" in check_f.details[1]
 
 
 # ---------------------------------------------------------------------------

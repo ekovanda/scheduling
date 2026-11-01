@@ -322,8 +322,8 @@ def generate_schedule_cpsat(
                 if month_sat_vars:
                     model.Add(sum(month_sat_vars) <= 1)
 
-    # 1c. Tierarzt-Nachtdienst-Entlastung (Midweek Vet Night Shift Relief)
-    # H-TA-1 (2-night atomic blocks), H-TA-3 (1x per 2 months), H-TA-4 (Cross-quarter transition)
+    # 1c. Vet-Nachtdienst-Entlastung (Midweek Vet Night Shift Relief)
+    # H-VET-1 (2-night atomic blocks), H-VET-3 (1x per 2 months), H-VET-4 (Cross-quarter transition)
     b_DiMi: dict[tuple[str, tuple[int, int]], cp_model.BoolVar] = {}
     b_MiDo: dict[tuple[str, tuple[int, int]], cp_model.BoolVar] = {}
     vet_blocks_by_month: dict[tuple[str, tuple[int, int]], list[cp_model.BoolVar]] = defaultdict(list)
@@ -402,7 +402,7 @@ def generate_schedule_cpsat(
                     else:
                         model.Add(x[(v.identifier, d_do, ShiftType.NIGHT_THU_FRI)] == 0)
 
-            # At most 1 Vet block per week across all Tierärzte
+            # At most 1 Vet block per week across all Vets
             all_b_in_week = [
                 b for v in vet_staff
                 for b in [b_DiMi.get((v.identifier, w_key)), b_MiDo.get((v.identifier, w_key))]
@@ -851,13 +851,13 @@ def generate_schedule_cpsat(
                     objective_terms.append(W_intern_spacing * (14 - gap) * close_var)
 
     # -------------------------------------------------------------------------
-    # Tierarzt Relief & Fairness Objectives (PRD 4.3)
+    # Vet Relief & Fairness Objectives (Midweek Vet Night Shift Relief)
     # -------------------------------------------------------------------------
     # 1. Primary: Maximize Vet relief blocks (W_vet = 100_000)
     for b in all_vet_b_vars:
         objective_terms.append(-100000 * b)
 
-    # 2. Secondary: Vet block fairness across available Tierärzte (W_vet_fairness = 500)
+    # 2. Secondary: Vet block fairness across available Vets (W_vet_fairness = 500)
     if len(vet_staff) >= 2 and vet_staff:
         vet_block_counts: dict[str, cp_model.IntVar] = {}
         for v in vet_staff:
@@ -920,7 +920,9 @@ def generate_schedule_cpsat(
         )
 
         # Validate (should pass, but good to confirm)
-        validation = validate_schedule(schedule, staff_list, config=config)
+        validation = validate_schedule(
+            schedule, staff_list, config=config, previous_context=previous_context
+        )
         penalty = validation.soft_penalty
 
         return SolverResult(
@@ -1422,6 +1424,8 @@ def _add_group_fairness_objective(
         else:
             # scaled = count * (scale / hours) = count * scale / hours
             # Since scale=400 and hours in [18,40], multiplier in [10,22]
+            if staff.hours <= 0:
+                raise ValueError(f"Staff member {staff.identifier} has invalid contracted hours: {staff.hours}")
             multiplier = scale // staff.hours
             max_possible = 100 * multiplier  # Conservative upper bound
             scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
@@ -1500,6 +1504,8 @@ def _add_group_fairness_objective_with_presence(
             # scaled = count * (scale / hours) * (PRESENCE_SCALE / presence)
             # = count * scale * PRESENCE_SCALE / (hours * presence)
             # Simplified: we multiply by hours_multiplier and presence_multiplier
+            if staff.hours <= 0:
+                raise ValueError(f"Staff member {staff.identifier} has invalid contracted hours: {staff.hours}")
             hours_multiplier = scale // staff.hours
             # presence_multiplier = PRESENCE_SCALE * 10 // presence (extra 10 for precision)
             presence_multiplier = (PRESENCE_SCALE * 10) // presence
@@ -1574,6 +1580,8 @@ def _add_type_balance_objective(
         if isinstance(count_expr, int) and count_expr == 0:
             scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
         else:
+            if staff.hours <= 0:
+                raise ValueError(f"Staff member {staff.identifier} has invalid contracted hours: {staff.hours}")
             hours_multiplier = scale // staff.hours
             presence_multiplier = (PRESENCE_SCALE * 10) // presence
             combined_multiplier = hours_multiplier * presence_multiplier // 10

@@ -9,9 +9,28 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.5.1] - 2026-11-01
+
+### Changed: Rollen-Klarstellung Vets / Interns & Strikte Personal-Validierung
+
+- **Rollen-Disambiguierung & D1-Bereinigung:**
+  - Eindeutige Begriffs- und Rollentrennung: Vollapprobierte Entlastungs-Tierärzte heißen im gesamten Code und in der Dokumentation ausschließlich `Vet` (`Beruf.VET`). Tierärzte in Ausbildung / Weiterbildung heißen ausschließlich `Intern` (`Beruf.INTERN`).
+  - Die mehrdeutigen Abkürzungen `TA` und `Tierarzt` wurden vollständig entfernt und werden beim Import explizit mit `StaffValidationError` zurückgewiesen.
+  - Duplizierte Rollen-Normalisierung in `app/scheduler/file_loader.py` entfernt; `Staff.parse_beruf` dient als zentrale Source of Truth.
+  - UI-Kennzeichnung in der Kalenderansicht auf `🩺 [Vet]` aktualisiert; Statistiken und Metriken verwenden einheitlich `Vet`/`Vets`.
+- **Eingabevalidierung & ZeroDivisionError-Fix (B1):**
+  - Neues Ausnahme-Modul `app/scheduler/exceptions.py` mit `StaffValidationError`, `ColumnMappingError`, `FileFormatError`.
+  - Non-Vet-Mitarbeitende (TFA, Intern, Azubi) erfordern zwingend positive Wochenstunden (`hours > 0`) sowie vollständige Stammdaten (`adult`, `reception`, `nd_possible`, `nd_alone`). Leere oder 0-Stunden werden vor Solver-Start abgefangen.
+  - Defensiver Guard gegen `ZeroDivisionError` in den Fairness-Zielen des CP-SAT-Solvers (`solver_cpsat.py`).
+  - Einheitliches Boolean- und Stunden-Parsing in `file_loader.py` und `models.py:load_staff_from_csv`.
+- **Tests & Regression:**
+  - Neue Test-Suite `tests/test_staff_validation.py` zur Verifizierung von Non-Vet-Validierung, Vet-Defaults und Deprecation von `TA`/`Tierarzt`.
+
 ## [1.5.0] - 2026-11-01
 
-### Added: Offene/Geschlossene Nächte, Intern-Wochenenden & Tierarzt-Entlastung
+### Added: Offene/Geschlossene Nächte, Intern-Wochenenden & Vet-Entlastung
+
+> **Hinweis zur Versionshistorie:** Die in den einzelnen Feature-PRDs separat avisierten Zwischenversionen v1.3.0 (`PRD_FEATURE_OPEN_CLOSED_NIGHTS`), v1.4.0 (`PRD_INTERN_WEEKEND_SHIFTS`) und v1.5.0 (`PRD_tierarzt_nachtdienst_entlastung`) wurden in diesem konsolidierten Release v1.5.0 direkt zusammengeführt.
 
 Umfassendes Release mit drei zentralen Erweiterungen der Dienstplanungslogik zur Entlastung des Teams und präzisen Abbildung des klinischen Notdienstbetriebs:
 

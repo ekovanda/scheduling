@@ -15,19 +15,9 @@ from typing import Any, TypeVar
 
 import pandas as pd
 
+from .exceptions import ColumnMappingError, FileFormatError
+
 T = TypeVar("T")
-
-
-class ColumnMappingError(Exception):
-    """Raised when required columns cannot be found in the file."""
-
-    pass
-
-
-class FileFormatError(Exception):
-    """Raised when file format is not supported."""
-
-    pass
 
 
 def _normalize_column_name(col: str) -> str:
@@ -234,22 +224,24 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
         if not identifier:
             raise ValueError(f"Found row with missing identifier: {row.to_dict()}")
 
-        # Convert boolean strings
-        def parse_bool(val: Any) -> bool:
+        # Convert boolean strings (returns None when blank/missing)
+        def parse_bool(val: Any) -> bool | None:
             if val is None or (isinstance(val, str) and val.strip() == ""):
-                return False
+                return None
             if isinstance(val, bool):
                 return val
             if isinstance(val, str):
                 return val.lower() in ["true", "ja", "yes", "1", "y", "j"]
             return bool(val)
 
-        # Convert hours to int
+        # Convert hours to int (leave None if empty so model validation catches non-vet omissions)
         hours_val = _safe_get_value(row, col_hours)
-        try:
-            hours = int(float(hours_val)) if hours_val else 0
-        except (ValueError, TypeError):
-            raise ValueError(f"Invalid hours value for {identifier}: {hours_val}")
+        hours: int | None = None
+        if hours_val is not None and hours_val != "":
+            try:
+                hours = int(float(hours_val))
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid hours value for {identifier}: {hours_val}")
 
         # Parse nd_exceptions (JSON array or comma-separated)
         nd_exceptions_raw = _safe_get_value(row, col_nd_exceptions)
@@ -271,24 +263,13 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
                 ) from e
 
         raw_beruf = (_safe_get_value(row, col_beruf) or "TFA").strip()
-        beruf_upper = raw_beruf.upper()
-        if beruf_upper in ("VET", "TIERARZT", "TA_ENTLASTUNG"):
-            beruf_val = "Vet"
-        elif beruf_upper == "TA":
-            beruf_val = "Intern"
-        elif beruf_upper in ("AZUBI", "AUSZUBILDENDE", "AUSZUBILDENDER"):
-            beruf_val = "Azubi"
-        elif beruf_upper == "TFA":
-            beruf_val = "TFA"
-        else:
-            beruf_val = raw_beruf
 
         staff_dict[identifier] = {
             "name": _safe_get_value(row, col_name) or identifier,
             "identifier": identifier,
             "adult": parse_bool(_safe_get_value(row, col_adult)),
             "hours": hours,
-            "beruf": beruf_val,
+            "beruf": raw_beruf,
             "abteilung": _safe_get_value(row, col_abteilung, "other"),
             "reception": parse_bool(_safe_get_value(row, col_reception)),
             "nd_possible": parse_bool(_safe_get_value(row, col_nd_possible)),

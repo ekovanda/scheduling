@@ -10,9 +10,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .exceptions import StaffValidationError
+from .file_loader import load_pre_assigned_from_file as _load_pre_assigned_dict
 from .file_loader import load_staff_from_file as _load_staff_dict
 from .file_loader import load_vacations_from_file as _load_vacations_dict
-from .file_loader import load_pre_assigned_from_file as _load_pre_assigned_dict
 from .file_loader import parse_previous_plan_xlsx as _parse_previous_plan_xlsx
 
 
@@ -21,8 +22,8 @@ class Beruf(str, Enum):
 
     TFA = "TFA"
     AZUBI = "Azubi"
-    INTERN = "Intern"  # Formerly "TA" - veterinary interns
-    VET = "Vet"  # Tierärzte für Nachtdienst-Entlastung
+    INTERN = "Intern"  # Interns - veterinary interns in training (formerly informally called "Tierärzte")
+    VET = "Vet"  # Vets - fully fledged veterinarians providing midweek night shift relief
 
 
 class Abteilung(str, Enum):
@@ -58,29 +59,105 @@ class Staff(BaseModel):
 
     name: str
     identifier: str
-    adult: bool = True
-    hours: int = 40  # Weekly contracted hours
+    adult: bool
+    hours: int  # Weekly contracted hours (> 0 for non-vets, 0 for vets)
     beruf: Beruf = Beruf.TFA
     abteilung: Abteilung = Abteilung.OTHER  # Department assignment
-    reception: bool = False  # Can work reception/Anmeldung
-    nd_possible: bool = True  # Can do night shifts at all
-    nd_alone: bool = True  # Can work nights solo (False = must pair)
+    reception: bool  # Can work reception/Anmeldung
+    nd_possible: bool  # Can do night shifts at all
+    nd_alone: bool  # Can work nights solo (False = must pair)
     nd_max_consecutive: int | None = None  # Max consecutive nights allowed (None = no limit)
     nd_min_consecutive: int = 2  # Min consecutive nights required (Azubis=1, most TFA/Intern=2)
     nd_exceptions: list[int] = Field(default_factory=list)  # Weekdays (1=Mon, 7=Sun) excluded
     birthday: str | None = None  # Birthday in MM-DD format (no year), e.g. "04-15"
     available_from: date | None = None  # First date available for scheduling (new employees)
 
+    @model_validator(mode="before")
+    @classmethod
+    def pre_validate_staff(cls, data: Any) -> Any:
+        """Apply lenient defaults strictly for Vets, require full valid data for non-vets."""
+        if isinstance(data, dict):
+            raw_beruf = data.get("beruf", Beruf.TFA)
+            if isinstance(raw_beruf, str):
+                b_clean = raw_beruf.strip().upper()
+                if b_clean in ("TA", "TIERARZT", "TA_ENTLASTUNG"):
+                    raise StaffValidationError(
+                        f"Role shortcut '{raw_beruf}' is deprecated and ambiguous (formerly used for interns, "
+                        f"and confused with vets). Please specify 'Intern' for interns in training "
+                        f"or 'Vet' for fully fledged veterinarians."
+                    )
+                is_vet = b_clean == "VET"
+            elif isinstance(raw_beruf, Beruf):
+                is_vet = raw_beruf == Beruf.VET
+            else:
+                is_vet = False
+
+            ident = data.get("identifier", "<unknown>")
+
+            if is_vet:
+                if data.get("adult") is None:
+                    data["adult"] = True
+                if data.get("hours") is None or data.get("hours") == "":
+                    data["hours"] = 0
+                if data.get("abteilung") is None or data.get("abteilung") == "":
+                    data["abteilung"] = Abteilung.OTHER
+                if data.get("reception") is None:
+                    data["reception"] = False
+                if data.get("nd_possible") is None:
+                    data["nd_possible"] = True
+                if data.get("nd_alone") is None:
+                    data["nd_alone"] = True
+                if data.get("nd_min_consecutive") is None:
+                    data["nd_min_consecutive"] = 2
+                if data.get("nd_max_consecutive") is None:
+                    data["nd_max_consecutive"] = 2
+                if data.get("nd_exceptions") is None:
+                    data["nd_exceptions"] = []
+            else:
+                required_fields = ["name", "identifier", "adult", "hours", "reception", "nd_possible", "nd_alone"]
+                for field in required_fields:
+                    val = data.get(field)
+                    if val is None or val == "":
+                        raise StaffValidationError(
+                            f"Missing required field '{field}' for non-vet staff '{ident}'."
+                        )
+
+                raw_hours = data.get("hours")
+                try:
+                    parsed_hours = int(float(raw_hours))
+                except (ValueError, TypeError) as e:
+                    raise StaffValidationError(
+                        f"Invalid contracted hours '{raw_hours}' for non-vet staff '{ident}'."
+                    ) from e
+
+                if parsed_hours <= 0:
+                    raise StaffValidationError(
+                        f"Non-vet staff '{ident}' must have contracted weekly hours > 0 (got {parsed_hours})."
+                    )
+                data["hours"] = parsed_hours
+
+        return data
+
     @field_validator("beruf", mode="before")
     @classmethod
     def parse_beruf(cls, v: Any) -> Any:
-        """Parse role/profession and normalize synonyms."""
+        """Parse role/profession and normalize.
+
+        Explicitly disallows ambiguous legacy shortcuts 'TA' and 'Tierarzt'
+        to avoid confusion between training interns and relief vets.
+        """
         if isinstance(v, str):
             val = v.strip()
             val_upper = val.upper()
-            if val_upper in ("VET", "TIERARZT", "TA_ENTLASTUNG"):
+            if val_upper in ("TA", "TIERARZT", "TA_ENTLASTUNG"):
+                raise StaffValidationError(
+                    f"Role shortcut '{val}' is deprecated and ambiguous (formerly used for interns, "
+                    f"and confused with vets). Please specify 'Intern' for interns in training "
+                    f"or 'Vet' for fully fledged veterinarians."
+                )
+            if val_upper == "VET":
                 return Beruf.VET
-            if val_upper == "TA":
+            if val_upper == "INTERN":
                 return Beruf.INTERN
             if val_upper in ("AZUBI", "AUSZUBILDENDE", "AUSZUBILDENDER"):
                 return Beruf.AZUBI
@@ -93,13 +170,13 @@ class Staff(BaseModel):
     @classmethod
     def parse_hours(cls, v: Any) -> int:
         """Parse contracted hours from CSV (handles empty strings and floats)."""
-        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+        if v is None or v == "":
             return 0
         return int(float(v))
 
     @model_validator(mode="after")
     def _enforce_vet_invariants(self) -> "Staff":
-        """Enforce strict invariant attributes for Tierärzte (Beruf.VET)."""
+        """Enforce strict invariant attributes for Vets (Beruf.VET)."""
         if self.beruf == Beruf.VET:
             self.adult = True
             self.hours = 0
@@ -354,14 +431,19 @@ def load_staff_from_csv(csv_path: Path) -> list[Staff]:
     with csv_path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # Convert string booleans
-            row["adult"] = str(row.get("adult", "true")).lower() == "true"
-            row["reception"] = str(row.get("reception", "false")).lower() == "true"
-            row["nd_possible"] = str(row.get("nd_possible", "true")).lower() == "true"
-            row["nd_alone"] = str(row.get("nd_alone", "true")).lower() == "true"
-            row["hours"] = int(row["hours"]) if row.get("hours") else 0
+            def parse_bool_csv(v: Any) -> bool | None:
+                if v is None or (isinstance(v, str) and v.strip() == ""):
+                    return None
+                return str(v).lower() in ("true", "ja", "yes", "1", "y", "j")
+
+            row["adult"] = parse_bool_csv(row.get("adult"))
+            row["reception"] = parse_bool_csv(row.get("reception"))
+            row["nd_possible"] = parse_bool_csv(row.get("nd_possible"))
+            row["nd_alone"] = parse_bool_csv(row.get("nd_alone"))
+            raw_hours = row.get("hours")
+            row["hours"] = None if raw_hours is None or raw_hours == "" else raw_hours
             # birthday column is optional for backwards compatibility
-            if "birthday" not in row:
+            if "birthday" not in row or row["birthday"] == "":
                 row["birthday"] = None
             staff_list.append(Staff(**row))
     return staff_list
@@ -834,10 +916,6 @@ def build_previous_context(
         ):
             if a.staff_identifier in vet_identifiers:
                 vet_active_last_month.add(a.staff_identifier)
-            else:
-                matching = [s for s in staff_list if s.identifier == a.staff_identifier]
-                if not matching and (a.staff_identifier.startswith("TA_") or "vet" in a.staff_identifier.lower()):
-                    vet_active_last_month.add(a.staff_identifier)
 
     return PreviousPlanContext(
         quarter_start=schedule.quarter_start,

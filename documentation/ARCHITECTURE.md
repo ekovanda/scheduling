@@ -66,7 +66,7 @@ build_previous_context_from_xlsx(source, staff_list) -> PreviousPlanContext  # I
 | `_check_open_night_missing_tfa` | Open nights require at least 1 TFA (valid: TFA+TFA, TFA+Intern, TFA+Azubi; forbidden: Intern+Intern, Intern+Azubi) |
 | `_check_night_pairing_constraint` | Azubis must pair with non-Azubi (TFA or Intern); max 1 Azubi per night |
 | `_check_nd_alone_improper_pairing` | `nd_alone=True` staff must work **completely alone** on closed nights (may be paired on open nights) |
-| `_check_vet_shift_constraints` | Tierärzte (`Beruf.VET`): only Di-Do (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`), exact 2-night blocks, strictly solo (headcount = 1), max 1 block per 2 calendar months |
+| `_check_vet_shift_constraints` | Vets (`Beruf.VET`): only Di-Do (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`), exact 2-night blocks, strictly solo (headcount = 1), max 1 block per 2 calendar months |
 | `_check_min_consecutive_nights_constraint` | Per-staff `nd_min_consecutive` blocks enforced |
 | `_check_same_day_next_day_constraint` | No day shift on same day or next day after night shift |
 | `_check_three_week_block_constraint` | Min gap between blocks: 21 days for TFA/Azubi, 10 days for Interns |
@@ -106,7 +106,7 @@ def generate_schedule(
 - `x[staff, date, shift_type]`: Binary, 1 if assigned
 - `is_paired[staff, date]`: Binary, 1 if working paired night
 - `w_int[intern, weekend_idx]`: Binary, coupled weekend assignment for Interns
-- `b_dimi[vet, week]`, `b_mido[vet, week]`: Binary, exact 2-night midweek relief blocks for Tierärzte
+- `b_dimi[vet, week]`, `b_mido[vet, week]`: Binary, exact 2-night midweek relief blocks for Vets
 
 **Constraint Encoding:**
 - **Open Nights:** Exactly 2 persons (`sum(x) == 2`), at least 1 TFA (`sum(x_tfa) >= 1`), at most 1 Azubi (`sum(x_azubi) <= 1`).
@@ -117,13 +117,13 @@ def generate_schedule(
 - **Night Quota:** Interns restricted to 6–9 night shifts per quarter.
 
 **Objective Hierarchy:**
-1. **Tierarzt-Entlastung (Highest Priority):**
+1. **Vet-Entlastung (Highest Priority):**
    $$\text{Minimize} \quad -100\,000 \cdot \sum_{w, v} b[v, w]$$
 2. **Cross-Quarter Boundary Feasibility:** Gap violation penalty `gap_diff * 10,000,000`.
 3. **Primary Fairness:** FTE-scaled Notdienste range per group (presence + carry-forward adjusted).
 4. **Secondary Fairness:** FTE-scaled night-shift range per group (type balance).
 5. **Intern Weekend Fairness:** $300 \cdot (\max_{i} w_i - \min_{i} w_i)$ (balanced weekend rotation $\le 1$).
-6. **Tierarzt Block Fairness:** $500 \cdot (\max_{v} b_v - \min_{v} b_v)$ (balanced relief distribution).
+6. **Vet Block Fairness:** $500 \cdot (\max_{v} b_v - \min_{v} b_v)$ (balanced relief distribution).
 
 ### 5. feasibility.py - Pre-Solve Diagnostics
 
@@ -133,7 +133,7 @@ Fast pre-solve validation:
 - **Check C:** Azubi pairing capacity.
 - **Check D:** Open night TFA presence capacity.
 - **Check E:** Intern night and weekend capacity.
-- **Check F:** Tierarzt-Nachtdienst-Entlastung capacity (reporting available Vets, max blocks, and relief nights).
+- **Check F:** Vet-Nachtdienst-Entlastung capacity (reporting available Vets, max blocks, and relief nights).
 
 ## Algorithms
 

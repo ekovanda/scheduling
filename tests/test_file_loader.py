@@ -109,6 +109,33 @@ class TestStaffLoading:
         assert len(staff_dict) == 2
         assert "MM" in staff_dict
 
+    def test_load_staff_xlsx_with_vet(self, tmp_path: Path) -> None:
+        """Test loading staff with Vet role from XLSX and instantiating Staff models (E2)."""
+        pytest.importorskip("openpyxl")
+        import pandas as pd
+        from app.scheduler.models import Beruf, load_staff_from_file as load_staff_models
+
+        df = pd.DataFrame({
+            "Name": ["Max Müller", "Dr. Vet"],
+            "Identifier": ["MM", "V1"],
+            "Adult": [True, ""],
+            "Hours": [40, ""],
+            "Beruf": ["TFA", "Vet"],
+            "Reception": [True, ""],
+            "ND_Possible": [True, ""],
+            "ND_Alone": [False, ""],
+        })
+        xlsx_file = tmp_path / "staff_with_vet.xlsx"
+        df.to_excel(xlsx_file, index=False)
+
+        staff_list = load_staff_models(xlsx_file)
+        assert len(staff_list) == 2
+        vet = next(s for s in staff_list if s.identifier == "V1")
+        assert vet.beruf == Beruf.VET
+        assert vet.hours == 0
+        assert vet.adult is True
+        assert vet.nd_alone is True
+
     def test_missing_required_column(self, tmp_path: Path) -> None:
         """Test that missing required columns raise ColumnMappingError."""
         bad_csv = tmp_path / "bad_staff.csv"

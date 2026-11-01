@@ -512,7 +512,7 @@ def page_personal() -> None:
             with col3:
                 st.metric("Intern", sum(1 for s in staff_list if s.beruf == Beruf.INTERN))
             with col4:
-                st.metric("Tierarzt", sum(1 for s in staff_list if s.beruf == Beruf.VET))
+                st.metric("Vet", sum(1 for s in staff_list if s.beruf == Beruf.VET))
             with col5:
                 st.metric("Gesamt", len(staff_list))
 
@@ -761,8 +761,8 @@ def page_regeln() -> None:
 **Intern-Kontingent:**
 - Interns müssen pro Quartal **6–9 Nächte** übernehmen (≈ 2–3 pro Monat).
 
-**Tierarzt-Nachtdienst-Entlastung (`Beruf.VET`):**
-- Tierärzte übernehmen gezielt geschlossene Nächte im Zeitfenster **Dienstag bis Donnerstag** (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`).
+**Vet-Nachtdienst-Entlastung (`Beruf.VET`):**
+- Vets übernehmen gezielt geschlossene Nächte im Zeitfenster **Dienstag bis Donnerstag** (`N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`).
 - **2-Nächte-Block**: Genau 2 Nächte am Stück (entweder Di+Mi oder Mi+Do).
 - **Alleindienst**: Kopfzahl = genau 1. Keine Begleitung durch TFAs, Interns oder Azubis.
 - **Frequenz**: Maximal 1 Block alle 2 Monate (strikte Kalendermonatsgrenze).
@@ -1009,7 +1009,10 @@ def page_plan_erstellen() -> None:
                     st.session_state.schedule = best_schedule
 
                     # Validate
-                    validation = validate_schedule(best_schedule, staff_list, config=_cfg)
+                    _prev_ctx = st.session_state.get("previous_context")
+                    validation = validate_schedule(
+                        best_schedule, staff_list, config=_cfg, previous_context=_prev_ctx
+                    )
                     st.session_state.validation_result = validation
 
                     st.success(
@@ -1181,7 +1184,7 @@ def page_plan_anzeigen() -> None:
             )
             st_obj = staff_by_id_map.get(assignment.staff_identifier)
             if st_obj and st_obj.beruf == Beruf.VET and assignment.shift.is_night_shift():
-                display_value = f"🩺 [TA] {display_value}"
+                display_value = f"🩺 [Vet] {display_value}"
             shift_map[key].append(display_value)
             if assignment.is_pre_assigned:
                 pre_assigned_cells.add(key)
@@ -1598,10 +1601,10 @@ def page_plan_anzeigen() -> None:
                     height=min(400, 35 * len(df_intern) + 38),
                 )
 
-            # Vet Table (Tierärzte)
+            # Vet Table (Vets)
             df_vet = df_stats[df_stats["Beruf"] == "Vet"]
             if not df_vet.empty:
-                st.markdown("##### 🩺 Tierärzte (Entlastung Di–Do)")
+                st.markdown("##### 🩺 Vets (Entlastung Di–Do)")
                 vet_rows = []
                 from app.scheduler.validator import _find_consecutive_blocks
                 for _, row in df_vet.iterrows():
@@ -1866,6 +1869,7 @@ def page_plan_anzeigen() -> None:
             # Map Constraint Name -> Description
             known_constraints = {
                 "Minor Sunday Ban": "Keine Minderjährigen am Sonntag",
+                "Intern Weekend Ban": "Interns dürfen keine regulären Wochenendschichten übernehmen",
                 "Intern Weekend Exclusivity": "Interns nur auf Sa_Intern/So_Intern, andere Rollen nicht auf Intern-WE",
                 "Intern Coupled Weekend": "Intern Sa_Intern und So_Intern müssen als Paar vergeben werden",
                 "Intern Monthly Weekend Cap": "Max. 1 Intern-Wochenende pro Kalendermonat",
@@ -1881,7 +1885,7 @@ def page_plan_anzeigen() -> None:
                 "10-Day Block Limit": "Mindestabstand zwischen Blöcken (Intern 10 Tage)",
                 "2-Week Block Limit": "Max. 1 Block pro 2 Wochen",
                 "Weekend Isolation": "Wochenend-Schichten nicht in Blöcken",
-                "Vet Shift Constraint": "Tierarzt-Regeln (nur Di-Do, 2er-Block, Alleindienst, 1x/2 Monate)",
+                "Vet Shift Constraint": "Vet-Regeln (nur Di-Do, 2er-Block, Alleindienst, 1x/2 Monate)",
                 "ND Exception Weekday": "Beachtung blockierter Wochentage (nd_exceptions)",
                 "Shift Eligibility": "Qualifikation für Schicht",
                 "Shift Coverage": "Mindestbesetzung (Nachts)",

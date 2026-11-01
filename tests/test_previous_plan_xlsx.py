@@ -286,3 +286,20 @@ class TestBuildPreviousContextFromXlsx:
         buf.seek(0)
         with pytest.raises(ValueError, match="no valid assignment rows"):
             build_previous_context_from_xlsx(buf, [_make_staff("SG")])
+
+    def test_unknown_id_heuristic_not_treated_as_vet(self) -> None:
+        """Unknown ID starting with TA_ or containing vet is not guessed as a Vet (B2)."""
+        buf = _build_xlsx([
+            {"Datum": "30.06.2026", "Schicht": "N_Di-Mi", "Mitarbeiter": "TA_DEPARTED", "Paarweise": "Nein"},
+            {"Datum": "30.06.2026", "Schicht": "N_Mi-Do", "Mitarbeiter": "old_vet_user", "Paarweise": "Nein"},
+            {"Datum": "30.06.2026", "Schicht": "N_Do-Fr", "Mitarbeiter": "ACTIVE_VET", "Paarweise": "Nein"},
+        ])
+        staff = [
+            _make_staff("SG"),
+            Staff(name="Active Vet", identifier="ACTIVE_VET", beruf=Beruf.VET),
+        ]
+        ctx = build_previous_context_from_xlsx(buf, staff)
+        assert "ACTIVE_VET" in ctx.vet_active_last_month_ids
+        assert "TA_DEPARTED" not in ctx.vet_active_last_month_ids
+        assert "old_vet_user" not in ctx.vet_active_last_month_ids
+        assert ctx.vet_active_last_month_ids == ["ACTIVE_VET"]
