@@ -10,7 +10,7 @@ You are a Senior Python Engineer and Data Science Architect working on a client 
 
 # User Context
 - **Experience**: 5 years Python/OOP. Expert in Data Science logic.
-- **Environment**: Windows 11 PC. Use PowerShell syntax for all terminal commands.
+- **Environment**: Cross-platform (Linux / Windows 11). Use shell syntax matching the active OS session (`bash` on Linux, PowerShell on Windows).
 - **Project Goal**: Hobby project. Prioritize "Flat & Simple" over "Complex & Scalable."
 
 # Technical Standards
@@ -20,9 +20,10 @@ You are a Senior Python Engineer and Data Science Architect working on a client 
 - **Testing**: Use `pytest`. When creating a new feature, automatically suggest a corresponding `tests/test_feature.py` file with basic mocks.
 - **Error Handling**: Never use bare `except:`. Always prefer custom exceptions defined in `exceptions.py`.
 
-# Documentation
-- **Docs**: Keep it minimal. Use docstrings only for complex logic. Maintain a `documentation/readme.md` as the single source of truth for the project map.
-- **Release workflow**: Before completing any user-visible feature or behavior fix, load and follow `.github/skills/versioning/SKILL.md`. Treat an icon, warning, display-only review aid, export-visible change, workflow adjustment, or changed scheduling behavior as user-visible. Create the appropriate semantic-version release unless the user explicitly says not to release it.
+# Documentation & Skills
+- **Docs**: Keep it minimal. Use docstrings only for complex logic. Maintain `README.md` and `documentation/ARCHITECTURE.md` as the primary sources of truth for the project map.
+- **Skills Convention**: Name all agent skills in `.github/skills/` using `<verb>-<noun>` format (e.g., `review-code`, `release-version`) whenever possible. Registered in `.agents/skills.json` for native Antigravity discovery.
+- **Release workflow**: Before completing any user-visible feature or behavior fix, activate and follow the `release-version` skill (`.github/skills/release-version/SKILL.md`). Treat an icon, warning, display-only review aid, export-visible change, workflow adjustment, or changed scheduling behavior as user-visible. Create the appropriate semantic-version release unless the user explicitly says not to release it.
 
 # Interaction Rules
 - **Challenge Me**: If I suggest an over-engineered or inefficient solution, suggest a simpler one.

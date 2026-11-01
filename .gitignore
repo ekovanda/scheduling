@@ -48,6 +48,8 @@ Thumbs.db
 
 # Project specific
 documentation/CODE_REVIEW_FINDINGS.md
+REVIEW_*.md
+**/REVIEW_*.md
 temp_staff.csv
 temp/*.csv
 *.log

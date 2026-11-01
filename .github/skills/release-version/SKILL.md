@@ -1,6 +1,10 @@
 ---
-name: versioning
-description: "Use when: releasing the clinic scheduling app, changing its version number, updating either changelog, or completing a user-visible feature or behavior fix that may require a release."
+name: release-version
+description: >-
+  Manages semantic versioning and dual changelogs (app/release_info.py and
+  documentation/CHANGELOG.md) for the clinic scheduling app. Use when releasing
+  the app, bumping its version number, updating changelogs, or completing a
+  user-visible feature or behavior fix.
 ---
 
 # Application Versioning
