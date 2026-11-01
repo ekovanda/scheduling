@@ -173,15 +173,9 @@ def generate_schedule_cpsat(
     weekend_shifts = [s for s in shifts if s.is_weekend_shift()]
     night_shifts = [s for s in shifts if s.is_night_shift()]
 
-    # Night shifts categorized by Intern presence (Interns are on-site Sun-Mon, Mon-Tue)
-    intern_present_nights = [
-        s for s in night_shifts
-        if s.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
-    ]
-    regular_nights = [
-        s for s in night_shifts
-        if s.shift_type not in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
-    ]
+    # Night shifts categorized into open and closed nights
+    open_nights = [s for s in night_shifts if s.is_open_night()]
+    closed_nights = [s for s in night_shifts if s.is_closed_night()]
 
     # =========================================================================
     # DECISION VARIABLES
@@ -279,12 +273,10 @@ def generate_schedule_cpsat(
             model.Add(sum(staff_for_shift) == target)
 
     # 2. Night shift coverage:
-    #    - Sun-Mon and Mon-Tue (vet present): exactly 1 non-Azubi + optional 0-1 Azubi
-    #    - Other nights: 1-2 people total
-    #    - At least one non-Azubi required on all nights
+    #    - Open nights (Sun-Mon, Mon-Tue): exactly 2 people, at least 1 TFA, max 1 Azubi
+    #    - Closed nights: 1-2 people total, at least 1 non-Azubi
     for shift in night_shifts:
         shift_slot = (shift.shift_date, shift.shift_type)
-        is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
         
         # Categorize staff for this shift
         azubi_vars = [
@@ -308,48 +300,56 @@ def generate_schedule_cpsat(
             # Pre-assigned holiday night: enforce exact headcount, skip role rules
             target = pre_assigned_count[shift_slot]
             model.Add(sum(all_vars) == target)
-        elif is_vet_present:
-            # Vet-present nights: exactly 1 non-Azubi + optional 0-1 Azubi
-            if non_azubi_vars:
-                model.Add(sum(non_azubi_vars) == 1)  # Exactly 1 non-Azubi
+        elif shift.is_open_night():
+            # Open nights (Sun-Mon, Mon-Tue): exactly 2 persons, at least 1 TFA, max 1 Azubi
+            tfa_vars = [
+                x[(s.identifier, shift.shift_date, shift.shift_type)]
+                for s in staff_list
+                if (s.identifier, shift.shift_date, shift.shift_type) in x
+                and s.beruf == Beruf.TFA
+            ]
+            # 1. Gesamtkopfzahl immer exakt 2 Personen
+            model.Add(sum(all_vars) == 2)
+
+            # 2. Mindestens 1 TFA zwingend erforderlich
+            model.Add(sum(tfa_vars) >= 1)
+
+            # 3. Maximal 1 Azubi (verhindert Azubi + Azubi)
             if azubi_vars:
-                model.Add(sum(azubi_vars) <= 1)  # Optional: max 1 Azubi
+                model.Add(sum(azubi_vars) <= 1)
         else:
-            # Regular nights: 1-2 people total, at least 1 non-Azubi
+            # Closed nights: 1-2 people total, at least 1 non-Azubi
             coverage_sum = sum(all_vars)
             model.Add(coverage_sum >= 1)
             model.Add(coverage_sum <= 2)
             if non_azubi_vars:
                 model.Add(sum(non_azubi_vars) >= 1)
         
-        # Link is_paired variable: paired iff 2 people assigned (only for regular nights)
-        if not is_vet_present:
-            coverage_sum = sum(all_vars)
-            sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
-            model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
-            model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
-            
-            for s in staff_list:
-                key = (s.identifier, shift.shift_date, shift.shift_type)
-                pair_key = (s.identifier, shift.shift_date)
-                if key in x and pair_key in is_paired:
-                    # is_paired = sum_is_two AND assigned
-                    model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
-                    model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
-                        is_paired[pair_key].Not()
-                    )
+        # Link is_paired variable: paired iff 2 people assigned (for all night shifts)
+        coverage_sum = sum(all_vars)
+        sum_is_two = model.NewBoolVar(f"sum2_{shift.shift_date}_{shift.shift_type.value}")
+        model.Add(coverage_sum == 2).OnlyEnforceIf(sum_is_two)
+        model.Add(coverage_sum != 2).OnlyEnforceIf(sum_is_two.Not())
+        
+        for s in staff_list:
+            key = (s.identifier, shift.shift_date, shift.shift_type)
+            pair_key = (s.identifier, shift.shift_date)
+            if key in x and pair_key in is_paired:
+                # is_paired = sum_is_two AND assigned
+                model.AddBoolAnd([sum_is_two, x[key]]).OnlyEnforceIf(is_paired[pair_key])
+                model.AddBoolOr([sum_is_two.Not(), x[key].Not()]).OnlyEnforceIf(
+                    is_paired[pair_key].Not()
+                )
 
     # 3. Azubi and nd_alone constraints:
     #    - Azubis must always pair with a non-Azubi (TFA or Intern)
     #    - Two Azubis can NEVER work together on any night
-    #    - nd_alone=False (non-Azubi) must be paired on regular nights
-    #    - nd_alone=True (non-Azubi) must work COMPLETELY ALONE on regular nights
+    #    - nd_alone=False (non-Azubi) must be paired on closed nights
+    #    - nd_alone=True (non-Azubi) must work COMPLETELY ALONE on closed nights
     
     for shift in night_shifts:
         if (shift.shift_date, shift.shift_type) in pre_assigned_shift_slots:
             continue  # Externally-assigned holidays bypass pairing rules
-
-        is_vet_present = shift.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
         
         # Categorize staff for this shift
         azubi_vars = []  # Azubis
@@ -379,8 +379,8 @@ def generate_schedule_cpsat(
                 # If Azubi is assigned, at least one non-Azubi must be assigned
                 model.Add(sum(non_azubi_vars) >= 1).OnlyEnforceIf(azubi_var)
         
-        # For regular nights (not vet-present):
-        if not is_vet_present:
+        # For closed nights (nd_alone strictly enforced):
+        if shift.is_closed_night():
             # nd_alone=True staff must work COMPLETELY alone (no one else at all)
             for staff, var in non_azubi_nd_alone_true:
                 all_other_vars = [
@@ -388,9 +388,6 @@ def generate_schedule_cpsat(
                     if s.identifier != staff.identifier
                 ]
                 if all_other_vars:
-                    # If nd_alone=True staff is assigned, no one else can be
-                    for other_var in all_other_vars:
-                        model.Add(var + other_var <= 1)
                     # If nd_alone=True staff is assigned, no one else can be
                     for other_var in all_other_vars:
                         model.Add(var + other_var <= 1)
@@ -550,12 +547,12 @@ def generate_schedule_cpsat(
                 key = (staff.identifier, shift.shift_date, shift.shift_type)
                 pair_key = (staff.identifier, shift.shift_date)
                 if key in x:
-                    if staff.beruf == Beruf.AZUBI:
-                        # Azubis always get full credit (2 half-units = 1.0 effective)
+                    if staff.beruf == Beruf.AZUBI or (staff.beruf == Beruf.INTERN and shift.is_open_night()):
+                        # Azubis (all nights) and Interns on open nights get full credit (2 half-units = 1.0 effective)
                         terms.append(2 * x[key])
                         night_terms.append(2 * x[key])
                     else:
-                        # Non-Azubis: paired = 1 half-unit (0.5), solo = 2 half-units (1.0)
+                        # Non-Azubis on closed nights (and TFAs on open nights): paired = 1 half-unit (0.5), solo = 2 half-units (1.0)
                         # Formula: contribution = 2*assigned - paired_and_assigned
                         # = 2 if solo (assigned=1, paired=0)
                         # = 1 if paired (assigned=1, paired=1)

@@ -178,23 +178,47 @@ def analyze_capacity(
     checks: list[FeasibilityCheck] = []
 
     # -------------------------------------------------------------------------
-    # Check A: Non-Azubi night supply
-    # Each viable block covers approx. nd_min_consecutive nights.
-    # Compare estimated total coverage to total_nights demand.
+    # Check A: Non-Azubi & TFA night supply
+    # Open nights require 2 people (min 1 TFA); closed nights require 1-2 people.
+    # Check 1: TFA block capacity >= open nights mandatory TFA slots.
+    # Check 2: Combined (non-Azubi + Azubi) capacity >= total minimum night slots.
     # -------------------------------------------------------------------------
-    total_non_azubi_coverage = sum(
+    open_nights_count = sum(1 for s in night_shifts if s.is_open_night())
+    closed_nights_count = len(night_shifts) - open_nights_count
+    min_tfa_demand_open = open_nights_count
+    total_slots_demand = (open_nights_count * 2) + closed_nights_count
+
+    tfa_nd = [s for s in non_azubi_nd if s.beruf == Beruf.TFA]
+    total_tfa_coverage = sum(
         per_staff_blocks[s.identifier][0] * s.nd_min_consecutive
-        for s in non_azubi_nd
+        for s in tfa_nd
     )
-    if total_non_azubi_coverage < total_nights:
-        pct = total_non_azubi_coverage / total_nights if total_nights else 0
-        status_a: Literal["ok", "warning", "error"] = "warning" if pct >= 0.7 else "error"
+    total_all_coverage = sum(
+        per_staff_blocks[s.identifier][0] * s.nd_min_consecutive
+        for s in non_azubi_nd + azubi_nd
+    )
+
+    if total_tfa_coverage < min_tfa_demand_open:
+        pct_tfa = total_tfa_coverage / min_tfa_demand_open if min_tfa_demand_open else 0
+        status_a: Literal["ok", "warning", "error"] = "warning" if pct_tfa >= 0.7 else "error"
         checks.append(FeasibilityCheck(
             name="Non-Azubi Nacht-Kapazität",
             status=status_a,
             message=(
-                f"Geschätzte Kapazität ~{total_non_azubi_coverage} Nacht-Slots "
-                f"vs. {total_nights} benötigte Nächte."
+                f"TFA-Kapazität unzureichend für offene Nächte: ~{total_tfa_coverage} TFA-Slots "
+                f"vs. {min_tfa_demand_open} benötigte Pflicht-Slots."
+            ),
+        ))
+    elif total_all_coverage < total_slots_demand:
+        pct_all = total_all_coverage / total_slots_demand if total_slots_demand else 0
+        status_a = "warning" if pct_all >= 0.7 else "error"
+        checks.append(FeasibilityCheck(
+            name="Non-Azubi Nacht-Kapazität",
+            status=status_a,
+            message=(
+                f"Gesamte Nacht-Kapazität knapp: ~{total_all_coverage} Slots "
+                f"vs. mind. {total_slots_demand} benötigte Plätze "
+                f"({open_nights_count} offene + {closed_nights_count} geschlossene Nächte)."
             ),
         ))
     else:
@@ -202,8 +226,9 @@ def analyze_capacity(
             name="Non-Azubi Nacht-Kapazität",
             status="ok",
             message=(
-                f"Nacht-Kapazität ausreichend: ~{total_non_azubi_coverage} "
-                f"Slots für {total_nights} Nächte."
+                f"Nacht-Kapazität ausreichend: ~{total_all_coverage} Slots für mind. "
+                f"{total_slots_demand} Schichtplätze (~{total_tfa_coverage} TFA-Slots für "
+                f"{open_nights_count} offene Nächte)."
             ),
         ))
 

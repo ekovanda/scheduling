@@ -123,14 +123,17 @@ class Staff(BaseModel):
         except ValueError:
             return None  # e.g. Feb 29 in a non-leap year
 
-    def effective_nights_weight(self, is_paired: bool) -> float:
+    def effective_nights_weight(self, is_paired: bool, is_open_night: bool = False) -> float:
         """Calculate effective night weight for fairness.
 
-        Azubis always count as 1.0 effective night (even when paired).
-        Non-Azubis: Paired nights count as 0.5, solo nights count as 1.0.
+        - Azubis always count as 1.0 effective night (even when paired).
+        - Interns on open nights (N_So-Mo, N_Mo-Di) count as 1.0 effective night.
+        - Non-Azubis on closed nights (and TFAs on open nights): paired = 0.5, solo = 1.0.
         """
         if self.beruf == Beruf.AZUBI:
-            return 1.0  # Azubis always get full credit
+            return 1.0
+        if self.beruf == Beruf.INTERN and is_open_night:
+            return 1.0
         return 0.5 if is_paired else 1.0
 
     def can_work_shift(self, shift_type: ShiftType, shift_date: date) -> bool:
@@ -195,6 +198,14 @@ class Shift(BaseModel):
         """Check if this is a night shift."""
         return self.shift_type.value.startswith("N_")
 
+    def is_open_night(self) -> bool:
+        """Check if this is an open night (Sun-Mon or Mon-Tue)."""
+        return self.shift_type in (ShiftType.NIGHT_SUN_MON, ShiftType.NIGHT_MON_TUE)
+
+    def is_closed_night(self) -> bool:
+        """Check if this is a closed night (Tue-Wed through Sat-Sun)."""
+        return self.is_night_shift() and not self.is_open_night()
+
     def is_weekend_shift(self) -> bool:
         """Check if this is a weekend shift."""
         return self.shift_type.value.startswith("Sa_") or self.shift_type.value.startswith("So_")
@@ -246,7 +257,10 @@ class Schedule(BaseModel):
         ]
         
         if staff is not None:
-            return sum(staff.effective_nights_weight(a.is_paired) for a in night_assignments)
+            return sum(
+                staff.effective_nights_weight(a.is_paired, is_open_night=a.shift.is_open_night())
+                for a in night_assignments
+            )
         
         # Fallback without staff object (legacy behavior)
         return sum(0.5 if a.is_paired else 1.0 for a in night_assignments)

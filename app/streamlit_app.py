@@ -732,24 +732,28 @@ def page_regeln() -> None:
 
     with st.expander("🌙 Nachtdienste – Besetzung & Rollen"):
         st.markdown("""
-**Reguläre Nächte** (Di→Mi bis Sa→So):
+**Offene Nächte** (`N_So-Mo` und `N_Mo-Di`):
+- Hohes Patientenaufkommen durch regulären Praxisbetrieb.
+- **Immer exakt 2 Personen**: Zwingend **1 TFA** + **1 weitere Person** (TFA, Intern oder Azubi).
+- Alleinarbeitsgebot (`nd_alone = True`) ist **aufgehoben** (immer Teamdienst).
+- **Fairness-Bewertung**:
+  - TFA: **0,5×** effektive Nächte (1 Half-Unit, da geteilter Dienst).
+  - Intern: **1,0×** effektive Nacht (2 Half-Units, volle Anrechnung).
+  - Azubi: **1,0×** effektive Nacht (2 Half-Units).
+
+**Geschlossene Nächte** (`N_Di-Mi` bis `N_Sa-So`):
+- Reiner Notdienstbetrieb für Notfälle.
 - 1–2 Personen, mind. 1 Nicht-Azubi (TFA oder Intern).
 - Zwei Azubis dürfen **nie** gemeinsam Nachtdienst machen.
 - Azubis müssen **immer** mit einem TFA oder Intern gepaart sein.
 - `nd_alone=False` (Nicht-Azubi): muss **paarweise** arbeiten (mind. 2 Personen gesamt).
 - `nd_alone=True` (Nicht-Azubi): arbeitet **komplett allein** — keine weitere Person auf derselben Nacht.
-
-**Vet-Nächte** (So→Mo und Mo→Di — TA vor Ort):
-- Genau **1 Nicht-Azubi** (TFA oder Intern).
-- Optional darf **1 Azubi** hinzukommen (max. 1).
-- `nd_alone`-Regeln gelten auf diesen Nächten **nicht**.
+- **Fairness-Bewertung**:
+  - Nicht-Azubi allein: **1,0×** | gepaart: **0,5×** pro Person.
+  - Azubi: immer **1,0×**.
 
 **Intern-Kontingent:**
 - Interns müssen pro Quartal **6–9 Nächte** übernehmen (≈ 2–3 pro Monat).
-
-**Effektive Nachtzählung** (für Fairness):
-- Azubi: immer **1,0×** (auch wenn gepaart).
-- TFA/Intern, allein: **1,0×** | gepaart: **0,5×** pro Person.
         """)
 
     with st.expander("⏱️ Zeitliche Regeln (Sperren & Abstände)"):
@@ -1750,7 +1754,8 @@ def page_plan_anzeigen() -> None:
                 
                 - **Wochenend-Schichten**: Jede WE-Schicht zählt 1×
                 - **Effektive Nächte**: 
-                  - TFA/Intern: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
+                  - TFA: Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
+                  - Intern: Offene Nacht (So-Mo, Mo-Di) = 1.0×, geschlossene Paar-Nacht = 0.5×, Solo-Nacht = 1.0×
                   - Azubi: Immer 1.0× (auch bei Paarung)
                 
                 **Normalisierung** (Norm./40h):
@@ -1797,7 +1802,8 @@ def page_plan_anzeigen() -> None:
                 "Intern Weekend Ban": "Keine Interns am Wochenende",
                 "Azubi Night Pairing": "Azubi Nachtdienst nur mit TFA/Intern",
                 "Multiple Azubis on Night": "Max. 1 Azubi pro Nachtschicht",
-                "Intern Night No Non-Azubi": "Mind. 1 TFA/Intern pro Nacht (So-Mo, Mo-Di)",
+                "Open Night Headcount": "Offene Nacht: Exakt 2 Personen (So-Mo, Mo-Di)",
+                "Open Night Missing TFA": "Offene Nacht: Mind. 1 TFA erforderlich (So-Mo, Mo-Di)",
                 "Night Pairing Required": "Mitarbeiter ohne 'nd_alone' nur im Team",
                 "ND Alone Improper Pairing": "nd_alone=True muss alleine arbeiten",
                 "Min Consecutive Nights": "Min. aufeinanderfolgende Nächte (nd_min_consecutive)",
