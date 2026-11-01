@@ -76,6 +76,14 @@ class Staff(BaseModel):
             return None
         return v.strip()
 
+    @field_validator("available_from", mode="before")
+    @classmethod
+    def parse_available_from(cls, v: Any) -> Any:
+        """Parse available_from from CSV (handles empty strings)."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return v
+
     @field_validator("abteilung", mode="before")
     @classmethod
     def parse_abteilung(cls, v: Any) -> Abteilung:

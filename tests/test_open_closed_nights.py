@@ -547,14 +547,19 @@ def test_q4_real_data_open_closed_nights() -> None:
         build_previous_context_from_xlsx,
     )
 
-    data_dir = Path("data/2026-Q4/klinikschedulingdata")
-    if not (data_dir / "MA_excel (2).xlsx").exists():
+    data_dir = Path("data/2026-Q4")
+    staff_file = data_dir / "staff.xlsx" if (data_dir / "staff.xlsx").exists() else data_dir / "MA_excel (2).xlsx"
+    vac_file = data_dir / "vacations.xlsx" if (data_dir / "vacations.xlsx").exists() else data_dir / "Urlaube_excel (2).xlsx"
+    pre_file = data_dir / "pre_assigned.xlsx" if (data_dir / "pre_assigned.xlsx").exists() else data_dir / "Feiertage_Excel (2).xlsx"
+    prev_file = data_dir / "previous_plan_q3.xlsx" if (data_dir / "previous_plan_q3.xlsx").exists() else data_dir / "Q3_Arbeitseinsätze.xlsx"
+
+    if not staff_file.exists():
         pytest.skip("Real Q4 dataset not present")
 
-    staff = load_staff_from_file(data_dir / "MA_excel (2).xlsx")
-    vacations = load_vacations_from_file(data_dir / "Urlaube_excel (2).xlsx")
-    pre_assigned = load_pre_assigned_from_file(data_dir / "Feiertage_Excel (2).xlsx")
-    prev_context = build_previous_context_from_xlsx(data_dir / "Q3_Arbeitseinsätze.xlsx", staff_list=staff)
+    staff = load_staff_from_file(staff_file)
+    vacations = load_vacations_from_file(vac_file)
+    pre_assigned = load_pre_assigned_from_file(pre_file)
+    prev_context = build_previous_context_from_xlsx(prev_file, staff_list=staff)
 
     result = generate_schedule(
         staff_list=staff,
