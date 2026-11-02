@@ -818,14 +818,22 @@ def generate_schedule_cpsat(
                     carry_forward_deltas=carry_forward_deltas or None,
                 )
 
-    # Track 2: Intern Weekend Fairness (min-max range, W_intern_we_fairness = 100)
+    # Track 2: Intern Weekend Fairness (min-max range, W_intern_we_fairness = 100 per weekend)
+    # Intern weekends are coupled pairs (Sat + Sun); count on Saturday shifts so range is in whole weekends.
     if len(intern_staff) >= 2:
-        max_we = model.NewIntVar(0, 50, "max_intern_we")
-        min_we = model.NewIntVar(0, 50, "min_intern_we")
+        max_intern_we_possible = max(3, len(intern_sat_shifts))
+        max_we = model.NewIntVar(0, max_intern_we_possible, "max_intern_we")
+        min_we = model.NewIntVar(0, max_intern_we_possible, "min_intern_we")
         for s in intern_staff:
-            model.Add(max_we >= weekend_half_counts[s.identifier])
-            model.Add(min_we <= weekend_half_counts[s.identifier])
-        we_range = model.NewIntVar(0, 50, "range_intern_we")
+            intern_we_terms = [
+                x[(s.identifier, sat_shift.shift_date, ShiftType.SATURDAY_INTERN)]
+                for sat_shift in intern_sat_shifts
+                if (s.identifier, sat_shift.shift_date, ShiftType.SATURDAY_INTERN) in x
+            ]
+            we_count = sum(intern_we_terms) if intern_we_terms else 0
+            model.Add(max_we >= we_count)
+            model.Add(min_we <= we_count)
+        we_range = model.NewIntVar(0, max_intern_we_possible, "range_intern_we")
         model.Add(we_range == max_we - min_we)
         objective_terms.append(100 * we_range)
 

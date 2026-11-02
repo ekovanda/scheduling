@@ -9,6 +9,24 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.5.2] - 2026-11-02
+
+### Fixed: Intern-Wochenendzählung und Fairness-Einheiten (Finding B4 & F1)
+
+- **Gekoppelte Wochenend-Einheiten (`Schedule.count_weekends`, `count_intern_weekends`):**
+  - Gekoppelte Intern-Wochenenden (`Sa_Intern` + `So_Intern`) werden nun konsistent als 1 vollständiger Wochenend-Dienstblock (0–3 Blöcke pro Quartal) gezählt statt als 2 Einzelschichten.
+  - `Schedule.count_intern_weekends` zählt Schichten auf Basis von `ShiftType.SATURDAY_INTERN`.
+  - `Schedule.count_weekends` differenziert rollenbasiert (Interns: Wochenend-Blöcke; TFA/Azubi: Einzelschichten).
+  - `Schedule.count_total_notdienst` summiert für Interns effektive Nächte + Wochenend-Blöcke.
+- **Solver Track 2 Fairness (`solver_cpsat.py`):**
+  - Das Min-Max-Fairnessziel für Intern-Wochenenden summiert nun direkt die Samstags-Variablen (`Sa_Intern`) der gekoppelten Blöcke.
+  - Die Spanne (`we_range`) misst die Differenz in echten Wochenenden ($0..3$), wodurch die Gewichtung $W_{\text{intern\_we\_fairness}} = 100$ exakt pro Wochenende greift (zuvor $4\times$ überhöht durch 4 Halb-Einheiten pro Wochenende).
+- **UI & Validator-Korrektur (`streamlit_app.py`, `validator.py`):**
+  - Die Spalte "WE" und die KPI-Kacheln ("Track 2: Ø WE", "WE-Spread") zeigen nun für Interns echte Wochenenden ($0..3$) statt verdoppelter Schichten ($0..6$).
+  - Der Qualitäts-Penalty-Score in `validator.py` berechnet die Standardabweichung der Intern-Wochenenden auf Basis ganzer Blöcke.
+- **Dokumentations-Harmonisierung (F1):**
+  - `documentation/CONSTRAINTS.md` und `documentation/ARCHITECTURE.md` synchronisiert: Track 2 Fairness ist ein Soft-Ziel mit Gewichtung 100 pro Wochenende.
+
 ## [1.5.1] - 2026-11-01
 
 ### Changed: Rollen-Klarstellung Vets / Interns & Strikte Personal-Validierung
@@ -56,7 +74,7 @@ Umfassendes Release mit drei zentralen Erweiterungen der Dienstplanungslogik zur
   - Interns erhalten einen verkürzten Mindestabstand zwischen Einsätzen von 10 Tagen (im Vergleich zu 21 Tagen bei TFAs/Azubis).
 - **Zwei-Track-Fairness:**
   - Track 1 steuert die Nachtdienste (strikter Korridor von 6–9 Nächten pro Quartal).
-  - Track 2 steuert die Intern-Wochenenden mit gleichmäßiger Verteilung (Differenz maximal 1 Wochenende).
+  - Track 2 steuert die Intern-Wochenenden mit gleichmäßiger Verteilung (Soft-Minimierung der Wochenend-Differenz, Gewichtung 100).
 
 #### 3. Tierarzt-Nachtdienst-Entlastung (`PRD_tierarzt_nachtdienst_entlastung`)
 - **Neue Mitarbeiterrolle `Beruf.VET` ("Vet"):**

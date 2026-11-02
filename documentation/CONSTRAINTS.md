@@ -68,7 +68,7 @@ The CP-SAT solver enforces all hard constraints during solving. The post-solve v
 | S4 | `nd_max_consecutive` not exceeded | Hard in solver; +100 pts/violation in validator |
 | S5 | Night-shift type balance within groups (secondary objective) | Minimize FTE-scaled night range |
 | S6 | Cross-quarter carry-forward: compensate prior-quarter imbalance | Per-person delta offset on fairness variable |
-| S7 | Intern weekend fairness (Track 2) | Objective term: $300 \cdot (\max_i w_i - \min_i w_i)$ (balanced weekend rotation $\le 1$) |
+| S7 | Intern weekend fairness (Track 2) | Objective term: $100 \cdot (\max_i w_i - \min_i w_i)$ (balanced weekend rotation over full coupled weekends) |
 | S8 | Vet block fairness | Objective term: $500 \cdot (\max_v b_v - \min_v b_v)$ |
 
 ---

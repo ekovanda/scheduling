@@ -413,14 +413,45 @@ class Schedule(BaseModel):
         return sum(0.5 if a.is_paired else 1.0 for a in night_assignments)
 
     def count_weekend_shifts(self, staff_identifier: str) -> int:
-        """Count weekend shifts for a staff member."""
+        """Count raw weekend shifts for a staff member."""
         return sum(
             1 for a in self.get_staff_assignments(staff_identifier) if a.shift.is_weekend_shift()
         )
 
+    def count_intern_weekends(self, staff_identifier: str) -> int:
+        """Count completed intern weekend blocks (Saturday + Sunday) for an intern.
+
+        Since intern weekends are strictly coupled (Saturday == Sunday),
+        each coupled weekend block is represented by its Saturday shift.
+        """
+        return sum(
+            1
+            for a in self.get_staff_assignments(staff_identifier)
+            if a.shift.shift_type == ShiftType.SATURDAY_INTERN
+        )
+
+    def count_weekends(self, staff_identifier: str, staff: "Staff | None" = None) -> int:
+        """Count effective weekend duties for a staff member.
+
+        For interns, returns completed coupled weekend blocks (0..3 per quarter).
+        For other staff (TFA, Azubi), returns individual weekend shifts worked.
+        """
+        if staff is not None:
+            if staff.beruf == Beruf.INTERN:
+                return self.count_intern_weekends(staff_identifier)
+            return self.count_weekend_shifts(staff_identifier)
+
+        has_intern_shifts = any(
+            a.shift.shift_type == ShiftType.SATURDAY_INTERN
+            for a in self.get_staff_assignments(staff_identifier)
+        )
+        if has_intern_shifts:
+            return self.count_intern_weekends(staff_identifier)
+        return self.count_weekend_shifts(staff_identifier)
+
     def count_total_notdienst(self, staff_identifier: str, staff: "Staff | None" = None) -> float:
-        """Count total Notdienst (weekends + effective nights)."""
-        return self.count_weekend_shifts(staff_identifier) + self.count_effective_nights(
+        """Count total Notdienst (effective weekends + effective nights)."""
+        return self.count_weekends(staff_identifier, staff) + self.count_effective_nights(
             staff_identifier, staff
         )
 
@@ -813,9 +844,9 @@ def compute_carry_forward(
         if avail_days <= 0:
             continue
 
-        weekends = schedule.count_weekend_shifts(staff.identifier)
+        weekends = schedule.count_weekends(staff.identifier, staff)
         effective_nights = schedule.count_effective_nights(staff.identifier, staff)
-        total_notdienst = weekends + effective_nights
+        total_notdienst = schedule.count_total_notdienst(staff.identifier, staff)
 
         presence_factor = avail_days / total_days if total_days > 0 else 1.0
 

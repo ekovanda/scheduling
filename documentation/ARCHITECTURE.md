@@ -122,7 +122,7 @@ def generate_schedule(
 2. **Cross-Quarter Boundary Feasibility:** Gap violation penalty `gap_diff * 10,000,000`.
 3. **Primary Fairness:** FTE-scaled Notdienste range per group (presence + carry-forward adjusted).
 4. **Secondary Fairness:** FTE-scaled night-shift range per group (type balance).
-5. **Intern Weekend Fairness:** $300 \cdot (\max_{i} w_i - \min_{i} w_i)$ (balanced weekend rotation $\le 1$).
+5. **Intern Weekend Fairness:** $100 \cdot (\max_{i} w_i - \min_{i} w_i)$ (balanced weekend rotation over full coupled weekends).
 6. **Vet Block Fairness:** $500 \cdot (\max_{v} b_v - \min_{v} b_v)$ (balanced relief distribution).
 
 ### 5. feasibility.py - Pre-Solve Diagnostics

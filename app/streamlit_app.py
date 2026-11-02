@@ -1340,9 +1340,9 @@ def page_plan_anzeigen() -> None:
             # Compute all statistics including vacation/availability
             staff_stats = []
             for staff in staff_list:
-                weekends = schedule.count_weekend_shifts(staff.identifier)
+                weekends = schedule.count_weekends(staff.identifier, staff)
                 effective_nights = schedule.count_effective_nights(staff.identifier, staff)
-                total_notdienst = weekends + effective_nights
+                total_notdienst = schedule.count_total_notdienst(staff.identifier, staff)
 
                 # Vacation & availability
                 avail_days = calculate_available_days(

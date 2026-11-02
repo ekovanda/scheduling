@@ -2,9 +2,8 @@
 
 from dataclasses import dataclass
 
-
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.5.1"
+CURRENT_VERSION = "1.5.2"
 
 
 @dataclass(frozen=True)
@@ -18,6 +17,15 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.5.2",
+        date="02. November 2026",
+        summary="Korrektur Intern-Wochenendzählung & Fairness",
+        highlights=(
+            "Intern-Wochenenden (Sa+So) werden als 1 Wochenenddienst statt 2 Einzelschichten gezählt.",
+            "Fairness-Übersichten und Spread-Metriken zeigen für Interns reale Wochenenden.",
+        ),
+    ),
     Release(
         version="1.5.1",
         date="01. November 2026",

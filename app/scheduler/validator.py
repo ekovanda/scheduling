@@ -1041,8 +1041,8 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
         n_variance = sum((x - n_mean) ** 2 for x in night_counts) / len(night_counts)
         penalty += (n_variance**0.5) * 10
 
-        # Track 2: Weekend fairness
-        we_counts = [schedule.count_weekend_shifts(s.identifier) for s in intern_staff]
+        # Track 2: Weekend fairness (measured in full coupled weekends, not individual shifts)
+        we_counts = [schedule.count_weekends(s.identifier, s) for s in intern_staff]
         w_mean = sum(we_counts) / len(we_counts)
         w_variance = sum((x - w_mean) ** 2 for x in we_counts) / len(we_counts)
         penalty += (w_variance**0.5) * 10

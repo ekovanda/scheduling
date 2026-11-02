@@ -2,24 +2,25 @@
 
 from datetime import date, timedelta
 from pathlib import Path
+
 import pytest
 
+from app.scheduler.feasibility import analyze_capacity
 from app.scheduler.models import (
-    Beruf,
-    ShiftType,
-    Shift,
-    Staff,
-    Schedule,
     Assignment,
+    Beruf,
+    Schedule,
     SchedulerConfig,
+    Shift,
+    ShiftType,
+    Staff,
     Vacation,
-    generate_quarter_shifts,
     compute_carry_forward,
+    generate_quarter_shifts,
     load_staff_from_csv,
 )
-from app.scheduler.validator import validate_schedule
 from app.scheduler.solver import generate_schedule
-from app.scheduler.feasibility import analyze_capacity
+from app.scheduler.validator import validate_schedule
 
 
 def _make_intern(identifier: str = "INT1", name: str = "Intern One") -> Staff:
@@ -407,16 +408,47 @@ def test_intern_carry_forward_track1_only() -> None:
     int_entry = next(e for e in cf if e.identifier == "INT1")
     tfa_entry = next(e for e in cf if e.identifier == "TFA1")
 
-    # Intern normalized_40h should be based on 4.0 nights (not 4.0 + 2 weekends = 6.0)
+    # Intern normalized_40h should be based on 4.0 nights (Track 1)
+    # Weekend duties for interns are counted in coupled weekend blocks (1 weekend = 1 duty)
     assert int_entry.effective_nights == 4.0
-    assert int_entry.weekend_shifts == 2
-    assert int_entry.total_notdienst == 6.0
+    assert int_entry.weekend_shifts == 1
+    assert int_entry.total_notdienst == 5.0
     assert pytest.approx(int_entry.normalized_40h, 0.01) == 4.0
 
     # TFA normalized_40h should be based on 2 nights + 2 weekends = 4.0 total Notdienst
     assert tfa_entry.effective_nights == 2.0
     assert tfa_entry.weekend_shifts == 2
     assert pytest.approx(tfa_entry.normalized_40h, 0.01) == 4.0
+
+
+def test_intern_weekend_counting_and_fairness_units() -> None:
+    """Finding B4: verify that coupled intern weekends count as 1 weekend block."""
+    intern = _make_intern("INT1")
+    tfa = _make_tfa("TFA1")
+
+    sched = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 4, 30),
+        assignments=[
+            _asgn(ShiftType.SATURDAY_INTERN, date(2026, 4, 4), "INT1"),
+            _asgn(ShiftType.SUNDAY_INTERN, date(2026, 4, 5), "INT1"),
+            _asgn(ShiftType.NIGHT_TUE_WED, date(2026, 4, 14), "INT1"),
+            _asgn(ShiftType.SATURDAY_10_21, date(2026, 4, 4), "TFA1"),
+            _asgn(ShiftType.SUNDAY_8_20, date(2026, 4, 5), "TFA1"),
+        ],
+    )
+
+    # Raw shifts vs coupled weekend units for Intern
+    assert sched.count_weekend_shifts("INT1") == 2
+    assert sched.count_intern_weekends("INT1") == 1
+    assert sched.count_weekends("INT1", intern) == 1
+    assert sched.count_weekends("INT1") == 1  # Inferred without staff object
+    assert sched.count_total_notdienst("INT1", intern) == 2.0  # 1 weekend + 1 night
+
+    # For TFA, weekend count equals raw shifts
+    assert sched.count_weekend_shifts("TFA1") == 2
+    assert sched.count_weekends("TFA1", tfa) == 2
+    assert sched.count_total_notdienst("TFA1", tfa) == 2.0  # 2 weekend shifts + 0 nights
 
 
 def test_feasibility_capacity_check_intern() -> None:
