@@ -2,9 +2,9 @@
 name: review-code
 description: >-
   Conducts a thorough, evidence-based code review or security/quality audit and
-  writes an untracked Markdown report named
-  documentation/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md. Use
-  when the user asks for a code review, feature review, PR/commit review,
+  writes an untracked Markdown report in documentation/code_reviews/ named
+  documentation/code_reviews/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md.
+  Use when the user asks for a code review, feature review, PR/commit review,
   security audit, production-readiness assessment, or repository health check.
 ---
 
@@ -27,13 +27,18 @@ Perform an evidence-based, reader-friendly code review that finds consequential 
 2. **Determine Model Name**:
    - Check if the active model name is known from the session context or user prompt.
    - **If the model name is not available or cannot be determined with certainty, ask the user to supply it before finalizing the report.**
-3. **Determine Reference PRD (`documentation/PRD_*.md`)**:
-   - Check `documentation/PRD_*.md` for a Product Requirements Document matching the reviewed feature or commits.
+3. **Determine Reference PRD**:
+   - Check `documentation/PRDs/` and `documentation/` for active Product Requirements Documents matching the reviewed feature or commits (`documentation/PRDs/*.md` or `documentation/PRD_*.md`).
+   - Check `documentation/PRDs/implemented/` for already-completed PRDs when reviewing regressions or cross-feature interactions.
    - **If the matching PRD is obvious** from the branch, commit messages, or changed files, automatically compare the implementation against its acceptance criteria and requirements.
    - **If it is ambiguous which PRD applies** (and the review is for a feature rather than a general repo check), **ask the user to clarify which PRD should be used** (or whether to review without a PRD).
-4. **Output Location (Untracked)**:
-   - Save the report to: `documentation/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md`.
+4. **Output Location (Untracked) & Lifecycle Convention**:
+   - Save the active report to: `documentation/code_reviews/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md`.
    - Verify with `git check-ignore -v` that the generated file is untracked by git.
+   - **Completion & Archive Protocol**:
+     - When all findings are resolved or accepted, move the completed review to `documentation/code_reviews/implemented/`.
+     - When a PRD's features are fully delivered and verified, move it to `documentation/PRDs/implemented/`.
+     - Extract open/deferred backlog findings (e.g., broad refactoring or technical debt) into an untracked root `issues.md` for future reference.
 
 ---
 
@@ -117,6 +122,6 @@ Every finding (`A1`, `B1`, etc.) must include:
 1. **Confirm Metadata & PRD**: Check model name and target PRD; ask the user if either is missing/ambiguous.
 2. **Trace & Inspect**: Map data flow from `file_loader.py` → `models.py` → `feasibility.py` → `solver_cpsat.py` → `validator.py` → `streamlit_app.py`.
 3. **Run Proportionate Automated Checks**: Run relevant `uv run pytest`, `uv run ruff check`, and `uv run mypy` checks when the environment permits. Never claim a check passed unless it was actually executed.
-4. **Write the Untracked Report**: Use [resources/review-template.md](./resources/review-template.md) to write `documentation/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md`.
+4. **Write the Untracked Report**: Use [resources/review-template.md](./resources/review-template.md) to write `documentation/code_reviews/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md`.
 5. **Verify Untracked Status & Summarize**: Confirm via `git status --short` that the new review file is ignored by git, then provide a concise summary table and clickable link in chat.
 

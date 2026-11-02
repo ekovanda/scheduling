@@ -357,8 +357,8 @@ def test_vet_excluded_from_carry_forward_and_soft_penalty() -> None:
 
 def test_feasibility_check_f_with_vets() -> None:
     """Verify analyze_capacity detects Vets, calculates max blocks, and adds Check F."""
-    vet1 = _make_vet("TA1")
-    vet2 = _make_vet("TA2")
+    vet1 = _make_vet("TA1", name="Dr. Vet One")
+    vet2 = _make_vet("TA2", name="Dr. Vet Two")
     tfa = _make_tfa("TFA1")
 
     # Quarter: 2026-04-01 to 2026-06-30
@@ -377,7 +377,7 @@ def test_feasibility_check_f_with_vets() -> None:
     assert "2 Vet/Vets: bis zu 4 Blöcke (8 Nächte Entlastung)" in check_f.message
     assert len(check_f.details) == 2
     assert "Dr. Vet One: bis zu 2 Blöcke (4 Nächte)" in check_f.details[0]
-    assert "Dr. Vet One: bis zu 2 Blöcke (4 Nächte)" in check_f.details[1]
+    assert "Dr. Vet Two: bis zu 2 Blöcke (4 Nächte)" in check_f.details[1]
 
 
 # ---------------------------------------------------------------------------
