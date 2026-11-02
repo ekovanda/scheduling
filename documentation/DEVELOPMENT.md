@@ -76,15 +76,21 @@ App opens at `http://localhost:8501`
 
 ## Running Tests
 
-```powershell
-# All tests
-pytest tests/ -v
+```bash
+# Fast inner-loop tests (~3-4s; skips @pytest.mark.slow full-quarter solver runs)
+uv run pytest --fast
+
+# Full test suite (~2m; runs all tests using 1.5s post-solution grace window + session cache)
+uv run pytest
+
+# Only slow solver integration tests
+uv run pytest -m slow -v
+
+# Full uncapped solver timeouts (30s-60s per CP-SAT test)
+uv run pytest --full-solve
 
 # Specific test
-pytest tests/test_scheduler.py::test_cpsat_solver_produces_valid_schedule -v
-
-# With coverage
-pytest tests/ --cov=app --cov-report=html
+uv run pytest tests/test_scheduler.py::test_cpsat_solver_produces_valid_schedule -v
 ```
 
 ## Code Quality

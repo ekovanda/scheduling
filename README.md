@@ -48,8 +48,15 @@ Open `http://localhost:8501` in your browser.
 
 ## Tests
 
-```powershell
-pytest tests/ -v
+```bash
+# Fast development loop (~3-4s; skips full-quarter CP-SAT solver tests)
+uv run pytest --fast
+
+# Full test suite (~2m; runs all tests with early-stopping + session cache)
+uv run pytest
+
+# Uncapped solver optimization ceilings (original 30s-60s per solver test)
+uv run pytest --full-solve
 ```
 
 ## Project Structure

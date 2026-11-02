@@ -433,6 +433,7 @@ def test_t10_abteilung_h17_separation_on_open_night(base_staff: dict[str, Staff]
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_t1_and_t2_solver_open_night_headcount_and_tfa() -> None:
     """T1 & T2: Solver produces exact headcount 2 and at least 1 TFA for every open night."""
     # Create a realistic staff pool capable of covering 91 days of night shifts and weekends
@@ -533,6 +534,7 @@ def test_t1_and_t2_solver_open_night_headcount_and_tfa() -> None:
         assert azubi_count <= 1
 
 
+@pytest.mark.slow
 def test_q4_real_data_open_closed_nights() -> None:
     """End-to-end integration test with real Q4/2026 clinic scheduling data.
 

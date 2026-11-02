@@ -437,6 +437,7 @@ def test_feasibility_capacity_check_intern() -> None:
     assert "Wochenenden" in check_intern.message
 
 
+@pytest.mark.slow
 def test_solver_coupled_intern_weekend_and_monthly_cap() -> None:
     """Test that solver generates coupled weekends and respects the 1 WE/month cap for Interns."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
@@ -474,6 +475,7 @@ def test_solver_coupled_intern_weekend_and_monthly_cap() -> None:
     assert len(sat_dates) <= 3, f"Intern worked >3 weekends across quarter: {len(sat_dates)}"
 
 
+@pytest.mark.slow
 def test_solver_single_day_vacation_guard() -> None:
     """Test that vacation on Saturday prevents Sunday assignment for the same Intern."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
@@ -500,6 +502,7 @@ def test_solver_single_day_vacation_guard() -> None:
     assert not apr_we, f"INT_V assigned during or adjacent to vacation weekend: {apr_we}"
 
 
+@pytest.mark.slow
 def test_solver_two_track_intern_fairness() -> None:
     """Test that solver balances Track 1 (nights) and Track 2 (weekends) across multiple Interns."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))

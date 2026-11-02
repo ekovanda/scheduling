@@ -406,6 +406,7 @@ def test_weekend_isolation_constraint() -> None:
     assert len(isolation_violations) > 0, "Should detect weekend isolation violation"
 
 
+@pytest.mark.slow
 def test_cpsat_solver_produces_valid_schedule() -> None:
     """Test that CP-SAT solver produces a valid schedule with good fairness."""
     from pathlib import Path
@@ -431,6 +432,7 @@ def test_cpsat_solver_produces_valid_schedule() -> None:
     assert validation.is_valid(), f"Schedule has violations: {[str(v) for v in validation.hard_violations[:5]]}"
 
 
+@pytest.mark.slow
 def test_cpsat_fairness_within_tolerance() -> None:
     """Test that CP-SAT solver produces fair schedules within FTE tolerance."""
     from collections import defaultdict
@@ -1125,6 +1127,7 @@ if __name__ == "__main__":
 # ===========================================================================
 
 
+@pytest.mark.slow
 def test_intern_night_cap_enforced() -> None:
     """SchedulerConfig.intern_min/max_nights constrains Intern total across quarter."""
     from pathlib import Path
@@ -1132,7 +1135,7 @@ def test_intern_night_cap_enforced() -> None:
 
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
     intern = Staff(
-        name="Intern A",
+        name="Intern Alpha",
         identifier="INT_A",
         adult=True,
         hours=40,
@@ -1140,7 +1143,7 @@ def test_intern_night_cap_enforced() -> None:
         reception=False,
         nd_possible=True,
         nd_alone=True,
-        nd_max_consecutive=9,
+        nd_max_consecutive=3,
         nd_min_consecutive=2,
         nd_exceptions=[],
     )
@@ -1150,7 +1153,7 @@ def test_intern_night_cap_enforced() -> None:
     # --- Default config (6–9) ---
     result = generate_schedule(
         staff_with_intern, quarter_start, vacations=[],
-        max_solve_time_seconds=60, random_seed=1,
+        max_solve_time_seconds=60, random_seed=42,
     )
     assert result.success, f"Baseline should be solvable: {result.unsatisfiable_constraints}"
     sched = result.get_best_schedule()
@@ -1178,6 +1181,7 @@ def test_intern_night_cap_enforced() -> None:
         )
 
 
+@pytest.mark.slow
 def test_scheduler_config_custom_gap_accepted() -> None:
     """SchedulerConfig with block_gap_days=14 must still produce a valid schedule."""
     from pathlib import Path
@@ -1195,6 +1199,7 @@ def test_scheduler_config_custom_gap_accepted() -> None:
     )
 
 
+@pytest.mark.slow
 def test_carry_forward_delta_affects_fairness() -> None:
     """Staff with positive carry_forward_delta must receive fewer shifts."""
     from pathlib import Path
@@ -1258,6 +1263,7 @@ def test_carry_forward_delta_affects_fairness() -> None:
     )
 
 
+@pytest.mark.slow
 def test_cross_quarter_block_gap_enforced() -> None:
     """Staff with a trailing assignment near quarter boundary must not violate gap."""
     from datetime import timedelta

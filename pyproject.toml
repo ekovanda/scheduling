@@ -61,6 +61,9 @@ good-names = ["i", "j", "k", "df", "ma", "nd"]
 [tool.pytest.ini_options]
 pythonpath = [".", "app"]
 testpaths = ["tests"]
+markers = [
+    "slow: full-quarter CP-SAT solver integration tests (skip with --fast or -m 'not slow')",
+]
 
 
 [tool.hatch.build.targets.wheel]

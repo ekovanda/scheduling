@@ -385,6 +385,7 @@ def test_feasibility_check_f_with_vets() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_solver_vet_schedule_generation() -> None:
     """Test solver schedules Vets in exact 2-night blocks alone and satisfies all rules."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
@@ -443,6 +444,7 @@ def test_solver_vet_schedule_generation() -> None:
                 assert abs(m2 - m1) > 1, f"Vet {vet_id} has blocks in consecutive months: {block_months}"
 
 
+@pytest.mark.slow
 def test_solver_vet_cross_quarter_lockout() -> None:
     """Test that a Vet active in last month of previous quarter is locked out in month 1."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
@@ -484,6 +486,7 @@ def test_solver_vet_cross_quarter_lockout() -> None:
         assert all(m in (5, 6) for m in ta1_months)
 
 
+@pytest.mark.slow
 def test_solver_fallback_without_vets() -> None:
     """Test solver solves and validates cleanly when no Vets are provided."""
     staff = load_staff_from_csv(Path("data/staff_sample.csv"))
