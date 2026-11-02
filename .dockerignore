@@ -1,0 +1,44 @@
+# Git and agent metadata
+.git/
+.gitignore
+.github/
+.agents/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing, type checking, and linting caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tests/
+
+# Documentation and notes
+documentation/
+issues.md
+README.md
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Temporary runtime files
+temp_*
+*.log
+
