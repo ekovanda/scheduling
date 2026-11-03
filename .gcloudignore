@@ -1,0 +1,31 @@
+.gcloudignore
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing, linting, and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tests/
+
+# Documentation and temporary review files
+documentation/
+issues.md
+README.md
+temp_*
+*.log
+
