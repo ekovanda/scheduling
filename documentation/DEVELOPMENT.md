@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Windows 11 (or Linux/macOS)
-- Python 3.11+
+- Python 3.12+
 - PowerShell (Windows) or Bash (Linux/macOS)
 
 ## Quick Start
