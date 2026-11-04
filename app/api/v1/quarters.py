@@ -1,21 +1,64 @@
-"""Quarter schedule management and lifecycle endpoints."""
+"""Quarter schedule management, solver generation, and lifecycle endpoints."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     QuarterScheduleDocument,
     ScheduleState,
+    ShiftAssignmentRecord,
 )
 from app.persistence.repository import FileJsonRepository
+from app.persistence.rollover import (
+    get_previous_quarter_context,
+    get_quarter_date_range,
+)
+from app.scheduler.models import (
+    Assignment,
+    Schedule,
+    Shift,
+    ShiftType,
+    Staff,
+    Vacation,
+)
+from app.scheduler.solver import generate_schedule
+from app.scheduler.validator import validate_schedule
 
 router = APIRouter(prefix="/quarters", tags=["Quarters"])
 
 RepoDep = Annotated[FileJsonRepository, Depends(get_repository)]
+
+
+class GenerateScheduleRequest(BaseModel):
+    """Payload for triggering the synchronous solver."""
+
+    max_solve_time_seconds: int = Field(default=120, ge=5, le=300)
+    random_seed: int | None = None
+    include_previous_context: bool = True
+
+
+class ShiftSwapRequest(BaseModel):
+    """Payload for swapping or reassigning a shift."""
+
+    shift_date: date
+    shift_type: ShiftType
+    old_staff_id: str
+    new_staff_id: str
+    reason: str
+    force: bool = False
+
+
+class ValidationReport(BaseModel):
+    """Result of rule validation on a quarterly plan."""
+
+    is_valid: bool
+    violations: list[str]
+    soft_penalty: float
 
 
 def _parse_quarter_key(quarter_key: str) -> tuple[int, int]:
@@ -96,6 +139,222 @@ def init_quarter(
     )
     repo.save_schedule(doc)
     return doc
+
+
+@router.post("/{quarter_key}/generate", response_model=QuarterScheduleDocument)
+def generate_quarter_schedule(
+    quarter_key: str,
+    repo: RepoDep,
+    req: GenerateScheduleRequest | None = None,
+) -> QuarterScheduleDocument:
+    """Synchronously run CP-SAT solver and persist candidate schedule."""
+    solver_req = req or GenerateScheduleRequest()
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+
+    active_members = repo.list_staff(active_only=True)
+    if not active_members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active staff members found in database. Onboard staff first.",
+        )
+
+    staff_list: list[Staff] = [m.to_scheduler_staff() for m in active_members]
+    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+
+    # Load recorded absences overlapping this quarter
+    raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
+    vacations: list[Vacation] = [
+        Vacation(
+            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+            start_date=a.start_date,
+            end_date=a.end_date,
+        )
+        for a in raw_absences
+    ]
+
+    # Automated roll-over context from preceding quarter
+    context = None
+    if solver_req.include_previous_context:
+        context = get_previous_quarter_context(year, quarter, repo)
+
+    result = generate_schedule(
+        staff_list=staff_list,
+        quarter_start=q_start,
+        vacations=vacations,
+        max_solve_time_seconds=solver_req.max_solve_time_seconds,
+        random_seed=solver_req.random_seed,
+        previous_context=context,
+    )
+
+    best_schedule = result.get_best_schedule()
+    if not result.success or best_schedule is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Solver could not find a feasible schedule.",
+                "unsatisfiable_constraints": result.unsatisfiable_constraints,
+            },
+        )
+
+    assignment_records = [
+        ShiftAssignmentRecord(
+            shift_date=a.shift.shift_date,
+            shift_type=a.shift.shift_type,
+            planned_staff_id=a.staff_identifier,
+            actual_staff_id=a.staff_identifier,
+            is_paired=a.is_paired,
+            is_override=False,
+        )
+        for a in best_schedule.assignments
+    ]
+
+    metrics = {
+        "best_penalty": result.penalties[0] if result.penalties else 0.0,
+        "candidate_count": len(result.schedules),
+        "convergence_steps": len(result.convergence_log),
+        "trailing_context_applied": context is not None,
+    }
+
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        doc = QuarterScheduleDocument(
+            quarter_key=quarter_key,
+            year=year,
+            quarter=quarter,
+            state=ScheduleState.DRAFT,
+        )
+
+    doc.assignments = assignment_records
+    doc.solver_metrics = metrics
+    doc.updated_at = datetime.now(UTC)
+    repo.save_schedule(doc)
+    return doc
+
+
+@router.post("/{quarter_key}/shifts/swap", response_model=QuarterScheduleDocument)
+def swap_shift(
+    quarter_key: str,
+    swap_req: ShiftSwapRequest,
+    repo: RepoDep,
+) -> QuarterScheduleDocument:
+    """Swap or reassign a shift with live constraint validation."""
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quarter schedule '{quarter_key}' not found.",
+        )
+
+    new_member = repo.get_staff(swap_req.new_staff_id)
+    if not new_member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Replacement staff member '{swap_req.new_staff_id}' does not exist.",
+        )
+
+    target_idx: int | None = None
+    for idx, a in enumerate(doc.assignments):
+        if (
+            a.shift_date == swap_req.shift_date
+            and a.shift_type == swap_req.shift_type
+            and a.actual_staff_id == swap_req.old_staff_id
+        ):
+            target_idx = idx
+            break
+
+    if target_idx is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Shift assignment on {swap_req.shift_date} ({swap_req.shift_type.value}) "
+                f"for staff '{swap_req.old_staff_id}' not found."
+            ),
+        )
+
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+    all_staff: list[Staff] = [m.to_scheduler_staff() for m in repo.list_staff(active_only=False)]
+    context = get_previous_quarter_context(year, quarter, repo)
+
+    proposed_assignments: list[Assignment] = []
+    for idx, a in enumerate(doc.assignments):
+        staff_id = swap_req.new_staff_id if idx == target_idx else a.actual_staff_id
+        proposed_assignments.append(
+            Assignment(
+                shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
+                staff_identifier=staff_id,
+                is_paired=a.is_paired,
+            )
+        )
+    proposed_schedule = Schedule(
+        quarter_start=q_start,
+        quarter_end=q_end,
+        assignments=proposed_assignments,
+    )
+
+    if not swap_req.force:
+        val_result = validate_schedule(proposed_schedule, all_staff, previous_context=context)
+        if not val_result.is_valid():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Shift swap violates scheduling constraints.",
+                    "violations": [str(v) for v in val_result.hard_violations],
+                },
+            )
+
+    target = doc.assignments[target_idx]
+    target.actual_staff_id = swap_req.new_staff_id
+    target.is_override = True
+    target.override_reason = swap_req.reason
+    target.override_timestamp = datetime.now(UTC)
+    doc.updated_at = datetime.now(UTC)
+    repo.save_schedule(doc)
+    return doc
+
+
+@router.post("/{quarter_key}/validate", response_model=ValidationReport)
+def validate_quarter_plan(
+    quarter_key: str,
+    repo: RepoDep,
+) -> ValidationReport:
+    """Validate current quarterly assignments against all constraints."""
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quarter schedule '{quarter_key}' not found.",
+        )
+
+    if not doc.assignments:
+        return ValidationReport(is_valid=True, violations=[], soft_penalty=0.0)
+
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+    all_staff = [m.to_scheduler_staff() for m in repo.list_staff(active_only=False)]
+    context = get_previous_quarter_context(year, quarter, repo)
+
+    current_assignments = [
+        Assignment(
+            shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
+            staff_identifier=a.actual_staff_id,
+            is_paired=a.is_paired,
+        )
+        for a in doc.assignments
+    ]
+    schedule = Schedule(
+        quarter_start=q_start,
+        quarter_end=q_end,
+        assignments=current_assignments,
+    )
+    val_result = validate_schedule(schedule, all_staff, previous_context=context)
+
+    return ValidationReport(
+        is_valid=val_result.is_valid(),
+        violations=[str(v) for v in val_result.hard_violations],
+        soft_penalty=val_result.soft_penalty,
+    )
 
 
 @router.post("/{quarter_key}/publish", response_model=QuarterScheduleDocument)

@@ -1,6 +1,7 @@
 """Integration tests for FastAPI v1 REST endpoints."""
 
 from collections.abc import Generator
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,8 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import get_repository
 from app.api.main import app
 from app.persistence.repository import FileJsonRepository
+from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
+from app.scheduler.solver_cpsat import SolverResult
 
 
 @pytest.fixture
@@ -146,3 +149,94 @@ def test_quarters_api_lifecycle(client: TestClient) -> None:
     # 6. Attempting to delete locked schedule fails
     del_resp = client.delete("/api/v1/quarters/2026-Q2")
     assert del_resp.status_code == 400
+
+
+def test_quarters_generate_and_swap_api(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test solver generation and shift swapping endpoints."""
+    # 1. Generate with no staff -> 400
+    err_gen = client.post("/api/v1/quarters/2026-Q2/generate")
+    assert err_gen.status_code == 400
+
+    # 2. Onboard 2 staff members
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "STAFF_01",
+            "identifier": "MUE",
+            "name": "Müller",
+            "beruf": "TFA",
+            "hours": 40,
+            "nd_possible": True,
+            "nd_alone": True,
+        },
+    )
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "STAFF_02",
+            "identifier": "SCH",
+            "name": "Schmidt",
+            "beruf": "TFA",
+            "hours": 40,
+            "nd_possible": True,
+            "nd_alone": True,
+        },
+    )
+
+    # Mock generate_schedule for fast unit test execution
+    fake_schedule = Schedule(
+        quarter_start=date(2026, 4, 1),
+        quarter_end=date(2026, 6, 30),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_WED_THU, shift_date=date(2026, 4, 1)),
+                staff_identifier="MUE",
+                is_paired=False,
+            )
+        ],
+    )
+    fake_result = SolverResult(
+        success=True,
+        schedules=[fake_schedule],
+        penalties=[5.0],
+        unsatisfiable_constraints=[],
+    )
+    monkeypatch.setattr("app.api.v1.quarters.generate_schedule", lambda **kwargs: fake_result)
+
+    # 3. Synchronous Generate
+    gen_resp = client.post("/api/v1/quarters/2026-Q2/generate")
+    assert gen_resp.status_code == 200
+    doc_data = gen_resp.json()
+    assert len(doc_data["assignments"]) == 1
+    assert doc_data["assignments"][0]["planned_staff_id"] == "MUE"
+    assert doc_data["assignments"][0]["actual_staff_id"] == "MUE"
+
+    # 4. Validate quarter plan
+    val_resp = client.post("/api/v1/quarters/2026-Q2/validate")
+    assert val_resp.status_code == 200
+    assert "is_valid" in val_resp.json()
+
+    # 5. Swap shift to SCH (force=True to bypass full quarter min consecutive checks)
+    swap_payload = {
+        "shift_date": "2026-04-01",
+        "shift_type": "N_Mi-Do",
+        "old_staff_id": "MUE",
+        "new_staff_id": "STAFF_02",
+        "reason": "Diensttausch",
+        "force": True,
+    }
+    swap_resp = client.post("/api/v1/quarters/2026-Q2/shifts/swap", json=swap_payload)
+    assert swap_resp.status_code == 200
+    swapped_doc = swap_resp.json()
+    swapped_assign = swapped_doc["assignments"][0]
+    assert swapped_assign["planned_staff_id"] == "MUE"
+    assert swapped_assign["actual_staff_id"] == "STAFF_02"
+    assert swapped_assign["is_override"] is True
+    assert swapped_assign["override_reason"] == "Diensttausch"
+
+    # 6. Swap with non-existent staff member -> 404
+    swap_payload["new_staff_id"] = "UNKNOWN_STAFF"
+    err_swap = client.post("/api/v1/quarters/2026-Q2/shifts/swap", json=swap_payload)
+    assert err_swap.status_code == 404
