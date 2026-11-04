@@ -1,0 +1,496 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Users,
+  Search,
+  Plus,
+  Moon,
+  Clock,
+  ShieldCheck,
+  CheckCircle2,
+  AlertCircle,
+  Edit2,
+  Stethoscope,
+} from 'lucide-react';
+import type { StaffMember, Beruf, Abteilung } from '../types/api';
+import { fetchStaff, createStaff } from '../lib/api';
+import { RoleBadge, Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
+import { Modal } from '../components/ui/Modal';
+
+export const StaffView: React.FC = () => {
+  const [staffList, setStaffList] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRole, setSelectedRole] = useState<string>('ALL');
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+
+  // Form State
+  const [formData, setFormData] = useState({
+    name: '',
+    identifier: '',
+    beruf: 'TFA' as Beruf,
+    abteilung: 'Station' as Abteilung,
+    hours: 40,
+    nd_possible: true,
+    nd_alone: true,
+  });
+
+  useEffect(() => {
+    loadStaff();
+  }, []);
+
+  const loadStaff = async () => {
+    setLoading(true);
+    const data = await fetchStaff();
+    setStaffList(data);
+    setLoading(false);
+  };
+
+  const filteredStaff = staffList.filter((s) => {
+    const matchesSearch =
+      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      s.identifier.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesRole = selectedRole === 'ALL' || s.beruf === selectedRole;
+    return matchesSearch && matchesRole;
+  });
+
+  // Metric counts
+  const totalActive = staffList.filter((s) => s.is_active).length;
+  const totalVets = staffList.filter((s) => s.is_active && s.beruf === 'Tierarzt').length;
+  const totalTFAs = staffList.filter(
+    (s) => s.is_active && (s.beruf === 'TFA' || s.beruf === 'Azubi')
+  ).length;
+  const totalNightCapable = staffList.filter((s) => s.is_active && s.nd_possible).length;
+
+  const handleOpenAddModal = () => {
+    setEditingStaff(null);
+    setFormData({
+      name: '',
+      identifier: '',
+      beruf: 'TFA',
+      abteilung: 'Station',
+      hours: 40,
+      nd_possible: true,
+      nd_alone: true,
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (staff: StaffMember) => {
+    setEditingStaff(staff);
+    setFormData({
+      name: staff.name,
+      identifier: staff.identifier,
+      beruf: staff.beruf,
+      abteilung: staff.abteilung,
+      hours: staff.hours,
+      nd_possible: staff.nd_possible,
+      nd_alone: staff.nd_alone,
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSaveStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name || !formData.identifier) return;
+
+    if (editingStaff) {
+      // Update local state
+      setStaffList((prev) =>
+        prev.map((s) =>
+          s.id === editingStaff.id
+            ? { ...s, ...formData }
+            : s
+        )
+      );
+    } else {
+      // Create new
+      const newStaff: StaffMember = {
+        id: formData.identifier.toLowerCase(),
+        identifier: formData.identifier.toUpperCase(),
+        name: formData.name,
+        beruf: formData.beruf,
+        abteilung: formData.abteilung,
+        hours: formData.beruf === 'Tierarzt' ? 0 : Number(formData.hours),
+        adult: true,
+        reception: false,
+        nd_possible: formData.nd_possible,
+        nd_alone: formData.nd_alone,
+        nd_min_consecutive: 2,
+        nd_max_consecutive: 4,
+        is_active: true,
+      };
+      setStaffList((prev) => [newStaff, ...prev]);
+      try {
+        await createStaff(newStaff);
+      } catch (err) {
+        console.warn('Backend sync failed, kept in local state:', err);
+      }
+    }
+    setIsModalOpen(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Page Title & Intro */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Mitarbeiter & Qualifikationen
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Zentrale Mitarbeiterverwaltung und Diensttauglichkeit für Tierärzte und Fachangestellte.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button onClick={handleOpenAddModal} variant="primary">
+            <Plus className="h-4 w-4 mr-1" />
+            Mitarbeiter anlegen
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+            <span>Aktives Personal</span>
+            <Users className="h-4 w-4 text-slate-400" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-slate-900">{totalActive}</span>
+            <span className="text-xs text-slate-500">Mitarbeiter</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+            <span>Tierärzte (Vets)</span>
+            <Stethoscope className="h-4 w-4 text-indigo-500" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-slate-900">{totalVets}</span>
+            <span className="text-xs text-slate-500">approbiert</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+            <span>TFAs & Azubis</span>
+            <ShieldCheck className="h-4 w-4 text-emerald-500" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-slate-900">{totalTFAs}</span>
+            <span className="text-xs text-slate-500">Fachkräfte</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+            <span>Nachtdienstfähig</span>
+            <Moon className="h-4 w-4 text-amber-500" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-slate-900">{totalNightCapable}</span>
+            <span className="text-xs text-slate-500">in Rotation</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Name oder Kürzel suchen..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+          />
+        </div>
+
+        {/* Role Filter Tabs */}
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+          {(['ALL', 'Tierarzt', 'TFA', 'Azubi', 'Intern'] as const).map((role) => (
+            <button
+              key={role}
+              onClick={() => setSelectedRole(role)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                selectedRole === role
+                  ? 'bg-slate-900 text-white font-semibold'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {role === 'ALL' ? 'Alle Rollen' : role}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* High-Density Data Table */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50/80 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+              <tr>
+                <th className="py-3.5 pl-6 pr-3">Mitarbeiter</th>
+                <th className="px-3 py-3.5">Kürzel</th>
+                <th className="px-3 py-3.5">Rolle</th>
+                <th className="px-3 py-3.5">Abteilung</th>
+                <th className="px-3 py-3.5">Wochenstunden</th>
+                <th className="px-3 py-3.5">Nachtdienst</th>
+                <th className="px-3 py-3.5">Status</th>
+                <th className="py-3.5 pl-3 pr-6 text-right">Aktion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                    Lade Mitarbeiterdaten...
+                  </td>
+                </tr>
+              ) : filteredStaff.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                    Keine Mitarbeiter gefunden.
+                  </td>
+                </tr>
+              ) : (
+                filteredStaff.map((staff) => (
+                  <tr
+                    key={staff.id}
+                    className="hover:bg-slate-50/60 transition-colors group"
+                  >
+                    {/* Name + Initials Avatar */}
+                    <td className="py-3 pl-6 pr-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center">
+                          {staff.name
+                            .split(' ')
+                            .map((n) => n[0])
+                            .slice(0, 2)
+                            .join('')}
+                        </div>
+                        <span className="font-semibold text-slate-900">{staff.name}</span>
+                      </div>
+                    </td>
+
+                    {/* Identifier */}
+                    <td className="px-3 py-3 font-mono text-xs text-slate-600 font-bold">
+                      {staff.identifier}
+                    </td>
+
+                    {/* Role Badge */}
+                    <td className="px-3 py-3">
+                      <RoleBadge role={staff.beruf} />
+                    </td>
+
+                    {/* Department */}
+                    <td className="px-3 py-3 text-slate-600 text-xs">
+                      {staff.abteilung}
+                    </td>
+
+                    {/* Hours */}
+                    <td className="px-3 py-3 text-slate-700 text-xs">
+                      {staff.beruf === 'Tierarzt' ? (
+                        <span className="text-slate-400 italic">Vollzeit (Vet)</span>
+                      ) : (
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <Clock className="h-3.5 w-3.5 text-slate-400" />
+                          <span>{staff.hours}h / Woche</span>
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Night Shift Qualification */}
+                    <td className="px-3 py-3">
+                      {!staff.nd_possible ? (
+                        <Badge variant="neutral">Kein ND</Badge>
+                      ) : staff.nd_alone ? (
+                        <Badge variant="success">Alleine tauglich</Badge>
+                      ) : (
+                        <Badge variant="warning">Nur Begleitung</Badge>
+                      )}
+                    </td>
+
+                    {/* Active Status */}
+                    <td className="px-3 py-3">
+                      {staff.is_active ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          Aktiv
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          Inaktiv
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="py-3 pl-3 pr-6 text-right">
+                      <button
+                        onClick={() => handleOpenEditModal(staff)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                        Bearbeiten
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Add / Edit Staff Modal */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editingStaff ? `Mitarbeiter bearbeiten: ${editingStaff.name}` : 'Neuen Mitarbeiter anlegen'}
+      >
+        <form onSubmit={handleSaveStaff} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Vollständiger Name
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="z.B. Dr. Clara Meyer"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Kürzel (Identifier)
+              </label>
+              <input
+                type="text"
+                required
+                maxLength={4}
+                placeholder="z.B. MEY"
+                value={formData.identifier}
+                onChange={(e) =>
+                  setFormData({ ...formData, identifier: e.target.value.toUpperCase() })
+                }
+                className="w-full px-3 py-2 text-sm font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Rolle / Beruf
+              </label>
+              <select
+                value={formData.beruf}
+                onChange={(e) =>
+                  setFormData({ ...formData, beruf: e.target.value as Beruf })
+                }
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="Tierarzt">Tierarzt</option>
+                <option value="TFA">TFA</option>
+                <option value="Azubi">Azubi</option>
+                <option value="Intern">Intern</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Abteilung
+              </label>
+              <select
+                value={formData.abteilung}
+                onChange={(e) =>
+                  setFormData({ ...formData, abteilung: e.target.value as Abteilung })
+                }
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="Station">Station</option>
+                <option value="OP">OP</option>
+                <option value="Sprechstunde">Sprechstunde</option>
+                <option value="Sonstiges">Sonstiges</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Wochenstunden
+              </label>
+              <input
+                type="number"
+                disabled={formData.beruf === 'Tierarzt'}
+                min={0}
+                max={60}
+                value={formData.beruf === 'Tierarzt' ? 0 : formData.hours}
+                onChange={(e) =>
+                  setFormData({ ...formData, hours: Number(e.target.value) })
+                }
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          {/* Night Shift Switches */}
+          <div className="pt-2 border-t border-slate-100 space-y-3">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.nd_possible}
+                onChange={(e) =>
+                  setFormData({ ...formData, nd_possible: e.target.checked })
+                }
+                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+              />
+              <span className="text-xs font-medium text-slate-700">
+                Nachtdienst-fähig (für Notdienst rotation freigegeben)
+              </span>
+            </label>
+
+            {formData.nd_possible && (
+              <label className="flex items-center gap-2.5 cursor-pointer pl-6">
+                <input
+                  type="checkbox"
+                  checked={formData.nd_alone}
+                  onChange={(e) =>
+                    setFormData({ ...formData, nd_alone: e.target.checked })
+                  }
+                  className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                />
+                <span className="text-xs font-medium text-slate-700">
+                  Kann Nachtdienst alleine führen (ohne erfahrene Begleitung)
+                </span>
+              </label>
+            )}
+          </div>
+
+          <div className="pt-4 flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsModalOpen(false)}
+            >
+              Abbrechen
+            </Button>
+            <Button type="submit" variant="primary">
+              {editingStaff ? 'Änderungen speichern' : 'Mitarbeiter erstellen'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+};
