@@ -12,6 +12,8 @@ dependencies = [
     "xlsxwriter>=3.0.0",
     "matplotlib>=3.8.0",
     "ortools>=9.15.6755",
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.48.0",
 ]
 
 [project.optional-dependencies]
@@ -68,3 +70,8 @@ markers = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]
