@@ -9,6 +9,9 @@ import {
   Settings2,
   Loader2,
   ChevronDown,
+  Scale,
+  History,
+  Clock,
 } from 'lucide-react';
 import type {
   QuarterScheduleDocument,
@@ -22,8 +25,10 @@ import {
   fetchStaff,
   fetchPreAssigned,
   fetchAbsences,
+  fetchRolloverContext,
   generateSchedule,
   swapShift,
+  type RolloverContextData,
 } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -39,17 +44,20 @@ export const MatrixView: React.FC = () => {
 
   // Mode: 'view' (schedule display) or 'setup' (distraction-free plan generation)
   const [pageMode, setPageMode] = useState<'view' | 'setup'>('view');
+  const [subView, setSubView] = useState<'matrix' | 'rollover'>('matrix');
+  const [rollover, setRollover] = useState<RolloverContextData | null>(null);
 
   // Display toggles matching Streamlit original
   const [showFullNames, setShowFullNames] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<number | 'ALL'>('ALL'); // 3=Apr, 4=May, 5=Jun
 
-  // Setup form states
-  const [setupQuarter, setSetupQuarter] = useState('Q2');
-  const [setupYear, setSetupYear] = useState(2026);
+  // Setup form states (defaults to 2027-Q1 for upcoming planning)
+  const [setupQuarter, setSetupQuarter] = useState('Q1');
+  const [setupYear, setSetupYear] = useState(2027);
   const [solveDepth, setSolveDepth] = useState<'fast' | 'thorough'>('fast');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [blockGapDays, setBlockGapDays] = useState(21);
+  const [rolloverRoleFilter, setRolloverRoleFilter] = useState<'ALL' | 'Tierarzt' | 'TFA' | 'Intern'>('ALL');
 
   // Swap modal state
   const [swapModalOpen, setSwapModalOpen] = useState(false);
@@ -60,20 +68,22 @@ export const MatrixView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [currentQuarterKey]);
 
   const loadData = async () => {
     setLoading(true);
-    const [schedData, stfData, paData, absData] = await Promise.all([
+    const [schedData, stfData, paData, absData, rollData] = await Promise.all([
       fetchSchedule(currentQuarterKey),
       fetchStaff(),
       fetchPreAssigned(),
       fetchAbsences(),
+      fetchRolloverContext(currentQuarterKey),
     ]);
     setSchedule(schedData);
     setStaffList(stfData);
     setPreAssigned(paData);
     setAbsences(absData);
+    setRollover(rollData);
     setLoading(false);
   };
 
@@ -151,6 +161,40 @@ export const MatrixView: React.FC = () => {
     const [, mStr] = dateStr.split('-');
     return Number(mStr) - 1 === selectedMonth;
   });
+
+  const monthTabs = React.useMemo(() => {
+    switch (setupQuarter) {
+      case 'Q1':
+        return [
+          { id: 'ALL' as const, label: 'Quartal (Gesamt)' },
+          { id: 0, label: 'Januar' },
+          { id: 1, label: 'Februar' },
+          { id: 2, label: 'März' },
+        ];
+      case 'Q2':
+        return [
+          { id: 'ALL' as const, label: 'Quartal (Gesamt)' },
+          { id: 3, label: 'April' },
+          { id: 4, label: 'Mai' },
+          { id: 5, label: 'Juni' },
+        ];
+      case 'Q3':
+        return [
+          { id: 'ALL' as const, label: 'Quartal (Gesamt)' },
+          { id: 6, label: 'Juli' },
+          { id: 7, label: 'August' },
+          { id: 8, label: 'September' },
+        ];
+      case 'Q4':
+      default:
+        return [
+          { id: 'ALL' as const, label: 'Quartal (Gesamt)' },
+          { id: 9, label: 'Oktober' },
+          { id: 10, label: 'November' },
+          { id: 11, label: 'Dezember' },
+        ];
+    }
+  }, [setupQuarter]);
 
   const isWeekendDay = (dateStr: string) => {
     const [year, month, day] = dateStr.split('-');
@@ -236,7 +280,14 @@ export const MatrixView: React.FC = () => {
             <div className="p-3 rounded-lg bg-blue-50/70 border border-blue-200/60 text-xs text-[#324b9b] flex items-center gap-2">
               <CalendarIcon className="h-4 w-4 shrink-0" />
               <span>
-                Planungszeitraum: 01.04.{setupYear} – 30.06.{setupYear} (ca. 91 Tage)
+                Planungszeitraum:{' '}
+                {setupQuarter === 'Q1'
+                  ? `01.01.${setupYear} – 31.03.${setupYear} (90 Tage)`
+                  : setupQuarter === 'Q2'
+                  ? `01.04.${setupYear} – 30.06.${setupYear} (91 Tage)`
+                  : setupQuarter === 'Q3'
+                  ? `01.07.${setupYear} – 30.09.${setupYear} (92 Tage)`
+                  : `01.10.${setupYear} – 31.12.${setupYear} (92 Tage)`}
               </span>
             </div>
           </div>
@@ -394,6 +445,34 @@ export const MatrixView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Sub-view toggle: Matrix vs Vorplan-Übertrag */}
+              <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100/70 p-0.5 text-xs font-medium shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setSubView('matrix')}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md transition-all cursor-pointer',
+                    subView === 'matrix'
+                      ? 'bg-white text-stone-900 font-bold shadow-2xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  )}
+                >
+                  Plan-Matrix
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubView('rollover')}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md transition-all cursor-pointer',
+                    subView === 'rollover'
+                      ? 'bg-white text-stone-900 font-bold shadow-2xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  )}
+                >
+                  Vorplan-Übertrag
+                </button>
+              </div>
+
               <a
                 href={`/api/v1/quarters/${currentQuarterKey}/export?format=xlsx`}
                 download
@@ -415,42 +494,269 @@ export const MatrixView: React.FC = () => {
             </div>
           </div>
 
-          {/* Sub-Toolbar: Name Toggle & Month Tabs (Streamlit-style) */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-stone-50/80 p-2.5 rounded-lg border border-stone-200/80">
-            {/* Month Filter Tabs */}
-            <div className="flex items-center gap-1 overflow-x-auto">
-              {[
-                { id: 'ALL', label: 'Quartal (Gesamt)' },
-                { id: 3, label: 'April' },
-                { id: 4, label: 'Mai' },
-                { id: 5, label: 'Juni' },
-              ].map((m) => (
-                <button
-                  key={String(m.id)}
-                  onClick={() => setSelectedMonth(m.id as number | 'ALL')}
-                  className={cn(
-                    'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer whitespace-nowrap',
-                    selectedMonth === m.id
-                      ? 'bg-white text-stone-900 font-bold shadow-2xs border border-stone-200'
-                      : 'text-stone-600 hover:text-stone-900'
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+          {subView === 'rollover' ? (
+            /* ============================================================== */
+            /* SUBVIEW: VORPLAN-ÜBERTRAG & GRENZ-RESTRIKTIONEN */
+            /* ============================================================== */
+            <div className="space-y-6">
+              {/* Context Overview Banner */}
+              <div className="bg-white rounded-xl border border-stone-200/80 p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-blue-50 text-[#324b9b] flex items-center justify-center shrink-0 border border-blue-200/50">
+                      <History className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-bold text-stone-900">
+                        Vorplan-Übertrag & Grenz-Restriktionen für {currentQuarterKey}
+                      </h2>
+                      <p className="text-xs text-stone-500">
+                        Historische Ausgleichsdaten und Restriktionen aus dem vorherigen Planungszeitraum.
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Toggle: Full Names vs Identifiers (Direct from Streamlit) */}
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-stone-700 select-none">
-              <input
-                type="checkbox"
-                checked={showFullNames}
-                onChange={(e) => setShowFullNames(e.target.checked)}
-                className="h-3.5 w-3.5 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
-              />
-              <span>Volle Namen anzeigen</span>
-            </label>
-          </div>
+                  {rollover?.has_context ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      Aktiver Vorplan ({rollover.quarter_start} bis {rollover.quarter_end})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-stone-100 text-stone-600 border border-stone-200">
+                      Kein Vorplan gefunden
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-xs">
+                  <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
+                    <span className="text-stone-500 block">Personal im Übertrag:</span>
+                    <span className="text-sm font-bold text-stone-900">
+                      {rollover?.carry_forward.length ?? 0} Mitarbeiter
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
+                    <span className="text-stone-500 block">Grenz-Schichten (letzte 21 Tage):</span>
+                    <span className="text-sm font-bold text-stone-900">
+                      {rollover?.trailing_assignments.length ?? 0} Schichten
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
+                    <span className="text-stone-500 block">Solver-Einfluss:</span>
+                    <span className="text-sm font-bold text-[#324b9b]">
+                      Deltas + 21-Tage Pausen aktiv
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 1: Carry-Forward Fairness Deltas */}
+              <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
+                <div className="p-4 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
+                      <Scale className="h-4 w-4 text-[#324b9b]" />
+                      Fairness-Übertrag (Carry-Forward Deltas)
+                    </h3>
+                    <p className="text-xs text-stone-500 mt-0.5">
+                      Mitarbeiter mit positivem Delta leisteten überdurchschnittlich viele Notdienste und werden im neuen Quartal entlastet.
+                    </p>
+                  </div>
+
+                  {/* Role Filter Tabs */}
+                  <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100/70 p-0.5 text-xs font-medium">
+                    {(['ALL', 'Tierarzt', 'TFA', 'Intern'] as const).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setRolloverRoleFilter(r)}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md transition-all cursor-pointer',
+                          rolloverRoleFilter === r
+                            ? 'bg-white text-stone-900 font-bold shadow-2xs'
+                            : 'text-stone-600 hover:text-stone-900'
+                        )}
+                      >
+                        {r === 'ALL' ? 'Alle Rollen' : r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-[#f5f4f0] border-b border-stone-300 text-stone-700 font-bold">
+                      <tr>
+                        <th className="py-2.5 px-3 border-r border-stone-200">Mitarbeiter</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200">Rolle</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 text-center">Wochenstunden</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 text-center">Nachtdienste</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 text-center">Wochenenden</th>
+                        <th className="py-2.5 px-3 text-right">Übertrag-Delta</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {!rollover || rollover.carry_forward.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-stone-500">
+                            Keine Carry-Forward-Daten für dieses Quartal verfügbar.
+                          </td>
+                        </tr>
+                      ) : (
+                        rollover.carry_forward
+                          .filter((cf) =>
+                            rolloverRoleFilter === 'ALL' ? true : cf.beruf === rolloverRoleFilter
+                          )
+                          .map((cf) => {
+                            const delta = cf.carry_forward_delta;
+                            const deltaFormatted = delta > 0 ? `+${delta.toFixed(2)}` : delta.toFixed(2);
+                            return (
+                              <tr key={cf.identifier} className="hover:bg-stone-50/70">
+                                <td className="py-2 px-3 font-semibold text-stone-900">
+                                  {cf.name}{' '}
+                                  <span className="text-[11px] font-mono text-stone-400">
+                                    ({cf.identifier})
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-stone-600">
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-700 border border-stone-200">
+                                    {cf.beruf}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-center text-stone-600">{cf.hours} h</td>
+                                <td className="py-2 px-3 text-center text-stone-700 font-medium">
+                                  {cf.effective_nights}
+                                </td>
+                                <td className="py-2 px-3 text-center text-stone-700 font-medium">
+                                  {cf.weekend_shifts}
+                                </td>
+                                <td className="py-2 px-3 text-right">
+                                  {delta > 0.05 ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                      {deltaFormatted} (Guthaben)
+                                    </span>
+                                  ) : delta < -0.05 ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                      {deltaFormatted} (Rückstand)
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-600">
+                                      0.00 (Neutral)
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Section 2: Trailing 21-Day Rest Period Shifts */}
+              <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
+                <div className="p-4 border-b border-stone-200">
+                  <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-[#324b9b]" />
+                    Grenz-Schichten der letzten 21 Tage ({rollover?.trailing_assignments.length ?? 0} Schichten)
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Diese realisierten Schichten am Ende des Vorquartals definieren gesetzliche Ruhezeiten und Block-Abstände für die ersten Wochen im neuen Plan.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse font-mono">
+                    <thead className="bg-[#f5f4f0] border-b border-stone-300 text-stone-700 font-bold font-sans">
+                      <tr>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-32">Datum</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-44">Schichtart</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200">Eingeteilte Person</th>
+                        <th className="py-2.5 px-3 text-stone-500 font-normal">Grenz-Restriktion im Solver</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {!rollover || rollover.trailing_assignments.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-8 text-center text-stone-500 font-sans">
+                            Keine Grenz-Schichten für diesen Zeitraum erfasst.
+                          </td>
+                        </tr>
+                      ) : (
+                        rollover.trailing_assignments.map((t, idx) => {
+                          const s = staffList.find(
+                            (st) =>
+                              st.id === t.staff_identifier.toLowerCase() ||
+                              st.identifier.toLowerCase() === t.staff_identifier.toLowerCase()
+                          );
+                          const displayName = s ? (showFullNames ? s.name : s.identifier) : t.staff_identifier;
+                          return (
+                            <tr key={`${t.shift_date}-${t.shift_type}-${idx}`} className="hover:bg-stone-50/70">
+                              <td className="py-2 px-3 text-stone-900 font-semibold">{t.shift_date}</td>
+                              <td className="py-2 px-3">
+                                {t.is_night ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-sans font-medium bg-[#e8e0f0] text-purple-900 border border-purple-200">
+                                    🌙 {t.shift_type}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-sans font-medium bg-[#fff3e0] text-amber-900 border border-amber-200">
+                                    ☀️ {t.shift_type}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 font-semibold text-stone-900 font-sans">
+                                {displayName}
+                              </td>
+                              <td className="py-2 px-3 text-stone-500 font-sans text-[11px]">
+                                {t.is_night
+                                  ? 'Block-Abstand von 21 Tagen zu Folge-Nachtdienst geschützt'
+                                  : 'Wochenend-Ruhezeit über Quartalsgrenze geschützt'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* ============================================================== */
+            /* SUBVIEW: PLAN-MATRIX (STREAMLIT CALENDAR TABLE) */
+            /* ============================================================== */
+            <div className="space-y-4">
+              {/* Sub-Toolbar: Name Toggle & Month Tabs (Streamlit-style) */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-stone-50/80 p-2.5 rounded-lg border border-stone-200/80">
+                {/* Month Filter Tabs */}
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  {monthTabs.map((m) => (
+                    <button
+                      key={String(m.id)}
+                      onClick={() => setSelectedMonth(m.id as number | 'ALL')}
+                      className={cn(
+                        'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer whitespace-nowrap',
+                        selectedMonth === m.id
+                          ? 'bg-white text-stone-900 font-bold shadow-2xs border border-stone-200'
+                          : 'text-stone-600 hover:text-stone-900'
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Toggle: Full Names vs Identifiers (Direct from Streamlit) */}
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-stone-700 select-none">
+                  <input
+                    type="checkbox"
+                    checked={showFullNames}
+                    onChange={(e) => setShowFullNames(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
+                  />
+                  <span>Volle Namen anzeigen</span>
+                </label>
+              </div>
 
           {/* Legend Banner (Streamlit-style) */}
           <div className="flex items-center gap-4 text-[11px] text-stone-600 px-1">
@@ -694,6 +1000,8 @@ export const MatrixView: React.FC = () => {
           </div>
         </div>
       )}
+    </div>
+  )}
 
       {/* SHIFT SWAP MODAL */}
       <Modal

@@ -1,7 +1,10 @@
 """Main entry point for the Dienstplan FastAPI application."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_v1_router
 from app.release_info import CURRENT_VERSION
@@ -31,6 +34,11 @@ def create_app() -> FastAPI:
     )
 
     api_app.include_router(api_v1_router)
+
+    # Mount compiled React SPA at root if frontend/dist exists
+    frontend_dist = Path("frontend/dist")
+    if frontend_dist.exists() and (frontend_dist / "index.html").exists():
+        api_app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 
     return api_app
 

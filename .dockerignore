@@ -33,6 +33,8 @@ README.md
 dist/
 build/
 *.egg-info/
+node_modules/
+frontend/node_modules/
 
 # OS-specific
 .DS_Store

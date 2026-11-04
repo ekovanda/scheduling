@@ -1,4 +1,14 @@
 # syntax=docker/dockerfile:1
+
+# Stage 1: Build React Frontend SPA
+FROM node:22-slim AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Python Backend & Runtime Container
 FROM python:3.12-slim
 
 # Copy uv binary from official Astral uv image
@@ -39,6 +49,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
 COPY app/ ./app/
 COPY scripts/ ./scripts/
 COPY data/ ./data/
+
+# Copy compiled React frontend from frontend-builder stage
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Security hardening:
 # 1. Pre-create database directories so appuser has full write ownership

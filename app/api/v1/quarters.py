@@ -1,7 +1,7 @@
 """Quarter schedule management, solver generation, and lifecycle endpoints."""
 
 from datetime import UTC, date, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
@@ -110,6 +110,40 @@ def get_schedule(
             detail=f"Quarter schedule '{quarter_key}' not found.",
         )
     return doc
+
+
+@router.get("/{quarter_key}/rollover")
+def get_quarter_rollover_context(
+    quarter_key: str,
+    repo: RepoDep,
+) -> dict[str, Any]:
+    """Retrieve automated carry-over fairness deltas and trailing 21-day border shifts."""
+    year, quarter = _parse_quarter_key(quarter_key)
+    ctx = get_previous_quarter_context(year, quarter, repo)
+    if not ctx:
+        return {
+            "has_context": False,
+            "message": f"Kein historischer Vorplan für {year}-Q{quarter} vorhanden.",
+            "carry_forward": [],
+            "trailing_assignments": [],
+        }
+    return {
+        "has_context": True,
+        "quarter_start": ctx.quarter_start.isoformat(),
+        "quarter_end": ctx.quarter_end.isoformat(),
+        "carry_forward": [entry.model_dump() for entry in ctx.carry_forward],
+        "trailing_assignments": [
+            {
+                "staff_identifier": t.staff_identifier,
+                "shift_date": t.shift_date.isoformat(),
+                "shift_type": t.shift_type.value,
+                "is_night": t.shift_type.value.startswith("N_"),
+                "is_paired": t.is_paired,
+            }
+            for t in ctx.trailing_assignments
+        ],
+        "vet_active_last_month_ids": ctx.vet_active_last_month_ids,
+    }
 
 
 @router.post(
@@ -470,53 +504,4 @@ def export_quarter_schedule(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.xlsx"'},
-    )
-
-
-@router.get("/{quarter_key}/export")
-def export_quarter_schedule(
-    quarter_key: str,
-    repo: RepoDep,
-    export_format: Annotated[
-        str,
-        Query(
-            alias="format",
-            pattern="^(xlsx|csv)$",
-            description="Export format: 'xlsx' (default) or 'csv'",
-        ),
-    ] = "xlsx",
-) -> Response:
-    """Export quarterly schedule to styled Excel workbook or CSV for noticeboards."""
-    doc = repo.get_schedule(quarter_key)
-    if not doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Quarter schedule '{quarter_key}' not found.",
-        )
-    if not doc.assignments:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Quarter schedule '{quarter_key}' has no assignments to export.",
-        )
-
-    staff_members = repo.list_staff(active_only=False)
-    staff_map = {m.id: m for m in staff_members}
-
-    if export_format == "csv":
-        csv_data = export_schedule_to_csv(doc)
-        return Response(
-            content=csv_data,
-            media_type="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.csv"'
-            },
-        )
-
-    excel_bytes = export_schedule_to_excel(doc, staff_map=staff_map)
-    return Response(
-        content=excel_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.xlsx"'
-        },
     )
