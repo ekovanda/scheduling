@@ -3,10 +3,11 @@
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_repository
+from app.exporters.excel import export_schedule_to_csv, export_schedule_to_excel
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     QuarterScheduleDocument,
@@ -425,3 +426,97 @@ def delete_schedule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/{quarter_key}/export")
+def export_quarter_schedule(
+    quarter_key: str,
+    repo: RepoDep,
+    export_format: Annotated[
+        str,
+        Query(
+            alias="format",
+            pattern="^(xlsx|csv)$",
+            description="Export format: 'xlsx' (default) or 'csv'",
+        ),
+    ] = "xlsx",
+) -> Response:
+    """Export quarterly schedule to styled Excel workbook or CSV for noticeboards."""
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quarter schedule '{quarter_key}' not found.",
+        )
+    if not doc.assignments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Quarter schedule '{quarter_key}' has no assignments to export.",
+        )
+
+    staff_members = repo.list_staff(active_only=False)
+    staff_map = {m.id: m for m in staff_members}
+
+    if export_format == "csv":
+        csv_data = export_schedule_to_csv(doc)
+        return Response(
+            content=csv_data,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.csv"'},
+        )
+
+    excel_bytes = export_schedule_to_excel(doc, staff_map=staff_map)
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.xlsx"'},
+    )
+
+
+@router.get("/{quarter_key}/export")
+def export_quarter_schedule(
+    quarter_key: str,
+    repo: RepoDep,
+    export_format: Annotated[
+        str,
+        Query(
+            alias="format",
+            pattern="^(xlsx|csv)$",
+            description="Export format: 'xlsx' (default) or 'csv'",
+        ),
+    ] = "xlsx",
+) -> Response:
+    """Export quarterly schedule to styled Excel workbook or CSV for noticeboards."""
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quarter schedule '{quarter_key}' not found.",
+        )
+    if not doc.assignments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Quarter schedule '{quarter_key}' has no assignments to export.",
+        )
+
+    staff_members = repo.list_staff(active_only=False)
+    staff_map = {m.id: m for m in staff_members}
+
+    if export_format == "csv":
+        csv_data = export_schedule_to_csv(doc)
+        return Response(
+            content=csv_data,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.csv"'
+            },
+        )
+
+    excel_bytes = export_schedule_to_excel(doc, staff_map=staff_map)
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="Dienstplan_{quarter_key}.xlsx"'
+        },
+    )

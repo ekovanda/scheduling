@@ -240,3 +240,15 @@ def test_quarters_generate_and_swap_api(
     swap_payload["new_staff_id"] = "UNKNOWN_STAFF"
     err_swap = client.post("/api/v1/quarters/2026-Q2/shifts/swap", json=swap_payload)
     assert err_swap.status_code == 404
+
+    # 7. Export schedule as Excel (.xlsx)
+    export_xlsx = client.get("/api/v1/quarters/2026-Q2/export?format=xlsx")
+    assert export_xlsx.status_code == 200
+    assert "application/vnd.openxmlformats" in export_xlsx.headers["content-type"]
+    assert len(export_xlsx.content) > 0
+
+    # 8. Export schedule as CSV
+    export_csv = client.get("/api/v1/quarters/2026-Q2/export?format=csv")
+    assert export_csv.status_code == 200
+    assert "text/csv" in export_csv.headers["content-type"]
+    assert "N_Mi-Do" in export_csv.text
