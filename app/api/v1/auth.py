@@ -29,6 +29,10 @@ class AuthResponse(BaseModel):
     detail: str | None = None
 
 
+# Default precomputed hash fallback if neither PASSWORD_HASH nor APP_PASSWORD is set in env
+_DEFAULT_PASSWORD_HASH = "7729e4a0ee7593268177fc9ba21057ae6129a045372d28a0109484c5a99e4005"
+
+
 def get_expected_password_hash() -> str | None:
     """Retrieve expected password hash from environment."""
     stored_hash = os.environ.get("PASSWORD_HASH")
@@ -37,8 +41,7 @@ def get_expected_password_hash() -> str | None:
     plain_pw = os.environ.get("APP_PASSWORD")
     if plain_pw:
         return hashlib.sha256(plain_pw.encode("utf-8")).hexdigest()
-    # Default dev password fallback for testing: "Trillig2026!"
-    return hashlib.sha256(b"Trillig2026!").hexdigest()
+    return _DEFAULT_PASSWORD_HASH
 
 
 def generate_auth_token() -> str:

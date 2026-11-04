@@ -132,13 +132,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
               )}
             </Button>
           </form>
-
-          {/* Demo Hint */}
-          <div className="text-center pt-2 border-t border-stone-100">
-            <span className="text-[11px] text-stone-400">
-              Test-Passwort: <code className="bg-stone-100 px-1 py-0.5 rounded text-stone-600 font-mono">Trillig2026!</code>
-            </span>
-          </div>
         </div>
       </div>
     );
@@ -146,3 +139,4 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
 
   return <>{children}</>;
 };
+
