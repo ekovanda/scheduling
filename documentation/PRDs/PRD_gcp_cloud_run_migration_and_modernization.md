@@ -3,8 +3,8 @@
 ## Transforming the Dienstplan Generator into a Unified Single Source of Truth (SSOT)
 
 **Feature Name / Slug**: `gcp-cloud-run-migration-and-modernization`  
-**Document Version**: 1.1 (Expanded: Single Source of Truth & Schedule Lifecycle)  
-**Status**: In Review / Planning Phase (Do Not Implement Yet)  
+**Document Version**: 1.2 (Updated: Synchronous Direct Solve & Parallel Environment Architecture)  
+**Status**: Approved & In Progress (Phase 1 Deployed; Phase 2 Active Development)  
 **Target Architecture**: GCP Cloud Run (Containerized Backend) + GCP Managed Datastore (Firestore/Cloud Storage) + Modern React/Tailwind Frontend (Firebase Hosting)  
 **Author**: Antigravity / Senior Cloud & Full-Stack Architect  
 
@@ -84,7 +84,7 @@ flowchart TD
 |:---|:---|:---|
 | **Staff Management** | Edit local `staff.csv`, upload per session | In-app Employee Management UI; changes persist automatically |
 | **Vacation Tracking** | Edit local `vacations.xlsx`, upload per session | In-app Vacation Calendar; recurring & future leaves pre-stored |
-| **Schedule Generation** | Streamlit button, browser blocks during solve | Asynchronous background job with progress bar; draft saved to database |
+| **Schedule Generation** | Streamlit button, browser blocks during solve | Direct synchronous solver API (`POST /quarters/{key}/generate`) within Cloud Run 300s timeout; candidate plan saved to database |
 | **Manual Adjustments** | Export to Excel or use clumsy Streamlit widgets | Interactive React grid with drag-and-drop & live constraint feedback |
 | **Quarter Operations** | Planners edit exported Excel file on desktop when shifts swap or sick leave occurs | Planners log swaps and sick replacements directly in the live schedule matrix |
 | **Quarter Roll-Over** | Manually upload Q1 *Arbeitseinsätze* Excel into Q2 Streamlit session | 1-Click Roll-Over: system automatically reads Q1 realized shifts, builds `PreviousPlanContext`, and initializes Q2 |
@@ -98,18 +98,18 @@ To protect ongoing clinical operations and avoid disruption, the transition rema
 
 ```mermaid
 flowchart LR
-    subgraph Phase1["Phase 1: Lift & Shift (Zero Disruption)"]
+    subgraph Phase1["Phase 1: Lift & Shift (Complete / In Production)"]
         direction TB
         A1["Dockerize Streamlit App"] --> A2["Deploy to Private GCP Cloud Run"]
         A2 --> A3["Secure via Private Repo & Secrets Manager"]
-        A3 --> A4["Verify identical parity with Streamlit Cloud"]
+        A3 --> A4["Verified identical parity with Streamlit Cloud"]
     end
 
-    subgraph Phase2["Phase 2: Decoupled API & Unified Persistence"]
+    subgraph Phase2["Phase 2: Decoupled API & Unified Persistence (Active)"]
         direction TB
         B1["Expose FastAPI REST Service on Cloud Run"] --> B2["Pure Python app/scheduler intact"]
-        B2 --> B3["Async Solver Job Worker (Job Polling)"]
-        B3 --> B4["Persist Staff, Absences & Schedules in Firestore/GCS"]
+        B2 --> B3["Synchronous Solver API (Direct 60-120s Solve)"]
+        B3 --> B4["Persist Staff, Absences & Schedules in Firestore/Local"]
         B4 --> B5["Automated Roll-Over Engine (build_previous_context)"]
     end
 
@@ -124,9 +124,10 @@ flowchart LR
     Phase1 --> Phase2 --> Phase3
 ```
 
-- **Phase 1** is executed immediately to eliminate the public repository risk and host the existing app on private Cloud Run with zero changes to user behavior.
-- **Phase 2** builds the headless API, persistence layer, and automated roll-over logic.
+- **Phase 1** has been successfully executed, deploying the existing Streamlit app to private Cloud Run with zero disruption to active scheduling.
+- **Phase 2** builds the headless FastAPI layer, persistence store, and automated roll-over logic. In accordance with the "Flat & Simple" principle, the solver is invoked directly as a synchronous endpoint within Cloud Run's 300s timeout window, cutting out stateful job queues and polling infrastructure.
 - **Phase 3** replaces Streamlit with the full single-source-of-truth React UI.
+- **Parallel Deployment Model**: All Phase 2 and Phase 3 deployments target a separate Cloud Run service (`dienstplan-dev`) configured with `min-instances=0` ($0 idle cost), ensuring production (`dienstplan-app`) remains completely insulated from downtime or breaking changes.
 
 ---
 
@@ -191,12 +192,25 @@ EXPOSE 8080
 CMD ["sh", "-c", "streamlit run app/streamlit_app.py --server.port=${PORT} --server.address=0.0.0.0 --server.enableCORS=false --server.headless=true"]
 ```
 
+### 4.4 Dual-Environment Cloud Run Strategy (Zero-Risk Parallel Deployments)
+To enable active development and validation without risking production downtime or breaking changes to active scheduling sessions, the infrastructure uses two distinct Cloud Run services:
+1. **Production Service (`dienstplan-app`)**:
+   - Deployed from `main` branch.
+   - Hosts the stable, user-facing scheduling application.
+   - Min instances: 0 (or 1 during high-volume planning quarters).
+2. **Preview / Development Service (`dienstplan-dev`)**:
+   - Deployed from feature/modernization branches (`feat/gcp-modernization-redesign`).
+   - Hosts experimental API routes, persistence layers, and preview frontends.
+   - Min instances: 0 ($0 cost when idle).
+   - Completely independent Cloud Run URL and configuration (`SERVICE_NAME="dienstplan-dev"`).
+
 ---
 
 ## 5. Phase 2: Decoupled API, Persistent Data Models & SSOT Engine
 
 ### 5.1 Objectives
 - Expose a clean FastAPI REST backend wrapping [`app/scheduler/`](file:///home/e/Desktop/antigravity-projects/scheduling/app/scheduler/).
+- **Synchronous Direct Solver Execution**: Runs OR-Tools CP-SAT directly within the HTTP request lifecycle (~60–120s), comfortably inside Cloud Run's 300s timeout window. This honors the "Flat & Simple" mandate by eliminating asynchronous job queues, task brokers, and polling state machines.
 - Eliminate all manual file upload/download steps for inter-quarter scheduling.
 - Implement an **Automated Roll-Over Engine** that auto-computes `PreviousPlanContext` directly from database records.
 
@@ -315,8 +329,7 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
 | `GET` / `POST` | `/api/v1/absences` | Query or record vacations and sick leaves across any date range |
 | `GET` | `/api/v1/quarters/{quarter_key}` | Retrieve quarter schedule document, status, and metrics |
 | `POST` | `/api/v1/quarters/{quarter_key}/init` | 1-Click Init: auto-detects preceding quarter, computes roll-over context |
-| `POST` | `/api/v1/quarters/{quarter_key}/generate` | Trigger async CP-SAT solver job, returns `{ job_id }` |
-| `GET` | `/api/v1/jobs/{job_id}` | Poll solver job status, progress, elapsed time |
+| `POST` | `/api/v1/quarters/{quarter_key}/generate` | Direct synchronous CP-SAT solve (~60–120s within 300s timeout); returns generated `QuarterScheduleDocument` and metrics |
 | `POST` | `/api/v1/quarters/{quarter_key}/shifts/swap` | Swap or reassign a shift with instant live constraint validation |
 | `POST` | `/api/v1/quarters/{quarter_key}/publish` | Move state from `DRAFT` to `PUBLISHED` |
 | `POST` | `/api/v1/quarters/{quarter_key}/lock` | Lock quarter into `CLOSED` state for permanent record |
@@ -363,7 +376,7 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
    - Bulk add vacation blocks or mark single days off.
    - Immediate warning if an absence creates an impossible weekend or night coverage shortage.
 3. **Draft Schedule Studio (Pre-Quarter Planning)**:
-   - Run CP-SAT solver with 1 click. Real-time progress bar.
+   - Run CP-SAT solver with 1 click. Displays active loading indicator during direct 60–120s execution; candidate assignments returned directly on completion.
    - Matrix grid showing candidate assignments.
    - Drag-and-drop or click to swap shifts.
    - **Live Rule Validation**: Any swap immediately evaluates [`app/scheduler/validator.py`](file:///home/e/Desktop/antigravity-projects/scheduling/app/scheduler/validator.py) and flags violations (e.g., "Violates 21-day rest gap" or "Exceeds max consecutive nights") before committing.
@@ -386,20 +399,21 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
 gantt
     title Phased Modernization & SSOT Roadmap
     dateFormat  YYYY-MM-DD
-    section Phase 1: Lift & Shift
+    section Phase 1: Lift & Shift (Complete)
     Dockerfile Hardening & Cloud Run Config       :p1_1, 2026-11-02, 2d
     Deploy Existing Streamlit to Private Cloud Run:p1_2, after p1_1, 2d
     Verify Zero Disruption with Current Users     :p1_3, after p1_2, 3d
 
-    section Phase 2: Decoupled API & SSOT Backend
-    FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 4d
-    Async Solver Worker & Job Polling             :p2_2, after p2_1, 3d
-    Data Persistence (Firestore Staff/Absence/Doc):p2_3, after p2_2, 5d
-    Automated Roll-Over Engine Implementation     :p2_4, after p2_3, 4d
-    Comprehensive API Tests (Lifecycle & Solver)  :p2_5, after p2_4, 3d
+    section Phase 2: Decoupled API & SSOT Backend (Active)
+    FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 3d
+    Synchronous Direct Solver Integration         :p2_2, after p2_1, 2d
+    Data Persistence (Firestore & Local Repo)     :p2_3, after p2_2, 4d
+    Automated Roll-Over Engine Implementation     :p2_4, after p2_3, 3d
+    Parallel Dev Service Deployment (dienstplan-dev):p2_5, after p2_4, 2d
+    Comprehensive API Tests (Lifecycle & Solver)  :p2_6, after p2_5, 3d
 
     section Phase 3: React SSOT Frontend
-    Vite + React + Tailwind Scaffold              :p3_1, after p2_5, 3d
+    Vite + React + Tailwind Scaffold              :p3_1, after p2_6, 3d
     Staff Management & Vacation Calendar Views    :p3_2, after p3_1, 5d
     Interactive Matrix with Live Rule Validation  :p3_3, after p3_2, 6d
     Live Quarter Shift Swap & Ist-Tracking Mode   :p3_4, after p3_3, 5d
@@ -416,3 +430,5 @@ To achieve the single source of truth vision, the following items are now formal
 3. **Soll- vs. Ist-Tracking**: Adds shift swap and replacement logging directly into active schedules.
 4. **Automated Roll-Over Engine**: Replaces manual `Arbeitseinsaetze.xlsx` context uploads with automated database queries feeding `build_previous_context(...)`.
 5. **Excel Role Shift**: Excel is relegated from an operational storage format to a 1-click presentation/export format.
+6. **Direct Synchronous Solver Execution**: Avoids async job queues and polling state machines by running OR-Tools CP-SAT synchronously within Cloud Run's 300s timeout.
+7. **Zero-Risk Parallel Cloud Run Deployments**: Development and preview iterations deploy to `dienstplan-dev` with `min-instances=0` ($0 idle cost), guaranteeing zero disruption to the production service (`dienstplan-app`).
