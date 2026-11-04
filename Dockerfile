@@ -11,12 +11,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # - UV_LINK_MODE=copy: Ensures files are copied cleanly across layers
 # - UV_COMPILE_BYTECODE=1: Precompile bytecode for faster app startup
 # - UV_PYTHON_DOWNLOADS=never: Use system python from base image
+# - DATA_DIR: Default location for JSON single-source-of-truth datastore
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    DATA_DIR="/app/data/db"
 
 WORKDIR /app
 
@@ -33,12 +35,17 @@ RUN uv sync --frozen --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app:/app/app"
 
-# Copy application code and sample data
+# Copy application code, scripts, and sample data
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 COPY data/ ./data/
 
-# Security hardening: run as a non-root system user
-RUN groupadd -r appuser && useradd -r -g appuser -u 10001 -m -d /app appuser \
+# Security hardening:
+# 1. Pre-create database directories so appuser has full write ownership
+# 2. Run as non-root system user (UID 10001)
+RUN mkdir -p /app/data/db/staff /app/data/db/absences /app/data/db/schedules \
+    && chmod +x /app/scripts/entrypoint.sh \
+    && groupadd -r appuser && useradd -r -g appuser -u 10001 -m -d /app appuser \
     && chown -R appuser:appuser /app
 
 USER appuser
@@ -46,9 +53,9 @@ USER appuser
 # Expose default port
 EXPOSE 8080
 
-# Health check probing Streamlit's built-in health endpoint
+# Dual healthcheck: probes FastAPI health endpoint first, falls back to Streamlit
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:${PORT}/_stcore/health || exit 1
+    CMD curl --fail http://localhost:${PORT}/api/v1/health || curl --fail http://localhost:${PORT}/_stcore/health || exit 1
 
-# Execute Streamlit with exec for clean signal handling (SIGTERM propagation in Cloud Run)
-ENTRYPOINT ["sh", "-c", "exec streamlit run app/streamlit_app.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false --server.enableCORS=false --server.enableXsrfProtection=false"]
+# Launch container via entrypoint script for clean PID 1 signal propagation
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
