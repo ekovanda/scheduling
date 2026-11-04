@@ -137,11 +137,8 @@ export const StaffView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
-            Mitarbeiter & Qualifikationen
+            Mitarbeiter
           </h1>
-          <p className="text-sm text-stone-500 mt-0.5">
-            Personalstamm, Arbeitszeitmodelle und Nachtdienst-Zulassung der Tierklinik Dr. Trillig.
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button onClick={handleOpenAddModal} variant="primary">
@@ -151,16 +148,15 @@ export const StaffView: React.FC = () => {
         </div>
       </div>
 
-      {/* Warm KPI Summary Cards */}
+      {/* KPI Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
           <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
-            <span>Aktives Team</span>
+            <span>Gesamt</span>
             <Users className="h-4 w-4 text-stone-400" />
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
+          <div className="mt-2">
             <span className="text-2xl font-bold text-stone-900">{totalActive}</span>
-            <span className="text-xs text-stone-500 font-medium">Mitarbeiter</span>
           </div>
         </div>
 
@@ -169,9 +165,8 @@ export const StaffView: React.FC = () => {
             <span>Tierärzte</span>
             <Stethoscope className="h-4 w-4 text-[#324b9b]" />
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
+          <div className="mt-2">
             <span className="text-2xl font-bold text-stone-900">{totalVets}</span>
-            <span className="text-xs text-stone-500 font-medium">approbiert</span>
           </div>
         </div>
 
@@ -180,20 +175,18 @@ export const StaffView: React.FC = () => {
             <span>TFAs & Azubis</span>
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
+          <div className="mt-2">
             <span className="text-2xl font-bold text-stone-900">{totalTFAs}</span>
-            <span className="text-xs text-stone-500 font-medium">Fachkräfte</span>
           </div>
         </div>
 
         <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
           <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
-            <span>Nachtdienst-Zulassung</span>
+            <span>Nachtdienst</span>
             <Moon className="h-4 w-4 text-amber-600" />
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
+          <div className="mt-2">
             <span className="text-2xl font-bold text-stone-900">{totalNightCapable}</span>
-            <span className="text-xs text-stone-500 font-medium">in Rotation</span>
           </div>
         </div>
       </div>
@@ -373,7 +366,7 @@ export const StaffView: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Kürzel (Identifier)
+                Kürzel
               </label>
               <input
                 type="text"
@@ -454,7 +447,7 @@ export const StaffView: React.FC = () => {
                 className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
               />
               <span className="text-xs font-medium text-stone-700">
-                Nachtdienst-fähig (für Notdienst rotation freigegeben)
+                Nachtdienst-fähig
               </span>
             </label>
 
@@ -469,7 +462,7 @@ export const StaffView: React.FC = () => {
                   className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
                 />
                 <span className="text-xs font-medium text-stone-700">
-                  Kann Nachtdienst alleine führen (ohne erfahrene Begleitung)
+                  Alleine tauglich
                 </span>
               </label>
             )}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
-import type { Beruf } from '../../types/api';
+import type { Beruf, AbsenceType } from '../../types/api';
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -48,5 +48,20 @@ export const RoleBadge: React.FC<{ role: Beruf }> = ({ role }) => {
       return <Badge variant="info">Intern</Badge>;
     default:
       return <Badge variant="neutral">{role}</Badge>;
+  }
+};
+
+export const AbsenceBadge: React.FC<{ type: AbsenceType }> = ({ type }) => {
+  switch (type) {
+    case 'Vacation':
+      return <Badge variant="success">Urlaub</Badge>;
+    case 'Training':
+      return <Badge variant="info">Fortbildung</Badge>;
+    case 'SickLeave':
+      return <Badge variant="danger">Krank</Badge>;
+    case 'SpecialLeave':
+      return <Badge variant="warning">Sonderurlaub</Badge>;
+    default:
+      return <Badge variant="neutral">{type}</Badge>;
   }
 };
