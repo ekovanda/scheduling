@@ -45,3 +45,28 @@ export interface PreAssignedShift {
   note?: string;
 }
 
+export type ScheduleState = 'DRAFT' | 'PUBLISHED' | 'ACTIVE' | 'CLOSED';
+
+export interface ShiftAssignmentRecord {
+  shift_date: string;
+  shift_type: string;
+  planned_staff_id: string;
+  actual_staff_id: string;
+  is_paired: boolean;
+  is_override: boolean;
+  override_reason?: string | null;
+  override_timestamp?: string | null;
+}
+
+export interface QuarterScheduleDocument {
+  quarter_key: string;
+  year: number;
+  quarter: number;
+  state: ScheduleState;
+  config?: Record<string, unknown>;
+  assignments: ShiftAssignmentRecord[];
+  solver_metrics: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
