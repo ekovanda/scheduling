@@ -9,8 +9,8 @@ export const MatrixView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-900">Dienstplan Matrix (2026-Q2)</h1>
-            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <h1 className="text-xl font-bold text-stone-900">Dienstplan (2026-Q2)</h1>
+            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-[#324b9b] border border-blue-200">
               ENTWURF (DRAFT)
             </span>
           </div>
@@ -49,3 +49,4 @@ export const MatrixView: React.FC = () => {
     </div>
   );
 };
+

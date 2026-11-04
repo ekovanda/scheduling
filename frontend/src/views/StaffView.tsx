@@ -98,7 +98,6 @@ export const StaffView: React.FC = () => {
     if (!formData.name || !formData.identifier) return;
 
     if (editingStaff) {
-      // Update local state
       setStaffList((prev) =>
         prev.map((s) =>
           s.id === editingStaff.id
@@ -107,7 +106,6 @@ export const StaffView: React.FC = () => {
         )
       );
     } else {
-      // Create new
       const newStaff: StaffMember = {
         id: formData.identifier.toLowerCase(),
         identifier: formData.identifier.toUpperCase(),
@@ -127,7 +125,7 @@ export const StaffView: React.FC = () => {
       try {
         await createStaff(newStaff);
       } catch (err) {
-        console.warn('Backend sync failed, kept in local state:', err);
+        console.warn('Backend sync failed, saved locally:', err);
       }
     }
     setIsModalOpen(false);
@@ -138,91 +136,91 @@ export const StaffView: React.FC = () => {
       {/* Page Title & Intro */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
             Mitarbeiter & Qualifikationen
           </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Zentrale Mitarbeiterverwaltung und Diensttauglichkeit für Tierärzte und Fachangestellte.
+          <p className="text-sm text-stone-500 mt-0.5">
+            Personalstamm, Arbeitszeitmodelle und Nachtdienst-Zulassung der Tierklinik Dr. Trillig.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button onClick={handleOpenAddModal} variant="primary">
-            <Plus className="h-4 w-4 mr-1" />
+            <Plus className="h-4 w-4 mr-1.5" />
             Mitarbeiter anlegen
           </Button>
         </div>
       </div>
 
-      {/* KPI Summary Cards */}
+      {/* Warm KPI Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Aktives Personal</span>
-            <Users className="h-4 w-4 text-slate-400" />
+        <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
+            <span>Aktives Team</span>
+            <Users className="h-4 w-4 text-stone-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900">{totalActive}</span>
-            <span className="text-xs text-slate-500">Mitarbeiter</span>
+            <span className="text-2xl font-bold text-stone-900">{totalActive}</span>
+            <span className="text-xs text-stone-500 font-medium">Mitarbeiter</span>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Tierärzte (Vets)</span>
-            <Stethoscope className="h-4 w-4 text-indigo-500" />
+        <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
+            <span>Tierärzte</span>
+            <Stethoscope className="h-4 w-4 text-[#324b9b]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900">{totalVets}</span>
-            <span className="text-xs text-slate-500">approbiert</span>
+            <span className="text-2xl font-bold text-stone-900">{totalVets}</span>
+            <span className="text-xs text-stone-500 font-medium">approbiert</span>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+        <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
             <span>TFAs & Azubis</span>
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
+            <ShieldCheck className="h-4 w-4 text-emerald-600" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900">{totalTFAs}</span>
-            <span className="text-xs text-slate-500">Fachkräfte</span>
+            <span className="text-2xl font-bold text-stone-900">{totalTFAs}</span>
+            <span className="text-xs text-stone-500 font-medium">Fachkräfte</span>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>Nachtdienstfähig</span>
-            <Moon className="h-4 w-4 text-amber-500" />
+        <div className="rounded-xl border border-stone-200/80 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-stone-500 text-xs font-medium">
+            <span>Nachtdienst-Zulassung</span>
+            <Moon className="h-4 w-4 text-amber-600" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900">{totalNightCapable}</span>
-            <span className="text-xs text-slate-500">in Rotation</span>
+            <span className="text-2xl font-bold text-stone-900">{totalNightCapable}</span>
+            <span className="text-xs text-stone-500 font-medium">in Rotation</span>
           </div>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-stone-200/80 shadow-2xs">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-stone-400" />
           <input
             type="text"
             placeholder="Name oder Kürzel suchen..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            className="w-full pl-9 pr-4 py-1.5 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/20 focus:border-[#324b9b] transition-all"
           />
         </div>
 
         {/* Role Filter Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
           {(['ALL', 'Tierarzt', 'TFA', 'Azubi', 'Intern'] as const).map((role) => (
             <button
               key={role}
               onClick={() => setSelectedRole(role)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 selectedRole === role
-                  ? 'bg-slate-900 text-white font-semibold'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-stone-800 text-white font-semibold shadow-2xs'
+                  : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
               }`}
             >
               {role === 'ALL' ? 'Alle Rollen' : role}
@@ -231,11 +229,11 @@ export const StaffView: React.FC = () => {
         </div>
       </div>
 
-      {/* High-Density Data Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+      {/* Warm Clinical Data Table */}
+      <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50/80 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+            <thead className="bg-[#faf9f6] border-b border-stone-200/80 text-xs font-semibold text-stone-600 uppercase tracking-wider">
               <tr>
                 <th className="py-3.5 pl-6 pr-3">Mitarbeiter</th>
                 <th className="px-3 py-3.5">Kürzel</th>
@@ -247,16 +245,16 @@ export const StaffView: React.FC = () => {
                 <th className="py-3.5 pl-3 pr-6 text-right">Aktion</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-stone-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={8} className="py-8 text-center text-stone-500">
                     Lade Mitarbeiterdaten...
                   </td>
                 </tr>
               ) : filteredStaff.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={8} className="py-8 text-center text-stone-500">
                     Keine Mitarbeiter gefunden.
                   </td>
                 </tr>
@@ -264,51 +262,51 @@ export const StaffView: React.FC = () => {
                 filteredStaff.map((staff) => (
                   <tr
                     key={staff.id}
-                    className="hover:bg-slate-50/60 transition-colors group"
+                    className="hover:bg-amber-50/20 transition-colors group"
                   >
-                    {/* Name + Initials Avatar */}
-                    <td className="py-3 pl-6 pr-3">
+                    {/* Name + Warm Initials Avatar */}
+                    <td className="py-3.5 pl-6 pr-3">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center">
+                        <div className="h-8 w-8 rounded-full bg-stone-100 border border-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center shadow-2xs">
                           {staff.name
                             .split(' ')
                             .map((n) => n[0])
                             .slice(0, 2)
                             .join('')}
                         </div>
-                        <span className="font-semibold text-slate-900">{staff.name}</span>
+                        <span className="font-semibold text-stone-900">{staff.name}</span>
                       </div>
                     </td>
 
                     {/* Identifier */}
-                    <td className="px-3 py-3 font-mono text-xs text-slate-600 font-bold">
+                    <td className="px-3 py-3.5 font-mono text-xs text-stone-600 font-bold">
                       {staff.identifier}
                     </td>
 
                     {/* Role Badge */}
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3.5">
                       <RoleBadge role={staff.beruf} />
                     </td>
 
                     {/* Department */}
-                    <td className="px-3 py-3 text-slate-600 text-xs">
+                    <td className="px-3 py-3.5 text-stone-600 text-xs">
                       {staff.abteilung}
                     </td>
 
                     {/* Hours */}
-                    <td className="px-3 py-3 text-slate-700 text-xs">
+                    <td className="px-3 py-3.5 text-stone-700 text-xs">
                       {staff.beruf === 'Tierarzt' ? (
-                        <span className="text-slate-400 italic">Vollzeit (Vet)</span>
+                        <span className="text-stone-400 italic">Vollzeit (Vet)</span>
                       ) : (
                         <div className="flex items-center gap-1.5 font-medium">
-                          <Clock className="h-3.5 w-3.5 text-slate-400" />
+                          <Clock className="h-3.5 w-3.5 text-stone-400" />
                           <span>{staff.hours}h / Woche</span>
                         </div>
                       )}
                     </td>
 
                     {/* Night Shift Qualification */}
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3.5">
                       {!staff.nd_possible ? (
                         <Badge variant="neutral">Kein ND</Badge>
                       ) : staff.nd_alone ? (
@@ -319,14 +317,14 @@ export const StaffView: React.FC = () => {
                     </td>
 
                     {/* Active Status */}
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3.5">
                       {staff.is_active ? (
                         <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
                           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                           Aktiv
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                        <span className="inline-flex items-center gap-1 text-xs text-stone-400">
                           <AlertCircle className="h-3.5 w-3.5" />
                           Inaktiv
                         </span>
@@ -334,10 +332,10 @@ export const StaffView: React.FC = () => {
                     </td>
 
                     {/* Actions */}
-                    <td className="py-3 pl-3 pr-6 text-right">
+                    <td className="py-3.5 pl-3 pr-6 text-right">
                       <button
                         onClick={() => handleOpenEditModal(staff)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-stone-600 hover:text-[#324b9b] hover:bg-blue-50/80 rounded-md transition-colors cursor-pointer"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
                         Bearbeiten
@@ -359,7 +357,7 @@ export const StaffView: React.FC = () => {
       >
         <form onSubmit={handleSaveStaff} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label className="block text-xs font-semibold text-stone-700 mb-1">
               Vollständiger Name
             </label>
             <input
@@ -368,13 +366,13 @@ export const StaffView: React.FC = () => {
               placeholder="z.B. Dr. Clara Meyer"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
                 Kürzel (Identifier)
               </label>
               <input
@@ -386,11 +384,11 @@ export const StaffView: React.FC = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, identifier: e.target.value.toUpperCase() })
                 }
-                className="w-full px-3 py-2 text-sm font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-sm font-mono bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
                 Rolle / Beruf
               </label>
               <select
@@ -398,7 +396,7 @@ export const StaffView: React.FC = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, beruf: e.target.value as Beruf })
                 }
-                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
               >
                 <option value="Tierarzt">Tierarzt</option>
                 <option value="TFA">TFA</option>
@@ -410,7 +408,7 @@ export const StaffView: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
                 Abteilung
               </label>
               <select
@@ -418,7 +416,7 @@ export const StaffView: React.FC = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, abteilung: e.target.value as Abteilung })
                 }
-                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
               >
                 <option value="Station">Station</option>
                 <option value="OP">OP</option>
@@ -427,7 +425,7 @@ export const StaffView: React.FC = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
                 Wochenstunden
               </label>
               <input
@@ -439,13 +437,13 @@ export const StaffView: React.FC = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, hours: Number(e.target.value) })
                 }
-                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b] disabled:opacity-50"
               />
             </div>
           </div>
 
           {/* Night Shift Switches */}
-          <div className="pt-2 border-t border-slate-100 space-y-3">
+          <div className="pt-2 border-t border-stone-100 space-y-3">
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -453,9 +451,9 @@ export const StaffView: React.FC = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, nd_possible: e.target.checked })
                 }
-                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
               />
-              <span className="text-xs font-medium text-slate-700">
+              <span className="text-xs font-medium text-stone-700">
                 Nachtdienst-fähig (für Notdienst rotation freigegeben)
               </span>
             </label>
@@ -468,9 +466,9 @@ export const StaffView: React.FC = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, nd_alone: e.target.checked })
                   }
-                  className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                  className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
                 />
-                <span className="text-xs font-medium text-slate-700">
+                <span className="text-xs font-medium text-stone-700">
                   Kann Nachtdienst alleine führen (ohne erfahrene Begleitung)
                 </span>
               </label>

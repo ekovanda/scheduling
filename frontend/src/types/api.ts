@@ -32,3 +32,4 @@ export interface AbsenceRecord {
   end_date: string;
   note?: string | null;
 }
+

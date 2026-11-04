@@ -28,8 +28,8 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* Top Navigation */}
+    <div className="min-h-screen bg-[#fcfbf9] text-stone-800 flex flex-col font-sans">
+      {/* Top Single-Line Ribbon */}
       <Navbar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -38,13 +38,13 @@ export function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-7">
         {renderActiveView()}
       </main>
 
-      {/* Minimal Clinic Footer */}
-      <footer className="border-t border-slate-200 bg-white py-4 text-center text-xs text-slate-400">
-        Tierklinik Posthausen &middot; Automatisches Dienstplansystem &middot; Vertraulich
+      {/* Warm Clinic Footer */}
+      <footer className="border-t border-stone-200/80 bg-white/60 py-4 text-center text-xs text-stone-400">
+        Tierklinik Dr. Trillig Obertshausen &middot; Personal- & Dienstplanungsportal &middot; Intern
       </footer>
     </div>
   );

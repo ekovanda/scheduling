@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Users, CalendarDays, Scale, Info, ChevronDown } from 'lucide-react';
+import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export type NavTab = 'staff' | 'absences' | 'matrix' | 'fairness' | 'about';
@@ -20,53 +20,50 @@ export const Navbar: React.FC<NavbarProps> = ({
   const tabs = [
     { id: 'staff' as NavTab, label: 'Mitarbeiter', icon: Users },
     { id: 'absences' as NavTab, label: 'Abwesenheiten', icon: CalendarDays },
-    { id: 'matrix' as NavTab, label: 'Dienstplan Matrix', icon: Calendar },
-    { id: 'fairness' as NavTab, label: 'Fairness & Balance', icon: Scale },
-    { id: 'about' as NavTab, label: 'Über das System', icon: Info },
+    { id: 'matrix' as NavTab, label: 'Dienstplan', icon: Calendar },
+    { id: 'fairness' as NavTab, label: 'Fairness', icon: Scale },
+    { id: 'about' as NavTab, label: 'Hilfe', icon: HelpCircle },
   ];
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/95 backdrop-blur-xs">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 h-16">
-        {/* Left: Branding & Quarter Select */}
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-lg shadow-xs">
-              TP
-            </div>
-            <div>
-              <span className="text-sm font-bold tracking-tight text-slate-900 block leading-tight">
-                Tierklinik Posthausen
-              </span>
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">
-                Dienstplan Navigator
-              </span>
-            </div>
+    <header className="sticky top-0 z-40 w-full border-b border-stone-200/90 bg-white/95 backdrop-blur-md shadow-2xs">
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 h-14">
+        {/* Left: Official Clinic Logo + Quarter Selector on one single line */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <img
+              src="/logo-trillig.png"
+              alt="Tierklinik Dr. Trillig"
+              className="h-8 sm:h-9 w-auto object-contain"
+            />
           </div>
 
+          <div className="h-5 w-[1px] bg-stone-200 hidden sm:block" />
+
           {/* Quarter Pill Selector */}
-          <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs">
-            <span className="text-slate-500 font-medium">Quartal:</span>
+          <div className="flex items-center gap-1.5 rounded-full border border-stone-200 bg-stone-50/80 px-2.5 py-1 text-xs shadow-2xs">
+            <span className="text-stone-500 font-medium hidden md:inline">Quartal:</span>
             <div className="relative inline-flex items-center">
               <select
                 value={currentQuarter}
                 onChange={(e) => onQuarterChange(e.target.value)}
-                className="appearance-none bg-transparent pr-5 font-semibold text-slate-900 focus:outline-none cursor-pointer"
+                className="appearance-none bg-transparent pr-4 font-semibold text-stone-800 focus:outline-none cursor-pointer text-xs"
               >
-                <option value="2026-Q2">2026 - Q2 (Apr - Jun)</option>
-                <option value="2026-Q1">2026 - Q1 (Jan - Mär)</option>
-                <option value="2025-Q4">2025 - Q4 (Okt - Dez)</option>
+                <option value="2026-Q2">2026 - Q2</option>
+                <option value="2026-Q1">2026 - Q1</option>
+                <option value="2025-Q4">2025 - Q4</option>
               </select>
-              <ChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-slate-400" />
+              <ChevronDown className="pointer-events-none absolute right-0 h-3 w-3 text-stone-400" />
             </div>
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
-              AKTIV
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100/80 text-emerald-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Aktiv
             </span>
           </div>
         </div>
 
-        {/* Center/Right: Navigation Tabs */}
-        <nav className="flex space-x-1 sm:space-x-2">
+        {/* Right: Single-Line Nav Tabs */}
+        <nav className="flex space-x-1 sm:space-x-1.5">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -75,14 +72,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  'flex items-center gap-2 px-3 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors cursor-pointer',
+                  'flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all cursor-pointer whitespace-nowrap',
                   isActive
-                    ? 'bg-indigo-50 text-indigo-700 shadow-2xs font-semibold'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    ? 'bg-[#324b9b] text-white shadow-xs font-semibold'
+                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100/80'
                 )}
               >
-                <Icon className={cn('h-4 w-4', isActive ? 'text-indigo-600' : 'text-slate-400')} />
-                <span className="hidden md:inline">{tab.label}</span>
+                <Icon className={cn('h-3.5 w-3.5 sm:h-4 sm:w-4', isActive ? 'text-white' : 'text-stone-400')} />
+                <span>{tab.label}</span>
               </button>
             );
           })}

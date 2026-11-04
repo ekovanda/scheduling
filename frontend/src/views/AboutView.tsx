@@ -1,60 +1,94 @@
 import React from 'react';
-import { Server, Check } from 'lucide-react';
+import { Server, Check, Phone, Mail, ShieldAlert } from 'lucide-react';
 
 export const AboutView: React.FC = () => {
   return (
     <div className="max-w-3xl space-y-6">
       {/* Title */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Über das Dienstplan-System
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
+          Hilfe & Dokumentation
         </h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Architektur, aktuelle Versionshinweise und technische Meilensteine.
+        <p className="text-sm text-stone-500 mt-0.5">
+          Anleitungen zur Dienstplanung, Schichtregeln und Support der Tierklinik Dr. Trillig.
         </p>
       </div>
 
-      {/* Version Card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-2xs space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-              <Server className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900">Version 1.8.0 (Modernisierung)</h2>
-              <p className="text-xs text-slate-500">FastAPI Backend + React Single-Page-App</p>
-            </div>
+      {/* Quick Start Guide */}
+      <div className="bg-white rounded-xl border border-stone-200/80 p-6 shadow-2xs space-y-4">
+        <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+          <span>In 3 Schritten zum Quartalsdienstplan</span>
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          <div className="p-3.5 rounded-lg bg-stone-50 border border-stone-200/60 space-y-1.5">
+            <span className="text-xs font-bold text-[#324b9b] uppercase">1. Personal prüfen</span>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Im Tab <strong>Mitarbeiter</strong> Wochenstunden und Nachtdienst-Zulassung aktualisieren.
+            </p>
           </div>
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Aktuellste Version
-          </span>
+          <div className="p-3.5 rounded-lg bg-stone-50 border border-stone-200/60 space-y-1.5">
+            <span className="text-xs font-bold text-[#324b9b] uppercase">2. Abwesenheiten</span>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Urlaube und Fortbildungen eintragen, um Unterbesetzungen vorzubeugen.
+            </p>
+          </div>
+          <div className="p-3.5 rounded-lg bg-stone-50 border border-stone-200/60 space-y-1.5">
+            <span className="text-xs font-bold text-[#324b9b] uppercase">3. Löser starten</span>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Im Tab <strong>Dienstplan</strong> die automatische CP-SAT Optimierung starten und Excel exportieren.
+            </p>
+          </div>
         </div>
+      </div>
 
-        <div className="border-t border-slate-100 pt-4 space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-            Neuerungen in diesem Release
-          </h3>
-          <ul className="space-y-2 text-sm text-slate-700">
-            <li className="flex items-start gap-2">
-              <Check className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-              <span>
-                <strong>Single Source of Truth</strong>: Zentrale Mitarbeiter- und Abwesenheitsverwaltung ersetzt manuelle Excel-Uploads.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-              <span>
-                <strong>Moderne React Oberfläche</strong>: Ultraschnelle Ladezeiten, Tastaturfreundliche Dialoge und responsive Tabellen.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-              <span>
-                <strong>Vereinfachte Fairness-Signale</strong>: Klare Zielerfüllungs- und Belastungswerte anstelle komplexer statistischer Indizes.
-              </span>
-            </li>
-          </ul>
+      {/* Core Shift Rules & Safety */}
+      <div className="bg-white rounded-xl border border-stone-200/80 p-6 shadow-2xs space-y-4">
+        <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+          <ShieldAlert className="h-4 w-4 text-amber-600" />
+          <span>Wichtigste Ruhezeit- & Schutzregeln</span>
+        </h2>
+        <ul className="space-y-2 text-sm text-stone-700">
+          <li className="flex items-start gap-2">
+            <Check className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+            <span>
+              <strong>11 Stunden Ruhezeit</strong>: Nach jedem Nachtdienst müssen gesetzlich mindestens 11h Ruhepause eingehalten werden.
+            </span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+            <span>
+              <strong>Nachtdienst-Besetzung</strong>: Mindestens eine erfahrene Fachkraft (alleine tauglich) muss jede Schicht leiten.
+            </span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+            <span>
+              <strong>Wochenend-Ausgleich</strong>: Dienste an Samstagen und Sonntagen werden quartalsübergreifend fair ausgeglichen.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      {/* Support & Release Box */}
+      <div className="bg-[#faf9f6] rounded-xl border border-stone-200/80 p-6 shadow-2xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-stone-500">
+            <Server className="h-3.5 w-3.5 text-[#324b9b]" />
+            <span>Systemversion 1.8.0 &middot; Tierklinik Dr. Trillig</span>
+          </div>
+          <p className="text-xs text-stone-500">
+            Fragen oder technischer Support zur Dienstplan-Optimierung:
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-xs font-medium text-stone-700">
+          <span className="flex items-center gap-1">
+            <Phone className="h-3.5 w-3.5 text-stone-400" />
+            Klinikleitung
+          </span>
+          <span className="flex items-center gap-1">
+            <Mail className="h-3.5 w-3.5 text-stone-400" />
+            Support
+          </span>
         </div>
       </div>
     </div>

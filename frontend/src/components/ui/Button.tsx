@@ -14,14 +14,14 @@ export const Button: React.FC<ButtonProps> = ({
   ...props
 }) => {
   const base =
-    'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:pointer-events-none cursor-pointer';
+    'inline-flex items-center justify-center font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:pointer-events-none cursor-pointer';
 
   const variants = {
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500 shadow-sm',
-    secondary: 'bg-slate-800 text-white hover:bg-slate-900 focus:ring-slate-600 shadow-sm',
-    outline: 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 focus:ring-indigo-500 shadow-xs',
-    ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:ring-slate-400',
-    danger: 'bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-sm',
+    primary: 'bg-[#324b9b] text-white hover:bg-[#273a78] focus:ring-[#324b9b]/50 shadow-xs hover:shadow-sm',
+    secondary: 'bg-stone-800 text-white hover:bg-stone-900 focus:ring-stone-600 shadow-xs',
+    outline: 'border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 hover:border-stone-400 focus:ring-[#324b9b]/40 shadow-2xs',
+    ghost: 'text-stone-600 hover:bg-stone-100/80 hover:text-stone-900 focus:ring-stone-400',
+    danger: 'bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-xs',
   };
 
   const sizes = {
