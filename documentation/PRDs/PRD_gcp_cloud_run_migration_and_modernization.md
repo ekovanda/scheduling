@@ -342,13 +342,15 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
 ### 6.1 Objectives
 - Provide a responsive, high-performance web UI eliminating all desktop spreadsheet manipulation.
 - Integrate interactive schedule editing with instant constraint feedback.
-- Provide clear views for both **Quarterly Planning (Soll)** and **Operational Tracking (Ist)**.
+- Deliver an intuitive 5-view architecture designed for clinical workflows.
+- Prioritize visual clarity over statistical complexity for clinic stakeholders.
 
 ### 6.2 Key User Interface Views
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│  📅 DIENSTPLAN PLATFORM     [Personal]  [Urlaub]  [Q1 2026]  [Q2 2026] │
+│  🏥 TIERKLINIK DIENSTPLAN   [2026-Q2 ▼]                                 │
+│  [Mitarbeiter] [Abwesenheiten] [Dienstplan Matrix] [Fairness] [Über]   │
 ├────────────────────────────────────────────────────────────────────────┤
 │  Status: 🟢 AKTIV (IST-STAND)       [Dienst tauschen]  [Excel Export]  │
 │                                                                        │
@@ -367,29 +369,40 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Staff Directory & Qualifications Hub**:
-   - Filterable table of clinic employees.
-   - Edit contract hours, roles (TFA, Azubi, Intern, Vet), department locks, and night availability in a slide-over modal.
-   - Add new employees with `available_from` date; deactivate departing staff.
+1. **Staff Directory Hub (Pilot Design Anchor)**:
+   - Filterable table of clinic employees with clear role badges (`Tierarzt`, `TFA`, `Azubi`, `Intern`).
+   - Summary metric cards (Active Staff, Total Weekly Contract Hours, On-Call Eligibility).
+   - Modal to add/edit contract hours, roles, department locks, and night availability.
+   - Deactivate departing staff or set availability dates.
 2. **Interactive Absence & Vacation Planner**:
-   - Visual team calendar showing who is away when.
-   - Bulk add vacation blocks or mark single days off.
+   - Visual team calendar and ledger showing who is away when (Urlaub, Fortbildung, Krank).
+   - Quick-entry date range form with live validation.
    - Immediate warning if an absence creates an impossible weekend or night coverage shortage.
-3. **Draft Schedule Studio (Pre-Quarter Planning)**:
-   - Run CP-SAT solver with 1 click. Displays active loading indicator during direct 60–120s execution; candidate assignments returned directly on completion.
-   - Matrix grid showing candidate assignments.
-   - Drag-and-drop or click to swap shifts.
-   - **Live Rule Validation**: Any swap immediately evaluates [`app/scheduler/validator.py`](file:///home/e/Desktop/antigravity-projects/scheduling/app/scheduler/validator.py) and flags violations (e.g., "Violates 21-day rest gap" or "Exceeds max consecutive nights") before committing.
-   - Comparison Drawer: Compare 2 solver runs side-by-side to choose the fairer plan.
-4. **Live Quarter Operations ("Ist-Plan" Mode)**:
-   - When a staff member falls sick or requests a shift trade, planners open the day, select the replacement staff, and enter a reason.
-   - The system validates that the replacement staff does not violate safety/rest rules.
-   - Both original assignment and actual replacement are retained in the audit history.
-5. **1-Click Quarter Transition Wizard**:
-   - "Start Planning Q3 2026":
-     - Step 1: System reviews Q2 realized shifts and confirms Q2 is ready to lock.
-     - Step 2: System automatically calculates carry-forward fairness deltas and 21-day trailing assignments.
-     - Step 3: Generates Q3 plan with zero file uploads.
+3. **Interactive Schedule Matrix & Operations (Hero View)**:
+   - Header with quarter status banner (`DRAFT` / `PUBLISHED` / `LOCKED`), 1-click solve trigger with synchronous progress indicator, and Excel export.
+   - Matrix grid with colored badges for shift types (Night, Weekend, Day, On-Call).
+   - **Click-to-Swap Drawer**: Click any shift to view eligible replacements with instant live constraint check (rest gaps, max consecutive days) via `POST /quarters/{key}/shifts/swap`.
+   - Supports both Pre-Quarter Planning (Soll-Plan) and Live Realized Tracking (Ist-Plan) with full audit log.
+4. **Simplified Fairness & Health Scorecard**:
+   - Redesigned for stakeholder clarity: replaces confusing variance and Gini indices with 3 actionable signals:
+     1. *Target Adherence Score*: Visual progress bar per staff member (assigned nights vs. target).
+     2. *Weekend Burden Equity*: Distribution bar chart scaled to contract percentage.
+     3. *Rest & Safety Traffic Light*: Green checks for 11h rest gap compliance and max consecutive streak limits.
+5. **About & Release Highlights**:
+   - Displays `CURRENT_VERSION` directly from `release_info.py`.
+   - Changelog highlights showing recently deployed features and improvements.
+   - Clinic planner documentation and support contacts.
+
+### 6.3 Development & UI Implementation Strategy
+- **Tech Stack**: React 19, TypeScript, Vite, Tailwind CSS.
+- **Component Architecture (Option B - Shadcn / Radix Primitives)**:
+  - Accessible, unstyled primitives for dialogs, popovers, drawers, and tabs wrapped in Tailwind classes.
+  - Zero heavy black-box UI dependencies; all component code lives in `frontend/src/components/ui/`.
+- **Iteration Workflow ("Vertical Slice" on Localhost)**:
+  - Build the **Staff Directory Hub** first on `localhost` as the design anchor to dial in colors, typography, and density with instant Vite HMR (<50ms feedback).
+  - Review and refine aesthetic collaboratively before extending the design system to the remaining 4 views.
+  - Connect to local FastAPI dev server (`http://localhost:8000/api/v1`) or Cloud Run dev endpoint (`https://dienstplan-dev-owwijghxkq-ey.a.run.app/api/v1`).
+  - Deploy production build to Firebase Hosting / Cloud CDN once verified.
 
 ---
 
