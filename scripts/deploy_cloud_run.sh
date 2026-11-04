@@ -7,69 +7,96 @@ if [ -d "$HOME/google-cloud-sdk/bin" ]; then
     export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 fi
 
+# 1. Parse CLI Target Flags (--dev or --prod)
+TARGET="prod"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dev)
+      TARGET="dev"
+      shift
+      ;;
+    --prod)
+      TARGET="prod"
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--dev | --prod]"
+      echo "  --dev   Deploy modernization API to 'dienstplan-dev' with APP_TARGET=fastapi"
+      echo "  --prod  Deploy stable application to 'dienstplan-app' with APP_TARGET=streamlit (default)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown flag: $1"
+      echo "Run '$0 --help' for usage."
+      exit 1
+      ;;
+  esac
+done
+
 PROJECT_ID="${PROJECT_ID:-tierklinik-trillig}"
 REGION="${REGION:-europe-west3}"
 REPOSITORY="${REPOSITORY:-dienstplan-repo}"
-SERVICE_NAME="${SERVICE_NAME:-dienstplan-app}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+if [ "$TARGET" = "dev" ]; then
+    SERVICE_NAME="${SERVICE_NAME:-dienstplan-dev}"
+    APP_TARGET="fastapi"
+else
+    SERVICE_NAME="${SERVICE_NAME:-dienstplan-app}"
+    APP_TARGET="streamlit"
+fi
+
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE_NAME}:${IMAGE_TAG}"
 
 echo "=========================================================="
 echo " Deploying Dienstplan App to GCP Cloud Run"
-echo " Project:    ${PROJECT_ID}"
-echo " Region:     ${REGION}"
-echo " Service:    ${SERVICE_NAME}"
-echo " Image:      ${IMAGE_NAME}"
+echo " Target Mode: ${TARGET} (APP_TARGET=${APP_TARGET})"
+echo " Project:     ${PROJECT_ID}"
+echo " Region:      ${REGION}"
+echo " Service:     ${SERVICE_NAME}"
+echo " Image:       ${IMAGE_NAME}"
 echo "=========================================================="
 
-# 1. Handle Password Configuration
-PASSWORD_HASH_ARG=()
+# 2. Environment Variables Configuration
+ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}")
+
 if [ -n "${APP_PASSWORD:-}" ]; then
     echo "Hashing provided APP_PASSWORD..."
     PASSWORD_HASH=$(echo -n "${APP_PASSWORD}" | sha256sum | awk '{print $1}')
-    PASSWORD_HASH_ARG=("--set-env-vars=PASSWORD_HASH=${PASSWORD_HASH}")
+    ENV_VARS_LIST+=("PASSWORD_HASH=${PASSWORD_HASH}")
 elif [ -n "${PASSWORD_HASH:-}" ]; then
-    PASSWORD_HASH_ARG=("--set-env-vars=PASSWORD_HASH=${PASSWORD_HASH}")
-else
-    echo "Notice: No APP_PASSWORD or PASSWORD_HASH specified."
-    echo "App will start without password gate. You can set it later via: "
-    echo "  gcloud run services update ${SERVICE_NAME} --region=${REGION} --project=${PROJECT_ID} --update-env-vars=PASSWORD_HASH=<hash>"
+    ENV_VARS_LIST+=("PASSWORD_HASH=${PASSWORD_HASH}")
 fi
 
-# 2. Build and Push Container via Google Cloud Build (guarantees native linux/amd64 target)
+ENV_VARS_CSV=$(IFS=,; echo "${ENV_VARS_LIST[*]}")
+
+# 3. Build and Push Container via Google Cloud Build (guarantees native linux/amd64 target)
 echo "Submitting build to Google Cloud Build (native linux/amd64)..."
 gcloud builds submit \
     --tag="${IMAGE_NAME}" \
     --project="${PROJECT_ID}" \
     .
 
-# 3. Deploy to Cloud Run
+# 4. Deploy to Cloud Run
 echo "Deploying to Cloud Run..."
-DEPLOY_CMD=(
-    gcloud run deploy "${SERVICE_NAME}"
-    --image="${IMAGE_NAME}"
-    --platform=managed
-    --region="${REGION}"
-    --project="${PROJECT_ID}"
-    --cpu=2
-    --memory=2Gi
-    --timeout=300s
-    --concurrency=10
-    --session-affinity
-    --min-instances=0
-    --max-instances=3
+gcloud run deploy "${SERVICE_NAME}" \
+    --image="${IMAGE_NAME}" \
+    --platform=managed \
+    --region="${REGION}" \
+    --project="${PROJECT_ID}" \
+    --cpu=2 \
+    --memory=2Gi \
+    --timeout=300s \
+    --concurrency=10 \
+    --session-affinity \
+    --min-instances=0 \
+    --max-instances=3 \
+    --set-env-vars="${ENV_VARS_CSV}" \
     --allow-unauthenticated
-)
-
-if [ ${#PASSWORD_HASH_ARG[@]} -gt 0 ]; then
-    DEPLOY_CMD+=("${PASSWORD_HASH_ARG[@]}")
-fi
-
-"${DEPLOY_CMD[@]}"
 
 echo "=========================================================="
 echo " Deployment Complete!"
 echo " Service URL:"
 gcloud run services describe "${SERVICE_NAME}" --platform=managed --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)'
 echo "=========================================================="
-
