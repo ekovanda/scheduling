@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navbar, type NavTab } from './components/Navbar';
 import { StaffView } from './views/StaffView';
 import { AbsencesView } from './views/AbsencesView';
+import { PreAssignedView } from './views/PreAssignedView';
 import { MatrixView } from './views/MatrixView';
 import { FairnessView } from './views/FairnessView';
 import { AboutView } from './views/AboutView';
@@ -16,6 +17,8 @@ export function App() {
         return <StaffView />;
       case 'absences':
         return <AbsencesView />;
+      case 'preassignments':
+        return <PreAssignedView />;
       case 'matrix':
         return <MatrixView />;
       case 'fairness':

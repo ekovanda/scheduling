@@ -33,3 +33,15 @@ export interface AbsenceRecord {
   note?: string | null;
 }
 
+export type PreAssignedShiftType = 'Nachtdienst' | 'Wochenenddienst' | 'Tagdienst';
+
+export interface PreAssignedShift {
+  id: string;
+  staff_id: string;
+  staff_identifier: string;
+  shift_date: string;
+  shift_type: PreAssignedShiftType;
+  is_holiday?: boolean;
+  note?: string;
+}
+

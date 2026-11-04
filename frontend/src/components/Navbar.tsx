@@ -1,8 +1,8 @@
 import React from 'react';
-import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown } from 'lucide-react';
+import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown, Pin } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export type NavTab = 'staff' | 'absences' | 'matrix' | 'fairness' | 'about';
+export type NavTab = 'staff' | 'absences' | 'preassignments' | 'matrix' | 'fairness' | 'about';
 
 interface NavbarProps {
   activeTab: NavTab;
@@ -20,6 +20,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const tabs = [
     { id: 'staff' as NavTab, label: 'Mitarbeiter', icon: Users },
     { id: 'absences' as NavTab, label: 'Abwesenheiten', icon: CalendarDays },
+    { id: 'preassignments' as NavTab, label: 'Vorbelegungen', icon: Pin },
     { id: 'matrix' as NavTab, label: 'Dienstplan', icon: Calendar },
     { id: 'fairness' as NavTab, label: 'Fairness', icon: Scale },
     { id: 'about' as NavTab, label: 'Hilfe', icon: HelpCircle },
