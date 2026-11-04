@@ -199,8 +199,7 @@ export const AbsencesView: React.FC = () => {
     return `${calMonth.year}-${mStr}-${dStr}`;
   };
 
-  // Build ordered list of active staff IDs for consistent vertical slot stacking in calendar
-  const staffOrder = staffList.map((s) => s.id);
+
 
   return (
     <div className="space-y-6">
@@ -298,144 +297,246 @@ export const AbsencesView: React.FC = () => {
       </div>
 
       {/* VIEW 1: CALENDAR (CONTINUOUS STRIPS WITH NAME AT START) */}
-      {viewMode === 'calendar' && (
-        <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
-          {/* Month Navigation */}
-          <div className="bg-[#faf9f6] px-6 py-3 border-b border-stone-200/80 flex items-center justify-between">
-            <h2 className="text-base font-bold text-stone-900">
-              {monthNames[calMonth.month]} {calMonth.year}
-            </h2>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handlePrevMonth}
-                className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 transition-colors cursor-pointer"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                onClick={handleNextMonth}
-                className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 transition-colors cursor-pointer"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
+      {viewMode === 'calendar' && (() => {
+        // Build weeks array
+        interface CalDay {
+          day: number | null;
+          dateStr: string;
+          isWeekend: boolean;
+          isMonday: boolean;
+          isSunday: boolean;
+        }
 
-          {/* Weekday Header */}
-          <div className="grid grid-cols-7 border-b border-stone-200/80 bg-stone-50/50 text-center text-xs font-semibold text-stone-500 py-2">
-            <div>Mo</div>
-            <div>Di</div>
-            <div>Mi</div>
-            <div>Do</div>
-            <div>Fr</div>
-            <div className="text-amber-800">Sa</div>
-            <div className="text-amber-800">So</div>
-          </div>
+        const weeksList: CalDay[][] = [];
+        let currWeek: CalDay[] = [];
 
-          {/* Days Grid */}
-          <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-stone-100 border-b border-stone-200/80">
-            {/* Empty cells for offset */}
-            {Array.from({ length: firstDayOfWeek }).map((_, idx) => (
-              <div key={`empty-${idx}`} className="min-h-[105px] bg-stone-50/30 p-1" />
-            ))}
+        // Prefix empty days
+        for (let i = 0; i < firstDayOfWeek; i++) {
+          currWeek.push({
+            day: null,
+            dateStr: '',
+            isWeekend: i === 5 || i === 6,
+            isMonday: i === 0,
+            isSunday: i === 6,
+          });
+        }
 
-            {/* Days of Month */}
-            {Array.from({ length: daysInMonth }).map((_, idx) => {
-              const day = idx + 1;
-              const dayOfWeek = (firstDayOfWeek + idx) % 7;
-              const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
-              const isMonday = dayOfWeek === 0;
-              const isSunday = dayOfWeek === 6;
-              const dateStr = toDateStr(day);
+        // Days of month
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dayOfWeek = (firstDayOfWeek + day - 1) % 7;
+          currWeek.push({
+            day,
+            dateStr: toDateStr(day),
+            isWeekend: dayOfWeek === 5 || dayOfWeek === 6,
+            isMonday: dayOfWeek === 0,
+            isSunday: dayOfWeek === 6,
+          });
+          if (currWeek.length === 7) {
+            weeksList.push(currWeek);
+            currWeek = [];
+          }
+        }
 
-              // Find active absences covering this date, sorted by consistent staff order
-              const dayAbsences = absences
-                .filter((a) => a.start_date <= dateStr && dateStr <= a.end_date)
-                .sort(
-                  (a, b) =>
-                    staffOrder.indexOf(a.staff_id) - staffOrder.indexOf(b.staff_id)
-                );
+        // Postfix empty days
+        if (currWeek.length > 0) {
+          while (currWeek.length < 7) {
+            const i = currWeek.length;
+            currWeek.push({
+              day: null,
+              dateStr: '',
+              isWeekend: i === 5 || i === 6,
+              isMonday: i === 0,
+              isSunday: i === 6,
+            });
+          }
+          weeksList.push(currWeek);
+        }
 
-              return (
-                <div
-                  key={`day-${day}`}
-                  className={cn(
-                    'min-h-[105px] p-1 flex flex-col transition-colors',
-                    isWeekend ? 'bg-amber-50/15' : 'bg-white hover:bg-stone-50/30'
-                  )}
+        return (
+          <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
+            {/* Month Navigation */}
+            <div className="bg-[#faf9f6] px-6 py-3 border-b border-stone-200/80 flex items-center justify-between">
+              <h2 className="text-base font-bold text-stone-900">
+                {monthNames[calMonth.month]} {calMonth.year}
+              </h2>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handlePrevMonth}
+                  className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 transition-colors cursor-pointer"
                 >
-                  <div className="flex items-center justify-between text-xs px-1 mb-1.5">
-                    <span
-                      className={cn(
-                        'font-bold',
-                        isWeekend ? 'text-amber-800' : 'text-stone-800'
-                      )}
-                    >
-                      {day}
-                    </span>
-                  </div>
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={handleNextMonth}
+                  className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 transition-colors cursor-pointer"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
 
-                  {/* Parallel Continuous Strips Stack */}
-                  <div className="space-y-1.5 flex-1">
-                    {dayAbsences.map((a) => {
-                      const stf = getStaff(a.staff_id);
-                      const ident = stf ? stf.identifier : a.staff_id;
-                      const name = stf ? stf.name : a.staff_id;
-                      const days = getDayCount(a.start_date, a.end_date);
+            {/* Weekday Header */}
+            <div className="grid grid-cols-7 border-b border-stone-200/80 bg-stone-50/50 text-center text-xs font-semibold text-stone-500 py-2">
+              <div>Mo</div>
+              <div>Di</div>
+              <div>Mi</div>
+              <div>Do</div>
+              <div>Fr</div>
+              <div className="text-amber-800">Sa</div>
+              <div className="text-amber-800">So</div>
+            </div>
 
-                      // Is this cell the start of the absence or Monday?
-                      const isStripStart = a.start_date === dateStr || isMonday;
-                      // Is this cell the end of the absence or Sunday?
-                      const isStripEnd = a.end_date === dateStr || isSunday;
+            {/* Week Rows */}
+            <div className="divide-y divide-stone-100">
+              {weeksList.map((week, wIdx) => {
+                const validDays = week.filter((d) => d.day !== null);
+                if (validDays.length === 0) return null;
+                const weekStart = validDays[0].dateStr;
+                const weekEnd = validDays[validDays.length - 1].dateStr;
 
-                      const isHovered = hoveredAbsenceId === a.id;
-                      const colors = getStaffColorStyles(ident);
+                // Overlapping absences for this specific week
+                const weekAbsences = absences
+                  .filter((a) => a.start_date <= weekEnd && a.end_date >= weekStart)
+                  .sort((a, b) => a.start_date.localeCompare(b.start_date));
+
+                // Slot allocation per absence in this week to guarantee zero row jumping
+                const slotMap: Record<string, number> = {};
+                const slotOccupiedUntil: Record<number, string> = {};
+
+                for (const a of weekAbsences) {
+                  let slot = 0;
+                  while (slotOccupiedUntil[slot] && slotOccupiedUntil[slot] >= a.start_date) {
+                    slot++;
+                  }
+                  slotMap[a.id] = slot;
+                  slotOccupiedUntil[slot] = a.end_date;
+                }
+
+                const maxSlots = Math.max(0, ...Object.values(slotMap).map((s) => s + 1));
+
+                return (
+                  <div key={`week-${wIdx}`} className="grid grid-cols-7 divide-x divide-stone-100">
+                    {week.map((dayObj, dIdx) => {
+                      if (dayObj.day === null) {
+                        return (
+                          <div
+                            key={`empty-${wIdx}-${dIdx}`}
+                            className="min-h-[105px] bg-stone-50/30 p-1"
+                          />
+                        );
+                      }
+
+                      const dateStr = dayObj.dateStr;
 
                       return (
                         <div
-                          key={a.id}
-                          onMouseEnter={() => setHoveredAbsenceId(a.id)}
-                          onMouseLeave={() => setHoveredAbsenceId(null)}
+                          key={`day-${dayObj.day}`}
                           className={cn(
-                            'relative h-5 flex items-center transition-all duration-150 cursor-pointer select-none',
-                            colors.lightBg,
-                            // Continuous strip styling: rounded start and end
-                            isStripStart ? 'rounded-l-md pl-1.5' : '-ml-1 border-l-0 pl-1',
-                            isStripEnd ? 'rounded-r-md pr-1.5' : '-mr-1 border-r-0',
-                            isHovered
-                              ? 'ring-2 ring-stone-900/30 z-30 brightness-95 shadow-xs scale-y-110'
-                              : 'opacity-90 hover:opacity-100'
+                            'min-h-[105px] p-1 flex flex-col transition-colors',
+                            dayObj.isWeekend
+                              ? 'bg-amber-50/15'
+                              : 'bg-white hover:bg-stone-50/30'
                           )}
                         >
-                          {/* Identifier shown only at the start of the continuous strip */}
-                          {isStripStart ? (
-                            <span className="font-bold text-[10px] tracking-tight truncate leading-none">
-                              {ident}
+                          {/* Day Number Header */}
+                          <div className="flex items-center justify-between text-xs px-1 mb-1.5">
+                            <span
+                              className={cn(
+                                'font-bold',
+                                dayObj.isWeekend ? 'text-amber-800' : 'text-stone-800'
+                              )}
+                            >
+                              {dayObj.day}
                             </span>
-                          ) : (
-                            <span className="block h-1 w-full bg-current opacity-20 rounded-full" />
-                          )}
+                          </div>
 
-                          {/* Hover Tooltip Overlay */}
-                          {isHovered && (
-                            <div className="absolute left-0 bottom-full mb-1.5 z-40 bg-stone-900 text-white text-[10px] rounded-md px-2.5 py-1.5 shadow-xl whitespace-nowrap pointer-events-none">
-                              <span className="font-bold">{name}</span>
-                              <span className="text-stone-300 ml-1.5">
-                                ({ident}) &middot; {formatDateGerman(a.start_date)} –{' '}
-                                {formatDateGerman(a.end_date)} ({days} Tage)
-                              </span>
-                            </div>
-                          )}
+                          {/* Fixed Parallel Tracks (guarantees horizontal continuity) */}
+                          <div className="space-y-1.5 flex-1">
+                            {Array.from({ length: maxSlots }).map((_, slotIdx) => {
+                              // Find absence occupying this slot on this day
+                              const activeAbsence = weekAbsences.find(
+                                (a) =>
+                                  slotMap[a.id] === slotIdx &&
+                                  a.start_date <= dateStr &&
+                                  dateStr <= a.end_date
+                              );
+
+                              if (!activeAbsence) {
+                                // Transparent spacer maintaining the horizontal track
+                                return <div key={`spacer-${slotIdx}`} className="h-5" />;
+                              }
+
+                              const stf = getStaff(activeAbsence.staff_id);
+                              const ident = stf ? stf.identifier : activeAbsence.staff_id;
+                              const name = stf ? stf.name : activeAbsence.staff_id;
+                              const days = getDayCount(
+                                activeAbsence.start_date,
+                                activeAbsence.end_date
+                              );
+
+                              // True only at the first visible day of the strip
+                              const isStripStart =
+                                activeAbsence.start_date === dateStr ||
+                                dayObj.isMonday ||
+                                dayObj.day === 1;
+
+                              const isStripEnd =
+                                activeAbsence.end_date === dateStr ||
+                                dayObj.isSunday ||
+                                dayObj.day === daysInMonth;
+
+                              const isHovered = hoveredAbsenceId === activeAbsence.id;
+                              const colors = getStaffColorStyles(ident);
+
+                              return (
+                                <div
+                                  key={`slot-${slotIdx}-${activeAbsence.id}`}
+                                  onMouseEnter={() => setHoveredAbsenceId(activeAbsence.id)}
+                                  onMouseLeave={() => setHoveredAbsenceId(null)}
+                                  className={cn(
+                                    'relative h-5 flex items-center transition-all duration-150 cursor-pointer select-none',
+                                    colors.lightBg,
+                                    isStripStart ? 'rounded-l-md pl-1.5' : '-ml-1 border-l-0 pl-1',
+                                    isStripEnd ? 'rounded-r-md pr-1.5' : '-mr-1 border-r-0',
+                                    isHovered
+                                      ? 'ring-2 ring-stone-900/30 z-30 brightness-95 shadow-xs scale-y-110'
+                                      : 'opacity-90 hover:opacity-100'
+                                  )}
+                                >
+                                  {/* Kürzel appears ONLY at the start of the strip */}
+                                  {isStripStart ? (
+                                    <span className="font-bold text-[10px] tracking-tight truncate leading-none">
+                                      {ident}
+                                    </span>
+                                  ) : (
+                                    <span className="block h-1 w-full bg-current opacity-20 rounded-full" />
+                                  )}
+
+                                  {/* Tooltip appears ONLY at the start of the strip */}
+                                  {isHovered && isStripStart && (
+                                    <div className="absolute left-0 bottom-full mb-1.5 z-40 bg-stone-900 text-white text-[10px] rounded-md px-2.5 py-1.5 shadow-xl whitespace-nowrap pointer-events-none">
+                                      <span className="font-bold">{name}</span>
+                                      <span className="text-stone-300 ml-1.5">
+                                        ({ident}) &middot;{' '}
+                                        {formatDateGerman(activeAbsence.start_date)} –{' '}
+                                        {formatDateGerman(activeAbsence.end_date)} ({days} Tage)
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* VIEW 2: BY PERSON */}
       {viewMode === 'by_person' && (
