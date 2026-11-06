@@ -3,9 +3,9 @@
 ## Transforming the Dienstplan Generator into a Unified Single Source of Truth (SSOT)
 
 **Feature Name / Slug**: `gcp-cloud-run-migration-and-modernization`  
-**Document Version**: 1.2 (Updated: Synchronous Direct Solve & Parallel Environment Architecture)  
+**Document Version**: 1.3 (Updated: Cloud Firestore SSOT Persistence & Asynchronous Solver Architecture)  
 **Status**: Approved & In Progress (Phase 1 Deployed; Phase 2 Active Development)  
-**Target Architecture**: GCP Cloud Run (Containerized Backend) + GCP Managed Datastore (Firestore/Cloud Storage) + Modern React/Tailwind Frontend (Firebase Hosting)  
+**Target Architecture**: GCP Cloud Run (Containerized Backend) + GCP Cloud Firestore (Serverless Document Database with Local JSON Fallback) + Modern React/Tailwind Frontend (Firebase Hosting)  
 **Author**: Antigravity / Senior Cloud & Full-Stack Architect  
 
 ---
@@ -105,11 +105,11 @@ flowchart LR
         A3 --> A4["Verified identical parity with Streamlit Cloud"]
     end
 
-    subgraph Phase2["Phase 2: Decoupled API & Unified Persistence (Active)"]
+    subgraph Phase2["Phase 2: Decoupled API & Cloud Firestore SSOT Backend (Active)"]
         direction TB
         B1["Expose FastAPI REST Service on Cloud Run"] --> B2["Pure Python app/scheduler intact"]
-        B2 --> B3["Synchronous Solver API (Direct 60-120s Solve)"]
-        B3 --> B4["Persist Staff, Absences & Schedules in Firestore/Local"]
+        B2 --> B3["Asynchronous Solver API (POST 202 + /solver-status)"]
+        B3 --> B4["Persist in Cloud Firestore (Local JSON Fallback)"]
         B4 --> B5["Automated Roll-Over Engine (build_previous_context)"]
     end
 
@@ -210,7 +210,8 @@ To enable active development and validation without risking production downtime 
 
 ### 5.1 Objectives
 - Expose a clean FastAPI REST backend wrapping [`app/scheduler/`](file:///home/e/Desktop/antigravity-projects/scheduling/app/scheduler/).
-- **Synchronous Direct Solver Execution**: Runs OR-Tools CP-SAT directly within the HTTP request lifecycle (~60–120s), comfortably inside Cloud Run's 300s timeout window. This honors the "Flat & Simple" mandate by eliminating asynchronous job queues, task brokers, and polling state machines.
+- **Asynchronous In-Process Solver Execution**: Runs OR-Tools CP-SAT via lightweight background thread returning `202 Accepted` to bypass Firebase Hosting 60s CDN timeout and withstand 10-minute long-solves.
+- **Multi-Planner Cloud Persistence**: Google Cloud Firestore as the single source of truth for multi-user, multi-week collaboration without file collisions, backed by local JSON file fallback for offline test suites.
 - Eliminate all manual file upload/download steps for inter-quarter scheduling.
 - Implement an **Automated Roll-Over Engine** that auto-computes `PreviousPlanContext` directly from database records.
 
@@ -431,6 +432,86 @@ To guarantee 10-minute long-solves run without interruption:
 * **Navigation Freedom**: Planners can close the modal and browse "Mitarbeiter" or "Abwesenheiten" while the solve proceeds in the background. A navbar indicator (`⏳ Berechnung läuft: 03:15`) maintains live context.
 * **Toast & Matrix Auto-Refresh**: When the polling hook detects `"COMPLETED"`, a toast notification alerts the planner and the Dienstplan matrix seamlessly re-renders with the newly created candidate draft.
 
+### 5.6 Multi-Planner Persistence: Cloud Firestore Architecture & Dual-Driver Pattern
+
+To ensure the application serves as the durable Single Source of Truth (SSOT) for multiple clinic planners collaborating over multiple weeks, the persistence architecture implements **Google Cloud Firestore** with a local file fallback.
+
+#### 5.6.1 Motivation & Multi-User Requirements
+1. **Survivability Across Ephemeral Container Lifecycles**: Cloud Run container instances are stateless and scale to zero during idle periods. Storing records solely on the container filesystem means state is wiped upon instance cycling or restarts.
+2. **Multi-Planner Concurrency & Conflict Prevention**: Multiple planners (clinic leadership, head veterinarians, lead TFAs) frequently adjust staff hours, vacation requests, and shift assignments concurrently. Document-level datastore operations prevent silent overwrite collisions (where the last file write overwrites concurrent edits).
+3. **Sub-10ms Indexed Range Queries**: Querying absences across a quarterly boundary (e.g. all leaves overlapping Q2) performs an indexed query on Firestore rather than scanning and parsing dozens of individual JSON files on disk.
+
+#### 5.6.2 Firestore Data Collections Specification
+
+```mermaid
+erDiagram
+    STAFF ||--o{ ABSENCES : "has"
+    SCHEDULES ||--o{ SHIFTS : "contains"
+    SCHEDULES ||--o| SOLVER_JOBS : "tracks"
+
+    STAFF {
+        string id PK "Unique ID / Acronym (e.g. MUE)"
+        string identifier "Clinic Acronym"
+        string name "Display Name"
+        string beruf "VET, TFA, AZUBI, INTERN"
+        string abteilung "STATION, OP, OTHER"
+        float hours "Weekly contract hours"
+        boolean is_active "Active flag"
+        timestamp updated_at "Last modified"
+    }
+
+    ABSENCES {
+        string id PK "UUID / abs-seed-xx"
+        string staff_id FK "Staff Member Reference"
+        string absence_type "Vacation, SickLeave, Training"
+        date start_date "Start of absence"
+        date end_date "End of absence"
+        string note "Optional remark"
+    }
+
+    SCHEDULES {
+        string quarter_key PK "e.g. 2026-Q2"
+        int year "2026"
+        int quarter "2"
+        string state "DRAFT, PUBLISHED, ACTIVE, CLOSED"
+        array assignments "Shift assignment objects"
+        map solver_metrics "Penalty, solve time, candidates"
+        timestamp updated_at "Last modified"
+    }
+
+    SOLVER_JOBS {
+        string quarter_key PK "e.g. 2026-Q2"
+        string job_id "Unique solve job ID"
+        string status "IDLE, RUNNING, COMPLETED, FAILED"
+        timestamp started_at "Solve start timestamp"
+        float elapsed_seconds "Live timer"
+        float best_objective "Best score found"
+        float soft_penalty "Constraint penalty"
+        string error "Error message if failed"
+    }
+```
+
+* **`staff` Collection**: Keyed by `id` (e.g., `MUE`). Stores current master employee contracts, role definitions, and weekend/night preferences.
+* **`absences` Collection**: Keyed by `id`. Stores continuous vacation, sickness, and training intervals with indexed `[start_date, end_date]` fields.
+* **`schedules` Collection**: Keyed by `quarter_key` (e.g., `2026-Q2`). Stores full quarterly documents, shift assignments, and roll-over metadata.
+* **`solver_jobs` Collection**: Keyed by `quarter_key`. Tracks background solver execution status, supporting durable progress polling across multiple user browser tabs and container instances.
+
+#### 5.6.3 The Dual-Driver Architecture (Local Dev + Cloud Production)
+To preserve ultra-fast local testing without requiring cloud credentials or incurring network latency during offline development, the backend follows the **Dual-Driver Repository Pattern**:
+
+```mermaid
+flowchart TD
+    API["FastAPI Endpoints (app/api/v1/)"] --> Protocol["Repository Protocols\n(Staff, Absence, Schedule, Job)"]
+    Protocol --> Router{"STORAGE_BACKEND"}
+    Router -->|file (Default for Local/Tests)| FileRepo["FileJsonRepository\n(Atomic writes to data/db/*.json)"]
+    Router -->|firestore (Cloud Run Production)| FirestoreRepo["FirestoreRepository\n(Google Cloud Firestore europe-west3)"]
+```
+
+* **Configuration**: Controlled by environment variable `STORAGE_BACKEND=firestore` (in Cloud Run) and `STORAGE_BACKEND=file` (local default).
+* **Test Isolation**: All 150+ pytest test suites run against `FileJsonRepository` with isolated temporary directories in ~4 seconds, maintaining zero external dependencies for routine CI/CD.
+* **Zero Cost**: Google Cloud Free Tier provides 50,000 document reads and 20,000 writes per day. With clinic usage typically under 500 operations per day, production database cost is **$0.00 / month**.
+* **GDPR & Regional Compliance**: Hosted in `europe-west3` (Frankfurt) within the same VPC/region as Cloud Run for sub-5ms internal latency and strict German medical data protection compliance.
+
 ---
 
 ## 6. Phase 3: Modern React Single Source of Truth Frontend
@@ -541,3 +622,4 @@ To achieve the single source of truth vision, the following items are now formal
 5. **Excel Role Shift**: Excel is relegated from an operational storage format to a 1-click presentation/export format.
 6. **Resilient Asynchronous Solver Execution**: Replaces fragile synchronous HTTP calls with an in-process background worker (`POST /generate` $\rightarrow$ `202 Accepted`, `GET /solver-status`) and Cloud Run `--no-cpu-throttling`, withstanding 10-minute "Gründlich" solves and bypassing CDN reverse-proxy timeouts.
 7. **Zero-Risk Parallel Cloud Run Deployments**: Development and preview iterations deploy to `dienstplan-dev` with `min-instances=0` ($0 idle cost), guaranteeing zero disruption to the production service (`dienstplan-app`).
+8. **Cloud Firestore Multi-Planner Persistence (Dual-Driver Pattern)**: Replaces ephemeral container storage with Google Cloud Firestore (`europe-west3`) for concurrent, collision-free multi-user planning over weeks, preserving the local `FileJsonRepository` for fast, offline testing.
