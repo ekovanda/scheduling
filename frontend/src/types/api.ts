@@ -1,4 +1,4 @@
-export type Beruf = 'Tierarzt' | 'TFA' | 'Azubi' | 'Intern';
+export type Beruf = 'Vet' | 'Tierarzt' | 'TFA' | 'Azubi' | 'Intern';
 export type Abteilung = 'Station' | 'OP' | 'Sprechstunde' | 'Sonstiges';
 
 export interface StaffMember {

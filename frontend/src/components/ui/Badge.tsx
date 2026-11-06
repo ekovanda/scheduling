@@ -38,8 +38,9 @@ export const Badge: React.FC<BadgeProps> = ({
 
 export const RoleBadge: React.FC<{ role: Beruf }> = ({ role }) => {
   switch (role) {
+    case 'Vet':
     case 'Tierarzt':
-      return <Badge variant="default">Tierarzt</Badge>;
+      return <Badge variant="default">Tierarzt (Vet)</Badge>;
     case 'TFA':
       return <Badge variant="success">TFA</Badge>;
     case 'Azubi':

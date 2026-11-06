@@ -62,7 +62,7 @@ export const MatrixView: React.FC = () => {
   const [solveDepth, setSolveDepth] = useState<'fast' | 'thorough'>('fast');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [blockGapDays, setBlockGapDays] = useState(21);
-  const [rolloverRoleFilter, setRolloverRoleFilter] = useState<'ALL' | 'Tierarzt' | 'TFA' | 'Intern'>('ALL');
+  const [rolloverRoleFilter, setRolloverRoleFilter] = useState<'ALL' | 'Vet' | 'TFA' | 'Intern'>('ALL');
 
   // Swap modal state
   const [swapModalOpen, setSwapModalOpen] = useState(false);
@@ -141,7 +141,7 @@ export const MatrixView: React.FC = () => {
   const getStaffDisplayName = (id: string, isVet = false) => {
     const s = getStaff(id);
     if (!s) return id.toUpperCase();
-    const prefix = isVet && s.beruf === 'Tierarzt' ? '🩺 ' : '';
+    const prefix = isVet && (s.beruf === 'Vet' || s.beruf === 'Tierarzt') ? '🩺 ' : '';
     if (showFullNames) {
       return `${prefix}${s.name}`;
     }
@@ -660,7 +660,7 @@ export const MatrixView: React.FC = () => {
 
                   {/* Role Filter Tabs */}
                   <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100/70 p-0.5 text-xs font-medium">
-                    {(['ALL', 'Tierarzt', 'TFA', 'Intern'] as const).map((r) => (
+                    {(['ALL', 'Vet', 'TFA', 'Intern'] as const).map((r) => (
                       <button
                         key={r}
                         onClick={() => setRolloverRoleFilter(r)}
@@ -671,7 +671,7 @@ export const MatrixView: React.FC = () => {
                             : 'text-stone-600 hover:text-stone-900'
                         )}
                       >
-                        {r === 'ALL' ? 'Alle Rollen' : r}
+                        {r === 'ALL' ? 'Alle Rollen' : r === 'Vet' ? 'Tierärzte (Vet)' : r}
                       </button>
                     ))}
                   </div>
@@ -699,7 +699,9 @@ export const MatrixView: React.FC = () => {
                       ) : (
                         rollover.carry_forward
                           .filter((cf) =>
-                            rolloverRoleFilter === 'ALL' ? true : cf.beruf === rolloverRoleFilter
+                            rolloverRoleFilter === 'ALL'
+                              ? true
+                              : cf.beruf === rolloverRoleFilter || (rolloverRoleFilter === 'Vet' && cf.beruf === 'Tierarzt')
                           )
                           .map((cf) => {
                             const delta = cf.carry_forward_delta;

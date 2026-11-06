@@ -4,10 +4,7 @@ import {
   Search,
   Plus,
   Moon,
-  Clock,
   ShieldCheck,
-  CheckCircle2,
-  AlertCircle,
   Edit2,
   Stethoscope,
 } from 'lucide-react';
@@ -53,13 +50,18 @@ export const StaffView: React.FC = () => {
     const matchesSearch =
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.identifier.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesRole = selectedRole === 'ALL' || s.beruf === selectedRole;
+    const matchesRole =
+      selectedRole === 'ALL' ||
+      s.beruf === selectedRole ||
+      (selectedRole === 'Vet' && s.beruf === 'Tierarzt');
     return matchesSearch && matchesRole;
   });
 
   // Metric counts
   const totalActive = staffList.filter((s) => s.is_active).length;
-  const totalVets = staffList.filter((s) => s.is_active && s.beruf === 'Tierarzt').length;
+  const totalVets = staffList.filter(
+    (s) => s.is_active && (s.beruf === 'Vet' || s.beruf === 'Tierarzt')
+  ).length;
   const totalTFAs = staffList.filter(
     (s) => s.is_active && (s.beruf === 'TFA' || s.beruf === 'Azubi')
   ).length;
@@ -112,7 +114,7 @@ export const StaffView: React.FC = () => {
         name: formData.name,
         beruf: formData.beruf,
         abteilung: formData.abteilung,
-        hours: formData.beruf === 'Tierarzt' ? 0 : Number(formData.hours),
+        hours: (formData.beruf === 'Vet' || formData.beruf === 'Tierarzt') ? 0 : Number(formData.hours),
         adult: true,
         reception: false,
         nd_possible: formData.nd_possible,
@@ -206,7 +208,7 @@ export const StaffView: React.FC = () => {
 
         {/* Role Filter Tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-          {(['ALL', 'Tierarzt', 'TFA', 'Azubi', 'Intern'] as const).map((role) => (
+          {(['ALL', 'Vet', 'TFA', 'Azubi', 'Intern'] as const).map((role) => (
             <button
               key={role}
               onClick={() => setSelectedRole(role)}
@@ -216,7 +218,7 @@ export const StaffView: React.FC = () => {
                   : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
               }`}
             >
-              {role === 'ALL' ? 'Alle Rollen' : role}
+              {role === 'ALL' ? 'Alle Rollen' : role === 'Vet' ? 'Tierärzte (Vet)' : role}
             </button>
           ))}
         </div>
@@ -234,20 +236,19 @@ export const StaffView: React.FC = () => {
                 <th className="px-3 py-3.5">Abteilung</th>
                 <th className="px-3 py-3.5">Wochenstunden</th>
                 <th className="px-3 py-3.5">Nachtdienst</th>
-                <th className="px-3 py-3.5">Status</th>
                 <th className="py-3.5 pl-3 pr-6 text-right">Aktion</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-stone-500">
+                  <td colSpan={7} className="py-8 text-center text-stone-500">
                     Lade Mitarbeiterdaten...
                   </td>
                 </tr>
               ) : filteredStaff.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-stone-500">
+                  <td colSpan={7} className="py-8 text-center text-stone-500">
                     Keine Mitarbeiter gefunden.
                   </td>
                 </tr>
@@ -287,15 +288,8 @@ export const StaffView: React.FC = () => {
                     </td>
 
                     {/* Hours */}
-                    <td className="px-3 py-3.5 text-stone-700 text-xs">
-                      {staff.beruf === 'Tierarzt' ? (
-                        <span className="text-stone-400 italic">Vollzeit (Vet)</span>
-                      ) : (
-                        <div className="flex items-center gap-1.5 font-medium">
-                          <Clock className="h-3.5 w-3.5 text-stone-400" />
-                          <span>{staff.hours}h / Woche</span>
-                        </div>
-                      )}
+                    <td className="px-3 py-3.5 text-stone-700 text-xs font-semibold">
+                      {staff.beruf === 'Vet' || staff.beruf === 'Tierarzt' ? '-' : staff.hours}
                     </td>
 
                     {/* Night Shift Qualification */}
@@ -306,21 +300,6 @@ export const StaffView: React.FC = () => {
                         <Badge variant="success">Alleine tauglich</Badge>
                       ) : (
                         <Badge variant="warning">Nur Begleitung</Badge>
-                      )}
-                    </td>
-
-                    {/* Active Status */}
-                    <td className="px-3 py-3.5">
-                      {staff.is_active ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                          Aktiv
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-xs text-stone-400">
-                          <AlertCircle className="h-3.5 w-3.5" />
-                          Inaktiv
-                        </span>
                       )}
                     </td>
 
@@ -391,7 +370,7 @@ export const StaffView: React.FC = () => {
                 }
                 className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
               >
-                <option value="Tierarzt">Tierarzt</option>
+                <option value="Vet">Tierarzt (Vet)</option>
                 <option value="TFA">TFA</option>
                 <option value="Azubi">Azubi</option>
                 <option value="Intern">Intern</option>
@@ -423,10 +402,10 @@ export const StaffView: React.FC = () => {
               </label>
               <input
                 type="number"
-                disabled={formData.beruf === 'Tierarzt'}
+                disabled={formData.beruf === 'Vet' || formData.beruf === 'Tierarzt'}
                 min={0}
                 max={60}
-                value={formData.beruf === 'Tierarzt' ? 0 : formData.hours}
+                value={formData.beruf === 'Vet' || formData.beruf === 'Tierarzt' ? 0 : formData.hours}
                 onChange={(e) =>
                   setFormData({ ...formData, hours: Number(e.target.value) })
                 }
