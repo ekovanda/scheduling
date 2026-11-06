@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import AbsenceRecord
-from app.persistence.repository import FileJsonRepository
+from app.persistence.repository import RepositoryProtocol
 
 router = APIRouter(prefix="/absences", tags=["Absences"])
 
-RepoDep = Annotated[FileJsonRepository, Depends(get_repository)]
+RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 StaffIdQuery = Annotated[
     str | None, Query(description="Filter absences for a specific staff member")
 ]

@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import StaffMember
-from app.persistence.repository import FileJsonRepository
+from app.persistence.repository import RepositoryProtocol
 
 router = APIRouter(prefix="/staff", tags=["Staff"])
 
-RepoDep = Annotated[FileJsonRepository, Depends(get_repository)]
+RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 
 
 @router.get("", response_model=list[StaffMember])

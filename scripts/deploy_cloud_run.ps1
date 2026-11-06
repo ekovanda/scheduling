@@ -32,7 +32,8 @@ Write-Host " Service:     $ServiceName"
 Write-Host " Image:       $ImageName"
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-$EnvVars = @("APP_TARGET=$AppTarget")
+$StorageBackend = if ($env:STORAGE_BACKEND) { $env:STORAGE_BACKEND } else { "firestore" }
+$EnvVars = @("APP_TARGET=$AppTarget", "STORAGE_BACKEND=$StorageBackend")
 if ($AppPassword -ne "") {
     $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('SHA256')
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($AppPassword)
@@ -52,9 +53,10 @@ $DeployArgs = @(
     "--region", $Region,
     "--project", $ProjectId,
     "--cpu", "2",
-    "--memory", "2Gi",
-    "--timeout", "300s",
-    "--concurrency", "10",
+    "--memory", "4Gi",
+    "--no-cpu-throttling",
+    "--timeout", "900s",
+    "--concurrency", "2",
     "--session-affinity",
     "--min-instances", "0",
     "--max-instances", "3",

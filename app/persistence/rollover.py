@@ -8,7 +8,7 @@ sick cover), and feeding build_previous_context(...) directly.
 from datetime import date
 
 from app.persistence.models import ScheduleState
-from app.persistence.repository import FileJsonRepository
+from app.persistence.repository import RepositoryProtocol
 from app.scheduler.models import (
     Assignment,
     PreviousPlanContext,
@@ -46,7 +46,7 @@ def get_quarter_date_range(year: int, quarter: int) -> tuple[date, date]:
 def get_previous_quarter_context(
     target_year: int,
     target_quarter: int,
-    repo: FileJsonRepository,
+    repo: RepositoryProtocol,
     trailing_days: int = 21,
 ) -> PreviousPlanContext | None:
     """Auto-compute PreviousPlanContext from the preceding quarter document in the database.

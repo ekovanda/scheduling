@@ -59,7 +59,8 @@ echo " Image:       ${IMAGE_NAME}"
 echo "=========================================================="
 
 # 2. Environment Variables Configuration
-ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}")
+STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
+ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}" "STORAGE_BACKEND=${STORAGE_BACKEND}")
 
 if [ -n "${APP_PASSWORD:-}" ]; then
     echo "Hashing provided APP_PASSWORD..."
@@ -86,9 +87,10 @@ gcloud run deploy "${SERVICE_NAME}" \
     --region="${REGION}" \
     --project="${PROJECT_ID}" \
     --cpu=2 \
-    --memory=2Gi \
-    --timeout=300s \
-    --concurrency=10 \
+    --memory=4Gi \
+    --no-cpu-throttling \
+    --timeout=900s \
+    --concurrency=2 \
     --session-affinity \
     --min-instances=0 \
     --max-instances=3 \

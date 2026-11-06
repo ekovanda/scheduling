@@ -5,7 +5,7 @@ import os
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
@@ -16,59 +16,63 @@ from app.persistence.models import (
 )
 
 
+@runtime_checkable
 class StaffRepositoryProtocol(Protocol):
     """Protocol for master staff member persistence."""
 
-    def get(self, staff_id: str) -> StaffMember | None:
+    def get_staff(self, staff_id: str) -> StaffMember | None:
         """Retrieve staff member by ID."""
 
-    def list(self, active_only: bool = True) -> list[StaffMember]:
+    def list_staff(self, active_only: bool = True) -> list[StaffMember]:
         """List staff members, optionally filtering by active status."""
 
-    def save(self, member: StaffMember) -> None:
+    def save_staff(self, member: StaffMember) -> None:
         """Persist or update staff member."""
 
-    def delete(self, staff_id: str) -> None:
+    def delete_staff(self, staff_id: str) -> None:
         """Delete staff member by ID."""
 
 
+@runtime_checkable
 class AbsenceRepositoryProtocol(Protocol):
     """Protocol for continuous absence ledger persistence."""
 
-    def get(self, absence_id: str) -> AbsenceRecord | None:
+    def get_absence(self, absence_id: str) -> AbsenceRecord | None:
         """Retrieve absence record by ID."""
 
-    def list_by_staff(self, staff_id: str) -> list[AbsenceRecord]:
+    def list_absences_by_staff(self, staff_id: str) -> list[AbsenceRecord]:
         """List absences for a specific staff member."""
 
-    def list_for_range(
+    def list_absences_for_range(
         self, start: date, end: date, staff_id: str | None = None
     ) -> list[AbsenceRecord]:
         """List absences overlapping a specific date range."""
 
-    def save(self, absence: AbsenceRecord) -> None:
+    def save_absence(self, absence: AbsenceRecord) -> None:
         """Persist or update absence record."""
 
-    def delete(self, absence_id: str) -> None:
+    def delete_absence(self, absence_id: str) -> None:
         """Delete absence record by ID."""
 
 
+@runtime_checkable
 class ScheduleRepositoryProtocol(Protocol):
     """Protocol for quarterly schedule document persistence."""
 
-    def get(self, quarter_key: str) -> QuarterScheduleDocument | None:
+    def get_schedule(self, quarter_key: str) -> QuarterScheduleDocument | None:
         """Retrieve quarter schedule document by key (e.g. '2026-Q2')."""
 
-    def list(self) -> list[QuarterScheduleDocument]:
+    def list_schedules(self) -> list[QuarterScheduleDocument]:
         """List all saved quarter schedule documents."""
 
-    def save(self, document: QuarterScheduleDocument) -> None:
+    def save_schedule(self, document: QuarterScheduleDocument) -> None:
         """Persist or update quarter schedule document."""
 
-    def delete(self, quarter_key: str) -> None:
+    def delete_schedule(self, quarter_key: str) -> None:
         """Delete quarter schedule document by key."""
 
 
+@runtime_checkable
 class SolverJobRepositoryProtocol(Protocol):
     """Protocol for background solver job status persistence."""
 
@@ -80,6 +84,17 @@ class SolverJobRepositoryProtocol(Protocol):
 
     def delete_solver_job(self, quarter_key: str) -> None:
         """Delete solver job record by quarter key."""
+
+
+@runtime_checkable
+class RepositoryProtocol(
+    StaffRepositoryProtocol,
+    AbsenceRepositoryProtocol,
+    ScheduleRepositoryProtocol,
+    SolverJobRepositoryProtocol,
+    Protocol,
+):
+    """Unified repository protocol matching FileJsonRepository and FirestoreRepository."""
 
 
 def _json_serial(obj: Any) -> Any:

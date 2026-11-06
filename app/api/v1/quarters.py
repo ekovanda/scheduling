@@ -20,7 +20,7 @@ from app.persistence.models import (
     SolverJobRecord,
     SolverJobStatus,
 )
-from app.persistence.repository import FileJsonRepository
+from app.persistence.repository import RepositoryProtocol
 from app.persistence.rollover import (
     get_previous_quarter_context,
     get_quarter_date_range,
@@ -38,7 +38,7 @@ from app.scheduler.validator import validate_schedule
 
 router = APIRouter(prefix="/quarters", tags=["Quarters"])
 
-RepoDep = Annotated[FileJsonRepository, Depends(get_repository)]
+RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 
 
 class GenerateScheduleRequest(BaseModel):
@@ -209,7 +209,7 @@ def _execute_solver_worker(
     max_solve_time_seconds: int,
     random_seed: int | None,
     include_previous_context: bool,
-    repo: FileJsonRepository,
+    repo: RepositoryProtocol,
     cancellation_event: threading.Event,
     active_job: ActiveJobState,
 ) -> None:
