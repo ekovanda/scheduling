@@ -10,6 +10,7 @@ from app.persistence.firestore_repository import FirestoreRepository
 from app.persistence.models import (
     AbsenceRecord,
     AbsenceType,
+    PreAssignedShiftRecord,
     QuarterScheduleDocument,
     ScheduleState,
     ShiftAssignmentRecord,
@@ -40,6 +41,7 @@ def _build_mock_firestore_client() -> tuple[FirestoreRepository, dict[str, dict[
         "absences": {},
         "schedules": {},
         "solver_jobs": {},
+        "preassigned": {},
     }
 
     mock_client = MagicMock()
@@ -205,3 +207,34 @@ def test_firestore_solver_job_lifecycle() -> None:
 
     repo.delete_solver_job("2026-Q2")
     assert repo.get_solver_job("2026-Q2") is None
+
+
+def test_firestore_preassigned_crud_lifecycle() -> None:
+    """Test Firestore repository pre-assigned shift CRUD operations."""
+    repo, store = _build_mock_firestore_client()
+    assert isinstance(repo, RepositoryProtocol)
+
+    record = PreAssignedShiftRecord(
+        id="pa-easter-1",
+        staff_id="ks",
+        staff_identifier="KS",
+        shift_date=date(2027, 3, 25),
+        shift_type="N_Do-Fr",
+        is_holiday=True,
+    )
+    repo.save_preassigned(record)
+
+    loaded = repo.get_preassigned("pa-easter-1")
+    assert loaded is not None
+    assert loaded.staff_identifier == "KS"
+    assert loaded.shift_date == date(2027, 3, 25)
+
+    all_pa = repo.list_preassigned()
+    assert len(all_pa) == 1
+    assert all_pa[0].id == "pa-easter-1"
+
+    repo.delete_preassigned("pa-easter-1")
+    assert repo.get_preassigned("pa-easter-1") is None
+    assert len(repo.list_preassigned()) == 0
+
+

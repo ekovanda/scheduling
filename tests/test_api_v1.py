@@ -327,3 +327,38 @@ def test_quarters_async_solver_and_cancellation(
     assert final_status.status_code == 200
     assert final_status.json()["status"] in ("CANCELLED", "FAILED")
 
+
+def test_preassigned_api_crud_lifecycle(client: TestClient) -> None:
+    """Ensure full CRUD operations for pre-assigned shifts through REST API."""
+    payload = {
+        "id": "pa-test-1",
+        "staff_id": "ks",
+        "staff_identifier": "KS",
+        "shift_date": "2027-03-25",
+        "shift_type": "N_Do-Fr",
+        "is_holiday": True,
+        "note": "Gründonnerstag Vorgabe",
+    }
+
+    # 1. Create preassigned shift
+    create_resp = client.post("/api/v1/preassigned", json=payload)
+    assert create_resp.status_code == 201
+    assert create_resp.json()["id"] == "pa-test-1"
+
+    # 2. List preassigned shifts
+    list_resp = client.get("/api/v1/preassigned")
+    assert list_resp.status_code == 200
+    items = list_resp.json()
+    assert len(items) == 1
+    assert items[0]["id"] == "pa-test-1"
+
+    # 3. Delete preassigned shift
+    del_resp = client.delete("/api/v1/preassigned/pa-test-1")
+    assert del_resp.status_code == 204
+
+    # 4. Verify empty list
+    empty_resp = client.get("/api/v1/preassigned")
+    assert empty_resp.status_code == 200
+    assert len(empty_resp.json()) == 0
+
+

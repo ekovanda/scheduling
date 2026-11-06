@@ -179,3 +179,17 @@ class SolverJobRecord(BaseModel):
     soft_penalty: float | None = None
     error: str | None = None
 
+
+class PreAssignedShiftRecord(BaseModel):
+    """Pre-assigned (holiday or locked) shift record in persistent datastore."""
+
+    id: str
+    staff_id: str
+    staff_identifier: str
+    shift_date: date
+    shift_type: str
+    is_holiday: bool = True
+    note: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+

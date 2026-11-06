@@ -9,6 +9,7 @@ from google.cloud import firestore
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     AbsenceRecord,
+    PreAssignedShiftRecord,
     QuarterScheduleDocument,
     SolverJobRecord,
     StaffMember,
@@ -33,12 +34,31 @@ class FirestoreRepository:
             self.client = client
         else:
             proj = project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-            self.client = firestore.Client(project=proj, database=database)
+            try:
+                self.client = firestore.Client(project=proj, database=database)
+            except Exception:  # pylint: disable=broad-except
+                # Developer fallback: check for gcloud auth token if running locally outside Cloud Run
+                import shutil
+                import subprocess
+                from pathlib import Path
+
+                from google.oauth2.credentials import Credentials  # type: ignore[import-untyped]
+
+                gcloud_bin = shutil.which("gcloud") or str(Path.home() / "google-cloud-sdk/bin/gcloud")
+                try:
+                    token = subprocess.check_output(
+                        [gcloud_bin, "auth", "print-access-token"], text=True
+                    ).strip()
+                    creds = Credentials(token)
+                    self.client = firestore.Client(project=proj, database=database, credentials=creds)
+                except Exception:
+                    raise
 
         self.staff_col = self.client.collection("staff")
         self.absence_col = self.client.collection("absences")
         self.schedule_col = self.client.collection("schedules")
         self.job_col = self.client.collection("solver_jobs")
+        self.preassigned_col = self.client.collection("preassigned")
 
     # -------------------------------------------------------------------------
     # Staff Member CRUD
@@ -147,3 +167,31 @@ class FirestoreRepository:
         if not doc_ref.get().exists:
             raise EntityNotFoundError(f"Solver job for '{quarter_key}' does not exist.")
         doc_ref.delete()
+
+    # -------------------------------------------------------------------------
+    # Pre-Assigned Shifts CRUD
+    # -------------------------------------------------------------------------
+
+    def get_preassigned(self, preassigned_id: str) -> PreAssignedShiftRecord | None:
+        doc = self.preassigned_col.document(preassigned_id).get()
+        if not doc.exists:
+            return None
+        return PreAssignedShiftRecord.model_validate(doc.to_dict())
+
+    def list_preassigned(self) -> list[PreAssignedShiftRecord]:
+        docs = self.preassigned_col.stream()
+        records = [PreAssignedShiftRecord.model_validate(d.to_dict()) for d in docs]
+        return sorted(records, key=lambda r: (r.shift_date, r.shift_type))
+
+    def save_preassigned(self, record: PreAssignedShiftRecord) -> None:
+        self.preassigned_col.document(record.id).set(record.model_dump(mode="json"))
+
+    def delete_preassigned(self, preassigned_id: str) -> None:
+        doc_ref = self.preassigned_col.document(preassigned_id)
+        if not doc_ref.get().exists:
+            raise EntityNotFoundError(
+                f"Pre-assigned shift '{preassigned_id}' does not exist."
+            )
+        doc_ref.delete()
+
+

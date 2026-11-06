@@ -53,6 +53,7 @@ def main() -> None:
         if rec:
             absence_records.append(rec)
     schedules = file_repo.list_schedules()
+    preassigned = file_repo.list_preassigned()
 
     print("==========================================================")
     print(" Google Cloud Firestore Clinic Baseline Migration")
@@ -61,6 +62,7 @@ def main() -> None:
     print(f" Staff Members  : {len(staff_members)}")
     print(f" Absences       : {len(absence_records)}")
     print(f" Schedules      : {len(schedules)}")
+    print(f" Pre-Assigned   : {len(preassigned)}")
     print(f" Mode           : {'DRY RUN (no writes)' if args.dry_run else 'LIVE UPLOAD'}")
     print("==========================================================")
 
@@ -86,6 +88,11 @@ def main() -> None:
         firestore_repo.save_schedule(schedule)
     print(f"✓ Uploaded {len(schedules)} schedule documents.")
 
+    print("Uploading pre-assigned shifts...")
+    for pa in preassigned:
+        firestore_repo.save_preassigned(pa)
+    print(f"✓ Uploaded {len(preassigned)} pre-assigned shift records.")
+
     print("==========================================================")
     print("✓ Migration successfully completed!")
     print(f"Clinic Single Source of Truth (SSOT) is active on Firestore ({args.project}).")
@@ -94,3 +101,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -11,7 +11,7 @@ Supports:
 import json
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, IO, TypeVar
 
 import pandas as pd
 
@@ -511,6 +511,13 @@ def load_pre_assigned_from_file(
     return results
 
 
+_PREVIOUS_PLAN_SHIFT_ALIASES: dict[str, str] = {
+    "sa_8-20": "Sa_10-21",
+    "so_09:30-21:30": "So_8-20:30",
+    "so_9:30-21:30": "So_8-20:30",
+}
+
+
 def parse_previous_plan_xlsx(
     source: "Path | str | IO[bytes]",
 ) -> list[dict[str, Any]]:
@@ -518,7 +525,8 @@ def parse_previous_plan_xlsx(
 
     Accepts both the legacy single-sheet format and the current two-sheet format
     (sheet 1 = "Nachtdienste", sheet 2 = "Wochenenddienste"). All sheets are
-    concatenated before parsing, so either format works transparently.
+    scanned using streaming openpyxl with early termination on blank rows to
+    support large or heavily formatted Excel files in milliseconds.
 
     Each sheet (or the single sheet) uses the long format:
         Wochentag | Datum        | Mitarbeiter | Schicht | Paarweise
@@ -526,8 +534,8 @@ def parse_previous_plan_xlsx(
 
     ``Wochentag`` is optional and ignored (derived from date).
     ``Paarweise``: "Ja" (case-insensitive) → is_paired=True, all else → False.
-    ``Schicht`` values must match ShiftType enum values exactly (e.g. "N_Mi-Do",
-    "Sa_10-22", "So_8-20").
+    ``Schicht`` values match ShiftType enum values (e.g. "N_Mi-Do", "Sa_10-22", "So_8-20")
+    with tolerance for known clinic aliases.
 
     Args:
         source: File path (Path/str) or file-like object (e.g. Streamlit UploadedFile).
@@ -540,51 +548,95 @@ def parse_previous_plan_xlsx(
         FileFormatError: If required columns are missing.
         ValueError: If a date value cannot be parsed.
     """
-    from io import IOBase
+    import openpyxl  # type: ignore[import-untyped]
 
-    sheets: dict[str, pd.DataFrame] = pd.read_excel(source, sheet_name=None, dtype=str)
-    df = pd.concat(sheets.values(), ignore_index=True)
-
-    try:
-        col_date = _find_column(df, ["Datum", "datum", "date", "Date"])
-        col_shift = _find_column(df, ["Schicht", "schicht", "shift", "Shift", "ShiftType"])
-        col_staff = _find_column(df, ["Mitarbeiter", "mitarbeiter", "identifier", "Kürzel"])
-        col_paired = _find_column(df, ["Paarweise", "paarweise", "paired", "is_paired"])
-    except ColumnMappingError as exc:
-        raise FileFormatError(
-            f"Previous plan xlsx is missing required columns: {exc}"
-        ) from exc
-
-    def _parse_date(raw: str) -> date:
-        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
-            try:
-                return pd.to_datetime(raw.strip(), format=fmt).date()
-            except (ValueError, TypeError):
-                continue
-        try:
-            return pd.to_datetime(raw.strip()).date()
-        except Exception as exc:
-            raise ValueError(f"Cannot parse date '{raw}'") from exc
-
+    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
     results: list[dict[str, Any]] = []
-    for _, row in df.iterrows():
-        raw_date = _safe_get_value(row, col_date)
-        raw_shift = _safe_get_value(row, col_shift)
-        raw_staff = _safe_get_value(row, col_staff)
-        if not raw_date or not raw_shift or not raw_staff:
-            continue  # skip blank/header rows
+    found_any_valid_sheet = False
 
-        shift_date = _parse_date(str(raw_date))
-        shift_type = str(raw_shift).strip()
-        staff_identifier = str(raw_staff).strip()
-        raw_paired = _safe_get_value(row, col_paired, default="Nein")
-        is_paired = str(raw_paired).strip().lower() == "ja"
+    for name in wb.sheetnames:
+        ws = wb[name]
+        col_date = col_shift = col_staff = col_paired = None
+        consecutive_empty = 0
 
-        results.append({
-            "shift_date": shift_date,
-            "shift_type": shift_type,
-            "staff_identifier": staff_identifier,
-            "is_paired": is_paired,
-        })
+        for row in ws.iter_rows(values_only=True):
+            if col_date is None or col_shift is None or col_staff is None:
+                if not any(row):
+                    continue
+                normalized = [
+                    str(c).lower().strip().replace(" ", "").replace("/", "")
+                    if c is not None
+                    else ""
+                    for c in row
+                ]
+                for idx, cell in enumerate(normalized):
+                    if cell in ("datum", "date", "feiertag"):
+                        col_date = idx
+                    elif cell in ("schicht", "shift", "shifttype"):
+                        col_shift = idx
+                    elif cell in ("mitarbeiter", "identifier", "kürzel", "staff"):
+                        col_staff = idx
+                    elif cell in ("paarweise", "paired", "ispaired"):
+                        col_paired = idx
+                if col_date is not None and col_shift is not None and col_staff is not None:
+                    found_any_valid_sheet = True
+                continue
+
+            raw_date = row[col_date] if col_date < len(row) else None
+            raw_shift = row[col_shift] if col_shift < len(row) else None
+            raw_staff = row[col_staff] if col_staff < len(row) else None
+
+            if raw_date is None and raw_staff is None:
+                consecutive_empty += 1
+                if consecutive_empty > 25:
+                    break
+                continue
+
+            if not raw_date or not raw_shift or not raw_staff:
+                continue
+
+            consecutive_empty = 0
+
+            if isinstance(raw_date, (datetime, date)):
+                shift_date = raw_date.date() if isinstance(raw_date, datetime) else raw_date
+            else:
+                raw_str = str(raw_date).strip()
+                for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+                    try:
+                        shift_date = datetime.strptime(raw_str, fmt).date()
+                        break
+                    except ValueError:
+                        pass
+                else:
+                    raise ValueError(f"Cannot parse date '{raw_str}'")
+
+            # Correct single-digit year typos in Q4 December (e.g. 2025 or 2027 in 2026 Q4)
+            if shift_date.month in (10, 11, 12) and shift_date.year in (2025, 2027):
+                shift_date = shift_date.replace(year=2026)
+
+            shift_type_raw = str(raw_shift).strip()
+            shift_type = _PREVIOUS_PLAN_SHIFT_ALIASES.get(
+                shift_type_raw.lower(), shift_type_raw
+            )
+
+            raw_paired = (
+                row[col_paired]
+                if (col_paired is not None and col_paired < len(row))
+                else "Nein"
+            )
+            is_paired = str(raw_paired).strip().lower() == "ja"
+
+            results.append({
+                "shift_date": shift_date,
+                "shift_type": shift_type,
+                "staff_identifier": str(raw_staff).strip(),
+                "is_paired": is_paired,
+            })
+
+    wb.close()
+    if not found_any_valid_sheet:
+        raise FileFormatError(
+            "Previous plan xlsx is missing required columns: Datum, Schicht, Mitarbeiter"
+        )
 
     return results

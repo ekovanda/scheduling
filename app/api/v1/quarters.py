@@ -27,6 +27,7 @@ from app.persistence.rollover import (
 )
 from app.scheduler.models import (
     Assignment,
+    PreAssignedShift,
     Schedule,
     Shift,
     ShiftType,
@@ -249,10 +250,41 @@ def _execute_solver_worker(
         if include_previous_context:
             context = get_previous_quarter_context(year, quarter, repo)
 
+        raw_preassigned = repo.list_preassigned()
+        pa_shifts: list[PreAssignedShift] = []
+        for r in raw_preassigned:
+            if q_start <= r.shift_date <= q_end:
+                st = None
+                try:
+                    st = ShiftType(r.shift_type)
+                except ValueError:
+                    if "nacht" in r.shift_type.lower():
+                        from app.scheduler.file_loader import _WEEKDAY_TO_NIGHT
+                        st = ShiftType(_WEEKDAY_TO_NIGHT[r.shift_date.weekday()])
+                if st is not None:
+                    is_paired = False
+                    if st.value.startswith("N_"):
+                        same_date_nights = [
+                            x
+                            for x in raw_preassigned
+                            if x.shift_date == r.shift_date
+                            and (x.shift_type == st.value or "nacht" in x.shift_type.lower())
+                        ]
+                        is_paired = len(same_date_nights) > 1
+                    pa_shifts.append(
+                        PreAssignedShift(
+                            shift_date=r.shift_date,
+                            shift_type=st,
+                            staff_identifier=r.staff_identifier,
+                            is_paired=is_paired,
+                        )
+                    )
+
         result = generate_schedule(
             staff_list=staff_list,
             quarter_start=q_start,
             vacations=vacations,
+            pre_assigned=pa_shifts if pa_shifts else None,
             max_solve_time_seconds=max_solve_time_seconds,
             random_seed=random_seed,
             previous_context=context,

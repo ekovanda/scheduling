@@ -60,7 +60,7 @@ echo "=========================================================="
 
 # 2. Environment Variables Configuration
 STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
-ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}" "STORAGE_BACKEND=${STORAGE_BACKEND}")
+ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}" "STORAGE_BACKEND=${STORAGE_BACKEND}" "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" "GCP_PROJECT=${PROJECT_ID}")
 
 if [ -n "${APP_PASSWORD:-}" ]; then
     echo "Hashing provided APP_PASSWORD..."

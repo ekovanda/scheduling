@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, IO
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -677,12 +677,17 @@ def validate_pre_assigned(
     vacations: list[Vacation] | None = None,
 ) -> list[str]:
     """Check pre-assigned shifts for conflicts. Returns list of warning messages."""
+    from collections import defaultdict
+
     warnings: list[str] = []
     staff_by_id = {s.identifier: s for s in staff_list}
     vacation_dates: dict[str, set[date]] = {}
     if vacations:
         for v in vacations:
             vacation_dates.setdefault(v.identifier, set()).update(v.get_dates())
+
+    shifts_by_staff_date: dict[tuple[str, date], list[ShiftType]] = defaultdict(list)
+    night_dates_by_staff: dict[str, list[date]] = defaultdict(list)
 
     for pa in pre_assigned:
         if pa.staff_identifier not in staff_by_id:
@@ -699,6 +704,42 @@ def validate_pre_assigned(
                 f"{pa.shift_date:%d.%m.%Y} im Urlaub, aber für "
                 f"{pa.shift_type.value} eingeteilt."
             )
+        shifts_by_staff_date[(pa.staff_identifier, pa.shift_date)].append(pa.shift_type)
+        if pa.shift_type.value.startswith("N_"):
+            night_dates_by_staff[pa.staff_identifier].append(pa.shift_date)
+
+    # Check same-person same-day double bookings
+    for (sid, d), st_list in shifts_by_staff_date.items():
+        if len(st_list) > 1:
+            name = staff_by_id[sid].name if sid in staff_by_id else sid
+            shift_names = ", ".join(st.value for st in st_list)
+            warnings.append(
+                f"Doppelbelegung: {name} ({sid}) ist am {d:%d.%m.%Y} für mehrere "
+                f"Schichten eingeteilt ({shift_names})."
+            )
+
+    # Check consecutive night shifts vs nd_max_consecutive
+    for sid, n_dates in night_dates_by_staff.items():
+        staff = staff_by_id.get(sid)
+        if not staff or staff.nd_max_consecutive is None:
+            continue
+        sorted_dates = sorted(set(n_dates))
+        current_streak = 0
+        prev_d: date | None = None
+        for d in sorted_dates:
+            if prev_d is not None and (d - prev_d).days == 1:
+                current_streak += 1
+            else:
+                current_streak = 1
+            prev_d = d
+            if current_streak > staff.nd_max_consecutive:
+                warnings.append(
+                    f"Blocklänge überschritten: {staff.name} ({sid}) ist für "
+                    f"{current_streak} aufeinanderfolgende Nächte eingeteilt "
+                    f"(Maximum: {staff.nd_max_consecutive})."
+                )
+                break
+
     return warnings
 
 

@@ -9,6 +9,25 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.6.0] - 2026-11-06
+
+### Added: Web-Plattform (FastAPI + React), Firestore SSOT, 2027-Q1 Baseline & Feiertagsdienste
+
+- **GCP Cloud Run & Firestore SSOT Architektur:**
+  - Modernisierte Full-Stack-Architektur auf GCP Cloud Run mit FastAPI-Backend (`app/api/`) und React/TypeScript SPA (`frontend/`).
+  - Single Source of Truth Persistenz (`app/persistence/`): Duale Repository-Implementierung mit Firestore (`FirestoreRepository`) für Cloud-Betrieb und dateibasiertem JSON-Fallback (`FileJsonRepository`) für lokale Entwicklung.
+  - Multi-Stage Dockerfile mit distroless/unprivileged `appuser` (UID 10001), `uv sync --frozen` Dependency-Locking und integriertem Healthcheck.
+- **2027-Q1 Baseline-Datenübernahme:**
+  - Ingestion von 46 aktiven Mitarbeitenden aus `data/2027-Q1/MA_excel.xlsx` mit automatischer Deaktivierung ausgeschiedener Mitarbeitender (`AN`, `JH`, `NoK`).
+  - Ingestion von 139 Abwesenheiten aus `data/2027-Q1/Urlaube_excel.xlsx`.
+  - Ingestion von 201 realisierten Diensten aus `data/2027-Q1/Q4_Arbeitseinsätze1.xlsx` in den Vorquartalsplan `2026-Q4` (Status `CLOSED`), wodurch automatischer Carry-Forward-Fairnessausgleich und 21-Tage-Ruhezeitgrenzen für Q1 2027 nahtlos greifen.
+- **Vorgegebene Feiertagsdienste & Konfliktvalidierung:**
+  - Neue API-Routen unter `/api/v1/preassigned` und `PreAssignedShiftRecord` Modell zur Verwaltung vorgegebener Feiertagsdienste (Ostern 2027).
+  - Erweiterung von `validate_pre_assigned()` zur automatischen Erkennung von Doppelbuchungen am selben Kalendertag sowie Überschreitungen der maximalen Nachtdienst-Folgetage (`nd_max_consecutive`).
+- **Resilienter Excel-Streaming-Parser (`file_loader.py`):**
+  - Migration von `pd.read_excel()` auf streaming-basiertes `openpyxl(read_only=True, data_only=True)` mit Schwellenwert-Abbruch für leere Folgezeilen; parst Excel-Dateien mit über 1 Mio. Leerzeilen in 28ms statt OOM/Hang.
+  - Normalisierung von Schichtnamen-Aliassen (`Sa_8-20` -> `Sa_10-21`, `So_09:30-21:30` -> `So_8-20:30`) und Korrektur von Datums-Tippfehlern in Vorquartals-Nachtdiensten.
+
 ## [1.5.2] - 2026-11-02
 
 ### Fixed: Intern-Wochenendzählung und Fairness-Einheiten (Finding B4 & F1)

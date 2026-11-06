@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.5.2"
+CURRENT_VERSION = "1.6.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.6.0",
+        date="06. November 2026",
+        summary="Web-Plattform, 2027-Q1 Baseline & Feiertagsdienste",
+        highlights=(
+            "Zentrale Web-Plattform mit direkter Datenhaltung für Personal, Abwesenheiten und Quartalspläne.",
+            "Automatische Übernahme von Vorquartals-Einsätzen (Q4 2026) für faire Verteilung und Ruhezeiten.",
+            "Vorgegebene Feiertagsdienste werden vorab auf Konflikte geprüft und verlässlich integriert.",
+        ),
+    ),
     Release(
         version="1.5.2",
         date="02. November 2026",

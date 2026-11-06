@@ -9,6 +9,7 @@ from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     AbsenceRecord,
     AbsenceType,
+    PreAssignedShiftRecord,
     QuarterScheduleDocument,
     ScheduleState,
     ShiftAssignmentRecord,
@@ -224,4 +225,33 @@ def test_solver_job_repository_lifecycle(temp_repo: FileJsonRepository) -> None:
     # Delete
     temp_repo.delete_solver_job("2026-Q2")
     assert temp_repo.get_solver_job("2026-Q2") is None
+
+
+def test_preassigned_crud_lifecycle(temp_repo: FileJsonRepository) -> None:
+    """Test full CRUD lifecycle for pre-assigned shift records."""
+    record = PreAssignedShiftRecord(
+        id="pa-easter-1",
+        staff_id="ks",
+        staff_identifier="KS",
+        shift_date=date(2027, 3, 25),
+        shift_type="N_Do-Fr",
+        is_holiday=True,
+        note="Gründonnerstag Vorgabe",
+    )
+    temp_repo.save_preassigned(record)
+
+    loaded = temp_repo.get_preassigned("pa-easter-1")
+    assert loaded is not None
+    assert loaded.staff_identifier == "KS"
+    assert loaded.shift_date == date(2027, 3, 25)
+    assert loaded.shift_type == "N_Do-Fr"
+
+    all_pa = temp_repo.list_preassigned()
+    assert len(all_pa) == 1
+    assert all_pa[0].id == "pa-easter-1"
+
+    temp_repo.delete_preassigned("pa-easter-1")
+    assert temp_repo.get_preassigned("pa-easter-1") is None
+    assert len(temp_repo.list_preassigned()) == 0
+
 

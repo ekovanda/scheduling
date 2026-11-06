@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     AbsenceRecord,
+    PreAssignedShiftRecord,
     QuarterScheduleDocument,
     SolverJobRecord,
     StaffMember,
@@ -87,11 +88,29 @@ class SolverJobRepositoryProtocol(Protocol):
 
 
 @runtime_checkable
+class PreAssignedRepositoryProtocol(Protocol):
+    """Protocol for pre-assigned shift persistence."""
+
+    def get_preassigned(self, preassigned_id: str) -> PreAssignedShiftRecord | None:
+        """Retrieve pre-assigned shift record by ID."""
+
+    def list_preassigned(self) -> list[PreAssignedShiftRecord]:
+        """List all pre-assigned shift records."""
+
+    def save_preassigned(self, record: PreAssignedShiftRecord) -> None:
+        """Persist or update pre-assigned shift record."""
+
+    def delete_preassigned(self, preassigned_id: str) -> None:
+        """Delete pre-assigned shift record by ID."""
+
+
+@runtime_checkable
 class RepositoryProtocol(
     StaffRepositoryProtocol,
     AbsenceRepositoryProtocol,
     ScheduleRepositoryProtocol,
     SolverJobRepositoryProtocol,
+    PreAssignedRepositoryProtocol,
     Protocol,
 ):
     """Unified repository protocol matching FileJsonRepository and FirestoreRepository."""
@@ -117,11 +136,13 @@ class FileJsonRepository:
         self.absence_dir = self.base_dir / "absences"
         self.schedule_dir = self.base_dir / "schedules"
         self.job_dir = self.base_dir / "jobs"
+        self.preassigned_dir = self.base_dir / "preassigned"
 
         self.staff_dir.mkdir(parents=True, exist_ok=True)
         self.absence_dir.mkdir(parents=True, exist_ok=True)
         self.schedule_dir.mkdir(parents=True, exist_ok=True)
         self.job_dir.mkdir(parents=True, exist_ok=True)
+        self.preassigned_dir.mkdir(parents=True, exist_ok=True)
 
     def _atomic_write_json(self, target_path: Path, data: dict[str, Any]) -> None:
         """Write JSON atomically using a temporary file in the same directory."""
@@ -266,4 +287,37 @@ class FileJsonRepository:
         if not path.is_file():
             raise EntityNotFoundError(f"Solver job for '{quarter_key}' does not exist.")
         path.unlink()
+
+    # -------------------------------------------------------------------------
+    # Pre-Assigned Shifts CRUD
+    # -------------------------------------------------------------------------
+
+    def get_preassigned(self, preassigned_id: str) -> PreAssignedShiftRecord | None:
+        path = self.preassigned_dir / f"{preassigned_id}.json"
+        if not path.is_file():
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return PreAssignedShiftRecord.model_validate(data)
+
+    def list_preassigned(self) -> list[PreAssignedShiftRecord]:
+        records: list[PreAssignedShiftRecord] = []
+        for path in sorted(self.preassigned_dir.glob("*.json")):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            records.append(PreAssignedShiftRecord.model_validate(data))
+        return sorted(records, key=lambda r: (r.shift_date, r.shift_type))
+
+    def save_preassigned(self, record: PreAssignedShiftRecord) -> None:
+        path = self.preassigned_dir / f"{record.id}.json"
+        self._atomic_write_json(path, record.model_dump(mode="json"))
+
+    def delete_preassigned(self, preassigned_id: str) -> None:
+        path = self.preassigned_dir / f"{preassigned_id}.json"
+        if not path.is_file():
+            raise EntityNotFoundError(
+                f"Pre-assigned shift '{preassigned_id}' does not exist."
+            )
+        path.unlink()
+
 
