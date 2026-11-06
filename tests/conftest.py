@@ -164,6 +164,8 @@ def _configure_test_solver(
         previous_context: PreviousPlanContext | None = None,
         pre_assigned: list[PreAssignedShift] | None = None,
         config: SchedulerConfig | None = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> SolverResult:
         key = build_solver_cache_key(
             staff_list=staff_list,
@@ -184,6 +186,8 @@ def _configure_test_solver(
                 previous_context=previous_context,
                 pre_assigned=pre_assigned,
                 config=config,
+                *args,
+                **kwargs,
             )
         return session_cache[key]
 

@@ -5,7 +5,10 @@ for guaranteed optimal fairness within hard constraint satisfaction.
 """
 
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date, timedelta
+import threading
+from typing import Any
 
 from ortools.sat.python import cp_model
 
@@ -59,16 +62,31 @@ class _SchedulingProgressCallback(cp_model.CpSolverSolutionCallback):
     as convergence_log for post-solve display in the UI.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        cancellation_event: threading.Event | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         super().__init__()
         self.solutions: list[dict[str, float]] = []
+        self.cancellation_event = cancellation_event
+        self.on_progress = on_progress
 
     def on_solution_callback(self) -> None:
-        self.solutions.append({
+        if self.cancellation_event and self.cancellation_event.is_set():
+            self.stop_search()
+            return
+        entry = {
             "wall_time": round(self.wall_time, 2),
             "objective": float(self.objective_value),
             "bound": float(self.best_objective_bound),
-        })
+        }
+        self.solutions.append(entry)
+        if self.on_progress:
+            try:
+                self.on_progress(entry)
+            except Exception:
+                pass
 
 
 def generate_schedule_cpsat(
@@ -80,6 +98,9 @@ def generate_schedule_cpsat(
     previous_context: PreviousPlanContext | None = None,
     pre_assigned: list[PreAssignedShift] | None = None,
     config: SchedulerConfig | None = None,
+    cancellation_event: threading.Event | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+    on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -917,8 +938,23 @@ def generate_schedule_cpsat(
     if random_seed is not None:
         solver.parameters.random_seed = random_seed
 
-    progress = _SchedulingProgressCallback()
+    if on_solver_created is not None:
+        on_solver_created(solver)
+
+    progress = _SchedulingProgressCallback(
+        cancellation_event=cancellation_event,
+        on_progress=on_progress,
+    )
     status = solver.Solve(model, progress)
+
+    if cancellation_event and cancellation_event.is_set():
+        return SolverResult(
+            success=False,
+            schedules=[],
+            penalties=[],
+            unsatisfiable_constraints=["Berechnung durch Benutzer abgebrochen (Cancelled by user)."],
+            convergence_log=progress.solutions,
+        )
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         # Extract solution

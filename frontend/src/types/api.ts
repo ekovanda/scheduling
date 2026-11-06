@@ -70,3 +70,20 @@ export interface QuarterScheduleDocument {
   updated_at?: string;
 }
 
+export type SolverJobStatus = 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export interface SolverJobRecord {
+  job_id: string;
+  quarter_key: string;
+  status: SolverJobStatus;
+  started_at: string;
+  completed_at?: string | null;
+  max_solve_time_seconds: number;
+  elapsed_seconds: number;
+  solutions_found: number;
+  best_objective?: number | null;
+  soft_penalty?: number | null;
+  error?: string | null;
+}
+
+

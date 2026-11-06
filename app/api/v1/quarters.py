@@ -1,9 +1,13 @@
 """Quarter schedule management, solver generation, and lifecycle endpoints."""
 
+import threading
+import time
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from ortools.sat.python import cp_model
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_repository
@@ -13,6 +17,8 @@ from app.persistence.models import (
     QuarterScheduleDocument,
     ScheduleState,
     ShiftAssignmentRecord,
+    SolverJobRecord,
+    SolverJobStatus,
 )
 from app.persistence.repository import FileJsonRepository
 from app.persistence.rollover import (
@@ -36,9 +42,9 @@ RepoDep = Annotated[FileJsonRepository, Depends(get_repository)]
 
 
 class GenerateScheduleRequest(BaseModel):
-    """Payload for triggering the synchronous solver."""
+    """Payload for triggering the asynchronous solver."""
 
-    max_solve_time_seconds: int = Field(default=120, ge=5, le=300)
+    max_solve_time_seconds: int = Field(default=120, ge=5, le=900)
     random_seed: int | None = None
     include_previous_context: bool = True
 
@@ -176,16 +182,179 @@ def init_quarter(
     return doc
 
 
-@router.post("/{quarter_key}/generate", response_model=QuarterScheduleDocument)
+class ActiveJobState:
+    """In-memory active solver job tracking thread, cancel event, and solver instance."""
+
+    def __init__(
+        self,
+        job_id: str,
+        quarter_key: str,
+        thread: threading.Thread,
+        cancellation_event: threading.Event,
+    ) -> None:
+        self.job_id = job_id
+        self.quarter_key = quarter_key
+        self.thread = thread
+        self.cancellation_event = cancellation_event
+        self.solver: cp_model.CpSolver | None = None
+
+
+_active_jobs: dict[str, ActiveJobState] = {}
+_jobs_lock = threading.Lock()
+
+
+def _execute_solver_worker(
+    quarter_key: str,
+    job_id: str,
+    max_solve_time_seconds: int,
+    random_seed: int | None,
+    include_previous_context: bool,
+    repo: FileJsonRepository,
+    cancellation_event: threading.Event,
+    active_job: ActiveJobState,
+) -> None:
+    """Worker function executed inside background thread."""
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+    start_time = time.time()
+
+    def on_progress(entry: dict[str, Any]) -> None:
+        rec = repo.get_solver_job(quarter_key)
+        if rec and rec.status == SolverJobStatus.RUNNING:
+            rec.elapsed_seconds = round(time.time() - start_time, 1)
+            rec.solutions_found += 1
+            rec.best_objective = entry.get("objective")
+            rec.soft_penalty = entry.get("objective")
+            repo.save_solver_job(rec)
+
+    def on_solver_created(solver: cp_model.CpSolver) -> None:
+        active_job.solver = solver
+
+    try:
+        active_members = repo.list_staff(active_only=True)
+        staff_list = [m.to_scheduler_staff() for m in active_members]
+        staff_id_to_ident = {m.id: m.identifier for m in active_members}
+
+        raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
+        vacations = [
+            Vacation(
+                identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+                start_date=a.start_date,
+                end_date=a.end_date,
+            )
+            for a in raw_absences
+        ]
+
+        context = None
+        if include_previous_context:
+            context = get_previous_quarter_context(year, quarter, repo)
+
+        result = generate_schedule(
+            staff_list=staff_list,
+            quarter_start=q_start,
+            vacations=vacations,
+            max_solve_time_seconds=max_solve_time_seconds,
+            random_seed=random_seed,
+            previous_context=context,
+            cancellation_event=cancellation_event,
+            on_progress=on_progress,
+            on_solver_created=on_solver_created,
+        )
+
+        elapsed = round(time.time() - start_time, 1)
+        job_rec = repo.get_solver_job(quarter_key) or SolverJobRecord(
+            job_id=job_id,
+            quarter_key=quarter_key,
+            status=SolverJobStatus.RUNNING,
+        )
+        job_rec.elapsed_seconds = elapsed
+        job_rec.completed_at = datetime.now(UTC)
+
+        if cancellation_event.is_set():
+            job_rec.status = SolverJobStatus.CANCELLED
+            job_rec.error = "Berechnung durch Benutzer abgebrochen."
+            repo.save_solver_job(job_rec)
+            return
+
+        best_schedule = result.get_best_schedule()
+        if not result.success or best_schedule is None:
+            job_rec.status = SolverJobStatus.FAILED
+            err_msg = (
+                "; ".join(result.unsatisfiable_constraints)
+                if result.unsatisfiable_constraints
+                else "Kein machbarer Dienstplan gefunden."
+            )
+            job_rec.error = err_msg
+            repo.save_solver_job(job_rec)
+            return
+
+        assignment_records = [
+            ShiftAssignmentRecord(
+                shift_date=a.shift.shift_date,
+                shift_type=a.shift.shift_type,
+                planned_staff_id=a.staff_identifier,
+                actual_staff_id=a.staff_identifier,
+                is_paired=a.is_paired,
+                is_override=False,
+            )
+            for a in best_schedule.assignments
+        ]
+        metrics = {
+            "best_penalty": result.penalties[0] if result.penalties else 0.0,
+            "candidate_count": len(result.schedules),
+            "convergence_steps": len(result.convergence_log),
+            "trailing_context_applied": context is not None,
+            "solve_time_seconds": elapsed,
+        }
+
+        doc = repo.get_schedule(quarter_key)
+        if not doc:
+            doc = QuarterScheduleDocument(
+                quarter_key=quarter_key,
+                year=year,
+                quarter=quarter,
+                state=ScheduleState.DRAFT,
+            )
+        doc.assignments = assignment_records
+        doc.solver_metrics = metrics
+        doc.updated_at = datetime.now(UTC)
+        repo.save_schedule(doc)
+
+        job_rec.status = SolverJobStatus.COMPLETED
+        job_rec.best_objective = metrics["best_penalty"]
+        job_rec.soft_penalty = metrics["best_penalty"]
+        job_rec.solutions_found = max(job_rec.solutions_found, 1)
+        repo.save_solver_job(job_rec)
+
+    except Exception as exc:  # pylint: disable=broad-except
+        job_rec = repo.get_solver_job(quarter_key)
+        if job_rec:
+            job_rec.status = SolverJobStatus.FAILED
+            job_rec.completed_at = datetime.now(UTC)
+            job_rec.elapsed_seconds = round(time.time() - start_time, 1)
+            job_rec.error = str(exc)
+            repo.save_solver_job(job_rec)
+    finally:
+        with _jobs_lock:
+            if quarter_key in _active_jobs and _active_jobs[quarter_key].job_id == job_id:
+                del _active_jobs[quarter_key]
+
+
+@router.post(
+    "/{quarter_key}/generate",
+    response_model=SolverJobRecord,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def generate_quarter_schedule(
     quarter_key: str,
     repo: RepoDep,
+    response: Response,
     req: GenerateScheduleRequest | None = None,
-) -> QuarterScheduleDocument:
-    """Synchronously run CP-SAT solver and persist candidate schedule."""
+    sync: bool = Query(default=False, description="Wait synchronously until solve finishes"),
+) -> SolverJobRecord:
+    """Launch asynchronous CP-SAT solve (returns 202 Accepted + job_id)."""
     solver_req = req or GenerateScheduleRequest()
-    year, quarter = _parse_quarter_key(quarter_key)
-    q_start, q_end = get_quarter_date_range(year, quarter)
+    _parse_quarter_key(quarter_key)
 
     active_members = repo.list_staff(active_only=True)
     if not active_members:
@@ -194,77 +363,122 @@ def generate_quarter_schedule(
             detail="No active staff members found in database. Onboard staff first.",
         )
 
-    staff_list: list[Staff] = [m.to_scheduler_staff() for m in active_members]
-    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+    with _jobs_lock:
+        if quarter_key in _active_jobs:
+            existing = _active_jobs[quarter_key]
+            if existing.thread.is_alive():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Solver job '{existing.job_id}' is already running "
+                        f"for quarter '{quarter_key}'."
+                    ),
+                )
+            del _active_jobs[quarter_key]
 
-    # Load recorded absences overlapping this quarter
-    raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
-    vacations: list[Vacation] = [
-        Vacation(
-            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
-            start_date=a.start_date,
-            end_date=a.end_date,
-        )
-        for a in raw_absences
-    ]
-
-    # Automated roll-over context from preceding quarter
-    context = None
-    if solver_req.include_previous_context:
-        context = get_previous_quarter_context(year, quarter, repo)
-
-    result = generate_schedule(
-        staff_list=staff_list,
-        quarter_start=q_start,
-        vacations=vacations,
-        max_solve_time_seconds=solver_req.max_solve_time_seconds,
-        random_seed=solver_req.random_seed,
-        previous_context=context,
-    )
-
-    best_schedule = result.get_best_schedule()
-    if not result.success or best_schedule is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "Solver could not find a feasible schedule.",
-                "unsatisfiable_constraints": result.unsatisfiable_constraints,
-            },
-        )
-
-    assignment_records = [
-        ShiftAssignmentRecord(
-            shift_date=a.shift.shift_date,
-            shift_type=a.shift.shift_type,
-            planned_staff_id=a.staff_identifier,
-            actual_staff_id=a.staff_identifier,
-            is_paired=a.is_paired,
-            is_override=False,
-        )
-        for a in best_schedule.assignments
-    ]
-
-    metrics = {
-        "best_penalty": result.penalties[0] if result.penalties else 0.0,
-        "candidate_count": len(result.schedules),
-        "convergence_steps": len(result.convergence_log),
-        "trailing_context_applied": context is not None,
-    }
-
-    doc = repo.get_schedule(quarter_key)
-    if not doc:
-        doc = QuarterScheduleDocument(
+        job_id = f"job_{quarter_key}_{uuid4().hex[:8]}"
+        cancellation_event = threading.Event()
+        initial_record = SolverJobRecord(
+            job_id=job_id,
             quarter_key=quarter_key,
-            year=year,
-            quarter=quarter,
-            state=ScheduleState.DRAFT,
+            status=SolverJobStatus.RUNNING,
+            max_solve_time_seconds=solver_req.max_solve_time_seconds,
+        )
+        repo.save_solver_job(initial_record)
+
+        active_job = ActiveJobState(
+            job_id=job_id,
+            quarter_key=quarter_key,
+            thread=threading.Thread(),  # placeholder, set below
+            cancellation_event=cancellation_event,
+        )
+        worker_thread = threading.Thread(
+            target=_execute_solver_worker,
+            args=(
+                quarter_key,
+                job_id,
+                solver_req.max_solve_time_seconds,
+                solver_req.random_seed,
+                solver_req.include_previous_context,
+                repo,
+                cancellation_event,
+                active_job,
+            ),
+            daemon=True,
+        )
+        active_job.thread = worker_thread
+        _active_jobs[quarter_key] = active_job
+        worker_thread.start()
+
+    if sync:
+        worker_thread.join(timeout=solver_req.max_solve_time_seconds + 30)
+        final_record = repo.get_solver_job(quarter_key) or initial_record
+        if final_record.status == SolverJobStatus.FAILED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=final_record.error or "Solver could not find a feasible schedule.",
+            )
+        response.status_code = status.HTTP_200_OK
+        return final_record
+
+    response.status_code = status.HTTP_202_ACCEPTED
+    return initial_record
+
+
+@router.get("/{quarter_key}/solver-status", response_model=SolverJobRecord)
+def get_solver_status(
+    quarter_key: str,
+    repo: RepoDep,
+) -> SolverJobRecord:
+    """Retrieve live background solver progress and solution metrics."""
+    _parse_quarter_key(quarter_key)
+    job = repo.get_solver_job(quarter_key)
+    if not job:
+        return SolverJobRecord(
+            job_id="",
+            quarter_key=quarter_key,
+            status=SolverJobStatus.IDLE,
         )
 
-    doc.assignments = assignment_records
-    doc.solver_metrics = metrics
-    doc.updated_at = datetime.now(UTC)
-    repo.save_schedule(doc)
-    return doc
+    if job.status == SolverJobStatus.RUNNING:
+        with _jobs_lock:
+            active = _active_jobs.get(quarter_key)
+            if not active or not active.thread.is_alive():
+                job.status = SolverJobStatus.FAILED
+                job.error = "Solver-Hintergrundprozess wurde unerwartet beendet."
+                job.completed_at = datetime.now(UTC)
+                repo.save_solver_job(job)
+            else:
+                job.elapsed_seconds = round(
+                    (datetime.now(UTC) - job.started_at).total_seconds(), 1
+                )
+
+    return job
+
+
+@router.post("/{quarter_key}/cancel")
+def cancel_solver_job(
+    quarter_key: str,
+    repo: RepoDep,
+) -> dict[str, str]:
+    """Gracefully cancel an active background CP-SAT solve."""
+    _parse_quarter_key(quarter_key)
+    with _jobs_lock:
+        active = _active_jobs.get(quarter_key)
+        if not active or not active.thread.is_alive():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Kein aktiver Berechnungsprozess für Quartal '{quarter_key}' gefunden.",
+            )
+        active.cancellation_event.set()
+        if active.solver:
+            try:
+                active.solver.stop_search()
+            except Exception:
+                pass
+
+    return {"message": f"Abbruch für Quartal '{quarter_key}' angefordert."}
+
 
 
 @router.post("/{quarter_key}/shifts/swap", response_model=QuarterScheduleDocument)

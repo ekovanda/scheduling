@@ -152,3 +152,30 @@ class QuarterScheduleDocument(BaseModel):
                 f"quarter_key '{self.quarter_key}' does not match expected '{expected_key}'"
             )
         return self
+
+
+class SolverJobStatus(str, Enum):
+    """Execution state of an asynchronous background solver job."""
+
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class SolverJobRecord(BaseModel):
+    """Persistent execution record and live metrics for a background solve."""
+
+    job_id: str
+    quarter_key: str
+    status: SolverJobStatus = SolverJobStatus.RUNNING
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    max_solve_time_seconds: int = 120
+    elapsed_seconds: float = 0.0
+    solutions_found: int = 0
+    best_objective: float | None = None
+    soft_penalty: float | None = None
+    error: str | None = None
+

@@ -12,6 +12,8 @@ import {
   Scale,
   History,
   Clock,
+  AlertCircle,
+  StopCircle,
 } from 'lucide-react';
 import type {
   QuarterScheduleDocument,
@@ -19,6 +21,7 @@ import type {
   StaffMember,
   PreAssignedShift,
   AbsenceRecord,
+  SolverJobRecord,
 } from '../types/api';
 import {
   fetchSchedule,
@@ -26,7 +29,9 @@ import {
   fetchPreAssigned,
   fetchAbsences,
   fetchRolloverContext,
-  generateSchedule,
+  startSolverJob,
+  fetchSolverStatus,
+  cancelSolverJob,
   swapShift,
   type RolloverContextData,
 } from '../lib/api';
@@ -64,26 +69,70 @@ export const MatrixView: React.FC = () => {
   const [selectedShift, setSelectedShift] = useState<ShiftAssignmentRecord | null>(null);
   const [newStaffId, setNewStaffId] = useState<string>('');
 
+  // Asynchronous Solver state
+  const [activeJob, setActiveJob] = useState<SolverJobRecord | null>(null);
+  const [solverModalOpen, setSolverModalOpen] = useState(false);
+  const [solverError, setSolverError] = useState<string | null>(null);
+
   const currentQuarterKey = `${setupYear}-${setupQuarter}`;
 
   useEffect(() => {
     loadData();
   }, [currentQuarterKey]);
 
+  useEffect(() => {
+    let timer: any = null;
+    let isMounted = true;
+
+    if (activeJob?.status === 'RUNNING') {
+      timer = setInterval(async () => {
+        try {
+          const status = await fetchSolverStatus(currentQuarterKey);
+          if (!isMounted) return;
+          setActiveJob(status);
+          if (status.status === 'COMPLETED') {
+            const fresh = await fetchSchedule(currentQuarterKey);
+            if (isMounted) {
+              setSchedule(fresh);
+              setSolving(false);
+            }
+          } else if (status.status === 'FAILED' || status.status === 'CANCELLED') {
+            if (isMounted) {
+              setSolving(false);
+              setSolverError(status.error || 'Berechnung fehlgeschlagen.');
+            }
+          }
+        } catch (err) {
+          console.warn('Status poll error:', err);
+        }
+      }, 1500);
+    }
+
+    return () => {
+      isMounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [activeJob?.status, currentQuarterKey]);
+
   const loadData = async () => {
     setLoading(true);
-    const [schedData, stfData, paData, absData, rollData] = await Promise.all([
+    const [schedData, stfData, paData, absData, rollData, jobData] = await Promise.all([
       fetchSchedule(currentQuarterKey),
       fetchStaff(),
       fetchPreAssigned(),
       fetchAbsences(),
       fetchRolloverContext(currentQuarterKey),
+      fetchSolverStatus(currentQuarterKey).catch(() => null),
     ]);
     setSchedule(schedData);
     setStaffList(stfData);
     setPreAssigned(paData);
     setAbsences(absData);
     setRollover(rollData);
+    if (jobData && jobData.status === 'RUNNING') {
+      setActiveJob(jobData);
+      setSolving(true);
+    }
     setLoading(false);
   };
 
@@ -99,20 +148,37 @@ export const MatrixView: React.FC = () => {
     return `${prefix}${s.identifier}`;
   };
 
-  // Run Solver
+  const formatTimer = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Run Solver (Async Background Runner)
   const handleRunSolver = async () => {
     setSolving(true);
+    setSolverError(null);
+    setSolverModalOpen(true);
     try {
-      const updated = await generateSchedule(currentQuarterKey);
-      setSchedule(updated);
-    } catch {
-      // Simulate solve progress for 1.2s if local demo backend
-      await new Promise((r) => setTimeout(r, 1200));
-      const fresh = await fetchSchedule(currentQuarterKey);
-      setSchedule(fresh);
-    } finally {
+      const maxSeconds = solveDepth === 'thorough' ? 600 : 120;
+      const job = await startSolverJob(currentQuarterKey, {
+        max_solve_time_seconds: maxSeconds,
+      });
+      setActiveJob(job);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSolverError(msg);
       setSolving(false);
-      setPageMode('view');
+    }
+  };
+
+  const handleCancelSolve = async () => {
+    try {
+      await cancelSolverJob(currentQuarterKey);
+      const st = await fetchSolverStatus(currentQuarterKey).catch(() => null);
+      if (st) setActiveJob(st);
+    } catch (err) {
+      console.warn('Cancel error:', err);
     }
   };
 
@@ -215,6 +281,35 @@ export const MatrixView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Persistent Background Solver Notification Banner */}
+      {activeJob?.status === 'RUNNING' && (
+        <div className="bg-amber-50/90 border border-amber-300 text-amber-950 px-4 py-2.5 rounded-xl flex items-center justify-between shadow-2xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <Loader2 className="h-4 w-4 animate-spin text-amber-700 shrink-0" />
+            <span className="text-xs font-medium">
+              <strong>Berechnung für {currentQuarterKey} aktiv:</strong> {formatTimer(activeJob.elapsed_seconds)} &middot; {activeJob.solutions_found} Lösungen gefunden
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100"
+              onClick={() => setSolverModalOpen(true)}
+            >
+              Live-Status
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs text-red-700 hover:bg-red-100"
+              onClick={handleCancelSolve}
+            >
+              Abbrechen
+            </Button>
+          </div>
+        </div>
+      )}
       {/* ============================================================== */}
       {/* STATE A: DISTRACTION-FREE SETUP SECTION ("Plan erstellen") */}
       {/* ============================================================== */}
@@ -1067,6 +1162,125 @@ export const MatrixView: React.FC = () => {
             </div>
           </form>
         )}
+      </Modal>
+
+      {/* Asynchronous Solver Progress Modal */}
+      <Modal
+        isOpen={solverModalOpen}
+        onClose={() => setSolverModalOpen(false)}
+        title={`CP-SAT Optimierung: ${currentQuarterKey}`}
+      >
+        <div className="space-y-5">
+          {/* Status Header */}
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-stone-50 border border-stone-200">
+            {activeJob?.status === 'RUNNING' && (
+              <Loader2 className="h-6 w-6 animate-spin text-amber-600 shrink-0" />
+            )}
+            {activeJob?.status === 'COMPLETED' && (
+              <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0" />
+            )}
+            {(activeJob?.status === 'FAILED' || solverError) && (
+              <AlertCircle className="h-6 w-6 text-red-600 shrink-0" />
+            )}
+            {activeJob?.status === 'CANCELLED' && (
+              <StopCircle className="h-6 w-6 text-stone-500 shrink-0" />
+            )}
+            <div>
+              <h4 className="text-sm font-bold text-stone-900">
+                {activeJob?.status === 'RUNNING' && 'Optimierung läuft im Hintergrund...'}
+                {activeJob?.status === 'COMPLETED' && 'Optimierung erfolgreich abgeschlossen!'}
+                {activeJob?.status === 'CANCELLED' && 'Berechnung abgebrochen'}
+                {(activeJob?.status === 'FAILED' || solverError) && 'Berechnung fehlgeschlagen'}
+                {!activeJob && 'Initialisiere Solver...'}
+              </h4>
+              <p className="text-xs text-stone-500 mt-0.5">
+                {activeJob?.status === 'RUNNING' &&
+                  'OR-Tools CP-SAT sucht nach fairen Schichten und prüft 21-Tage-Ruhezeiten.'}
+                {activeJob?.status === 'COMPLETED' &&
+                  'Der neue Dienstplan wurde gespeichert und kann geprüft werden.'}
+                {activeJob?.status === 'CANCELLED' &&
+                  'Der Vorgang wurde auf Wunsch des Planers gestoppt.'}
+                {(activeJob?.status === 'FAILED' || solverError) &&
+                  (solverError || activeJob?.error || 'Unbekannter Fehler.')}
+              </p>
+            </div>
+          </div>
+
+          {/* Metric Dashboard */}
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="p-3 bg-stone-50 rounded-lg border border-stone-200/80">
+              <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">Laufzeit</span>
+              <div className="text-lg font-bold font-mono text-stone-900 mt-0.5">
+                {activeJob ? formatTimer(activeJob.elapsed_seconds) : '00:00'}
+              </div>
+              <span className="text-[10px] text-stone-400">max {solveDepth === 'thorough' ? '10:00' : '02:00'}</span>
+            </div>
+            <div className="p-3 bg-stone-50 rounded-lg border border-stone-200/80">
+              <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">Lösungen</span>
+              <div className="text-lg font-bold font-mono text-amber-700 mt-0.5">
+                {activeJob?.solutions_found ?? 0}
+              </div>
+              <span className="text-[10px] text-stone-400">Verbesserungen</span>
+            </div>
+            <div className="p-3 bg-stone-50 rounded-lg border border-stone-200/80">
+              <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">Score</span>
+              <div className="text-lg font-bold font-mono text-emerald-700 mt-0.5">
+                {activeJob?.best_objective !== null && activeJob?.best_objective !== undefined
+                  ? activeJob.best_objective.toFixed(1)
+                  : '—'}
+              </div>
+              <span className="text-[10px] text-stone-400">Penalty</span>
+            </div>
+          </div>
+
+          {/* Modal Actions */}
+          <div className="pt-2 flex items-center justify-between gap-3 border-t border-stone-100">
+            {activeJob?.status === 'RUNNING' ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSolverModalOpen(false)}
+                >
+                  Im Hintergrund weiterlaufen lassen
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-red-700 border-red-200 hover:bg-red-50"
+                  onClick={handleCancelSolve}
+                >
+                  Abbrechen
+                </Button>
+              </>
+            ) : activeJob?.status === 'COMPLETED' ? (
+              <Button
+                type="button"
+                variant="primary"
+                size="md"
+                className="w-full"
+                onClick={() => {
+                  setSolverModalOpen(false);
+                  setPageMode('view');
+                }}
+              >
+                Zum fertigen Dienstplan
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                className="w-full"
+                onClick={() => setSolverModalOpen(false)}
+              >
+                Schließen
+              </Button>
+            )}
+          </div>
+        </div>
       </Modal>
     </div>
   );

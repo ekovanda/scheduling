@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -205,10 +206,17 @@ def test_quarters_generate_and_swap_api(
     )
     monkeypatch.setattr("app.api.v1.quarters.generate_schedule", lambda **kwargs: fake_result)
 
-    # 3. Synchronous Generate
-    gen_resp = client.post("/api/v1/quarters/2026-Q2/generate")
+    # 3. Synchronous Generate via ?sync=true
+    gen_resp = client.post("/api/v1/quarters/2026-Q2/generate?sync=true")
     assert gen_resp.status_code == 200
-    doc_data = gen_resp.json()
+    job_data = gen_resp.json()
+    assert job_data["status"] == "COMPLETED"
+    assert job_data["quarter_key"] == "2026-Q2"
+
+    # Verify schedule doc was created and populated
+    sched_resp = client.get("/api/v1/quarters/2026-Q2")
+    assert sched_resp.status_code == 200
+    doc_data = sched_resp.json()
     assert len(doc_data["assignments"]) == 1
     assert doc_data["assignments"][0]["planned_staff_id"] == "MUE"
     assert doc_data["assignments"][0]["actual_staff_id"] == "MUE"
@@ -252,3 +260,70 @@ def test_quarters_generate_and_swap_api(
     assert export_csv.status_code == 200
     assert "text/csv" in export_csv.headers["content-type"]
     assert "N_Mi-Do" in export_csv.text
+
+
+def test_quarters_async_solver_and_cancellation(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test 202 Accepted async solve, status polling, and cancellation flow."""
+    import time
+    from threading import Event
+
+    # 1. Onboard staff member
+    client.post(
+        "/api/v1/staff",
+        json={"id": "STAFF_01", "identifier": "MUE", "name": "Müller", "hours": 40},
+    )
+
+    # 2. Status initially IDLE
+    idle_resp = client.get("/api/v1/quarters/2026-Q3/solver-status")
+    assert idle_resp.status_code == 200
+    assert idle_resp.json()["status"] == "IDLE"
+
+    started_solve = Event()
+
+    def slow_solve(**kwargs: Any) -> SolverResult:
+        started_solve.set()
+        cancellation: Event | None = kwargs.get("cancellation_event")
+        # Wait until cancelled or 2 seconds
+        for _ in range(20):
+            if cancellation and cancellation.is_set():
+                break
+            time.sleep(0.05)
+        return SolverResult(
+            success=False,
+            schedules=[],
+            penalties=[],
+            unsatisfiable_constraints=["Abgebrochen"],
+        )
+
+    monkeypatch.setattr("app.api.v1.quarters.generate_schedule", slow_solve)
+
+    # 3. Launch async generate -> 202 Accepted
+    gen_resp = client.post("/api/v1/quarters/2026-Q3/generate")
+    assert gen_resp.status_code == 202
+    job_data = gen_resp.json()
+    assert job_data["status"] == "RUNNING"
+    assert job_data["quarter_key"] == "2026-Q3"
+
+    started_solve.wait(timeout=1.0)
+
+    # 4. Status is RUNNING
+    run_resp = client.get("/api/v1/quarters/2026-Q3/solver-status")
+    assert run_resp.status_code == 200
+    assert run_resp.json()["status"] == "RUNNING"
+
+    # 5. Concurrent solve triggers 409 Conflict
+    dup_resp = client.post("/api/v1/quarters/2026-Q3/generate")
+    assert dup_resp.status_code == 409
+
+    # 6. Request cancellation
+    cancel_resp = client.post("/api/v1/quarters/2026-Q3/cancel")
+    assert cancel_resp.status_code == 200
+
+    # 7. Polling verifies cancellation
+    time.sleep(0.15)
+    final_status = client.get("/api/v1/quarters/2026-Q3/solver-status")
+    assert final_status.status_code == 200
+    assert final_status.json()["status"] in ("CANCELLED", "FAILED")
+

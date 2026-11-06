@@ -11,6 +11,7 @@ from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
     AbsenceRecord,
     QuarterScheduleDocument,
+    SolverJobRecord,
     StaffMember,
 )
 
@@ -68,6 +69,19 @@ class ScheduleRepositoryProtocol(Protocol):
         """Delete quarter schedule document by key."""
 
 
+class SolverJobRepositoryProtocol(Protocol):
+    """Protocol for background solver job status persistence."""
+
+    def get_solver_job(self, quarter_key: str) -> SolverJobRecord | None:
+        """Retrieve solver job record by quarter key."""
+
+    def save_solver_job(self, record: SolverJobRecord) -> None:
+        """Persist or update solver job record."""
+
+    def delete_solver_job(self, quarter_key: str) -> None:
+        """Delete solver job record by quarter key."""
+
+
 def _json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default json code."""
     if isinstance(obj, (date, datetime)):
@@ -87,10 +101,12 @@ class FileJsonRepository:
         self.staff_dir = self.base_dir / "staff"
         self.absence_dir = self.base_dir / "absences"
         self.schedule_dir = self.base_dir / "schedules"
+        self.job_dir = self.base_dir / "jobs"
 
         self.staff_dir.mkdir(parents=True, exist_ok=True)
         self.absence_dir.mkdir(parents=True, exist_ok=True)
         self.schedule_dir.mkdir(parents=True, exist_ok=True)
+        self.job_dir.mkdir(parents=True, exist_ok=True)
 
     def _atomic_write_json(self, target_path: Path, data: dict[str, Any]) -> None:
         """Write JSON atomically using a temporary file in the same directory."""
@@ -213,3 +229,26 @@ class FileJsonRepository:
         if not path.is_file():
             raise EntityNotFoundError(f"Schedule for '{quarter_key}' does not exist.")
         path.unlink()
+
+    # -------------------------------------------------------------------------
+    # Solver Job Record CRUD
+    # -------------------------------------------------------------------------
+
+    def get_solver_job(self, quarter_key: str) -> SolverJobRecord | None:
+        path = self.job_dir / f"{quarter_key}.json"
+        if not path.is_file():
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return SolverJobRecord.model_validate(data)
+
+    def save_solver_job(self, record: SolverJobRecord) -> None:
+        path = self.job_dir / f"{record.quarter_key}.json"
+        self._atomic_write_json(path, record.model_dump(mode="json"))
+
+    def delete_solver_job(self, quarter_key: str) -> None:
+        path = self.job_dir / f"{quarter_key}.json"
+        if not path.is_file():
+            raise EntityNotFoundError(f"Solver job for '{quarter_key}' does not exist.")
+        path.unlink()
+

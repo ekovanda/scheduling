@@ -12,6 +12,8 @@ from app.persistence.models import (
     QuarterScheduleDocument,
     ScheduleState,
     ShiftAssignmentRecord,
+    SolverJobRecord,
+    SolverJobStatus,
     StaffMember,
 )
 from app.persistence.repository import FileJsonRepository
@@ -187,3 +189,39 @@ def test_schedule_repository_lifecycle(temp_repo: FileJsonRepository) -> None:
     reloaded = temp_repo.get_schedule("2026-Q2")
     assert reloaded is not None
     assert reloaded.state == ScheduleState.PUBLISHED
+
+
+def test_solver_job_repository_lifecycle(temp_repo: FileJsonRepository) -> None:
+    """Test saving, retrieving, updating, and deleting SolverJobRecord."""
+    assert temp_repo.get_solver_job("2026-Q2") is None
+
+    job = SolverJobRecord(
+        job_id="job_2026_q2_test",
+        quarter_key="2026-Q2",
+        status=SolverJobStatus.RUNNING,
+        max_solve_time_seconds=60,
+    )
+    temp_repo.save_solver_job(job)
+
+    loaded = temp_repo.get_solver_job("2026-Q2")
+    assert loaded is not None
+    assert loaded.job_id == "job_2026_q2_test"
+    assert loaded.status == SolverJobStatus.RUNNING
+    assert loaded.max_solve_time_seconds == 60
+
+    # Update progress
+    loaded.status = SolverJobStatus.COMPLETED
+    loaded.solutions_found = 5
+    loaded.best_objective = 420.0
+    temp_repo.save_solver_job(loaded)
+
+    reloaded = temp_repo.get_solver_job("2026-Q2")
+    assert reloaded is not None
+    assert reloaded.status == SolverJobStatus.COMPLETED
+    assert reloaded.solutions_found == 5
+    assert reloaded.best_objective == 420.0
+
+    # Delete
+    temp_repo.delete_solver_job("2026-Q2")
+    assert temp_repo.get_solver_job("2026-Q2") is None
+
