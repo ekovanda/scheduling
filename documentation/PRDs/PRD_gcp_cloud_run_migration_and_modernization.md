@@ -84,7 +84,7 @@ flowchart TD
 |:---|:---|:---|
 | **Staff Management** | Edit local `staff.csv`, upload per session | In-app Employee Management UI; changes persist automatically |
 | **Vacation Tracking** | Edit local `vacations.xlsx`, upload per session | In-app Vacation Calendar; recurring & future leaves pre-stored |
-| **Schedule Generation** | Streamlit button, browser blocks during solve | Direct synchronous solver API (`POST /quarters/{key}/generate`) within Cloud Run 300s timeout; candidate plan saved to database |
+| **Schedule Generation** | Streamlit button, browser blocks during solve | Asynchronous Background Solver Job (`POST /quarters/{key}/generate` returns `202 Accepted` with `job_id`; frontend polls status or receives updates; background thread with `--no-cpu-throttling` withstanding 10-minute solves) |
 | **Manual Adjustments** | Export to Excel or use clumsy Streamlit widgets | Interactive React grid with drag-and-drop & live constraint feedback |
 | **Quarter Operations** | Planners edit exported Excel file on desktop when shifts swap or sick leave occurs | Planners log swaps and sick replacements directly in the live schedule matrix |
 | **Quarter Roll-Over** | Manually upload Q1 *Arbeitseinsätze* Excel into Q2 Streamlit session | 1-Click Roll-Over: system automatically reads Q1 realized shifts, builds `PreviousPlanContext`, and initializes Q2 |
@@ -125,7 +125,7 @@ flowchart LR
 ```
 
 - **Phase 1** has been successfully executed, deploying the existing Streamlit app to private Cloud Run with zero disruption to active scheduling.
-- **Phase 2** builds the headless FastAPI layer, persistence store, and automated roll-over logic. In accordance with the "Flat & Simple" principle, the solver is invoked directly as a synchronous endpoint within Cloud Run's 300s timeout window, cutting out stateful job queues and polling infrastructure.
+- **Phase 2** builds the headless FastAPI layer, persistence store, automated roll-over logic, and an asynchronous in-process solver runner. While maintaining "Flat & Simple" architecture (avoiding heavy external Redis/Celery brokers), Phase 2 addresses the operational reality that clinical optimization requires up to 600s (10-minute) "Gründlich" solves. Because Firebase Hosting enforces a hard 60s CDN connection timeout and Cloud Run defaults to 300s, Phase 2 implements a lightweight in-process background task with non-blocking status polling (`POST /generate` returns `202 Accepted` + `job_id`, `GET /solver-status`), backed by Cloud Run's `--no-cpu-throttling` flag.
 - **Phase 3** replaces Streamlit with the full single-source-of-truth React UI.
 - **Parallel Deployment Model**: All Phase 2 and Phase 3 deployments target a separate Cloud Run service (`dienstplan-dev`) configured with `min-instances=0` ($0 idle cost), ensuring production (`dienstplan-app`) remains completely insulated from downtime or breaking changes.
 
@@ -143,11 +143,11 @@ flowchart LR
 |:---|:---|:---|
 | **Service Name** | `dienstplan-app` | Primary scheduling service |
 | **Region** | `europe-west3` (Frankfurt) or `europe-west1` (Belgium) | Low latency, strict EU GDPR compliance |
-| **CPU Allocation** | 2 vCPU | Dedicated CPU cores for OR-Tools CP-SAT solver search threads |
-| **Memory** | 2 GiB to 4 GiB | CP-SAT model construction and variable state space |
+| **CPU Allocation & Throttling** | 2 vCPU, Always Allocated (`--no-cpu-throttling`) | Dedicated CPU cores for OR-Tools CP-SAT; `--no-cpu-throttling` is mandatory so background solver threads continue running after HTTP 202 is returned |
+| **Memory** | 4 GiB | Headroom for deep CP-SAT branch-and-bound search trees, preventing OOM kills (exit 137) during 10-minute solves |
 | **Execution Environment** | Second Generation (`gen2`) | Full Linux syscall and memory bandwidth compatibility |
-| **Request Timeout** | 300 seconds (5 min) | Accommodates 120s solver execution limit without HTTP gateway timeouts |
-| **Concurrency** | 5 to 10 | Streamlit runs on WebSockets; limits concurrent solver jobs per container |
+| **Request Timeout** | 900 seconds (15 min) | Generous container lifetime accommodating long solves up to 10 minutes |
+| **Concurrency** | 2 | Limits concurrent compute jobs per container, preventing CPU starvation and heartbeat drops |
 | **Session Affinity** | Enabled (`--session-affinity`) | Critical for Streamlit WebSockets across client reconnects |
 | **Min Instances** | 0 (cost-effective) or 1 (instant) | Min 0 scales to zero when idle; Min 1 eliminates cold-start latency |
 | **Max Instances** | 3 | Prevents accidental cost runaway |
@@ -329,11 +329,107 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
 | `GET` / `POST` | `/api/v1/absences` | Query or record vacations and sick leaves across any date range |
 | `GET` | `/api/v1/quarters/{quarter_key}` | Retrieve quarter schedule document, status, and metrics |
 | `POST` | `/api/v1/quarters/{quarter_key}/init` | 1-Click Init: auto-detects preceding quarter, computes roll-over context |
-| `POST` | `/api/v1/quarters/{quarter_key}/generate` | Direct synchronous CP-SAT solve (~60–120s within 300s timeout); returns generated `QuarterScheduleDocument` and metrics |
+| `POST` | `/api/v1/quarters/{quarter_key}/generate` | Launch async background CP-SAT solve; returns `202 Accepted` with `{job_id, status: "RUNNING", started_at, max_solve_time_seconds}` |
+| `GET` | `/api/v1/quarters/{quarter_key}/solver-status` | Poll live solver progress (`IDLE`, `RUNNING`, `COMPLETED`, `FAILED`), elapsed seconds, latest objective score, and soft penalty |
+| `POST` | `/api/v1/quarters/{quarter_key}/cancel` | Gracefully interrupt / cancel an active CP-SAT search |
 | `POST` | `/api/v1/quarters/{quarter_key}/shifts/swap` | Swap or reassign a shift with instant live constraint validation |
 | `POST` | `/api/v1/quarters/{quarter_key}/publish` | Move state from `DRAFT` to `PUBLISHED` |
 | `POST` | `/api/v1/quarters/{quarter_key}/lock` | Lock quarter into `CLOSED` state for permanent record |
 | `GET` | `/api/v1/quarters/{quarter_key}/export` | 1-Click download of styled Excel (.xlsx) or CSV for noticeboard/staff |
+
+### 5.5 Asynchronous Solver Job Architecture & Long-Solve Resiliency
+
+Stakeholder testing on Cloud Run revealed that synchronous HTTP solver execution breaks under real-world clinical optimization workloads. This section specifies the resilient, asynchronous solver pattern engineered specifically to overcome reverse proxy and serverless compute boundaries.
+
+#### 5.5.1 Root Cause Analysis: The Synchronous Solver Failure Modes
+1. **Firebase Hosting CDN Reverse Proxy 60s Timeout**:
+   - When requests route through Firebase Hosting rewrites (`firebase.json` $\rightarrow$ Cloud Run), Google's edge CDN imposes a hard **60-second connection timeout**.
+   - Any synchronous HTTP call taking longer than 60s triggers an immediate `504 Gateway Timeout` at the edge, even if the backend Cloud Run container is still running.
+2. **Cloud Run 300s Default Request Timeout**:
+   - The "Gründlich" deep optimization requires **600 seconds (10 minutes)** to prove optimality across complex constraint interactions (open/closed nights, intern weekend coupling, vet midweek blocks, cross-quarter boundaries).
+   - Cloud Run's default `--timeout=300s` forcefully terminates any active HTTP connection at the 5-minute mark, dropping the connection and rebooting or resetting the request.
+3. **Cloud Run Default CPU Throttling (`--cpu-throttling`)**:
+   - By default, Cloud Run drastically throttles container CPU down to near zero outside active HTTP request processing windows.
+   - If an async background task is spawned without `--no-cpu-throttling`, the background solver thread freezes as soon as the HTTP `202 Accepted` response completes.
+4. **ASGI Web Worker Starvation**:
+   - OR-Tools CP-SAT is a CPU-intensive C++ multi-threaded engine. Executing it synchronously on the web worker thread pool starves Uvicorn/FastAPI from serving container health check probes (`/_stcore/health` or `/healthz`), causing Cloud Run to declare the container unhealthy and kill it.
+
+#### 5.5.2 "Flat & Simple" In-Process Job Architecture
+Rather than introducing heavy, expensive distributed message brokers (such as Celery, RabbitMQ, or Redis), Phase 2 implements a lightweight in-process asynchronous runner:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Planner as Clinic Planner (React UI)
+    participant CDN as Firebase Hosting CDN
+    participant API as FastAPI Backend (Cloud Run)
+    participant Worker as Background Solver Thread
+    participant CPSAT as OR-Tools CP-SAT
+    participant DB as JSON / Firestore Store
+
+    Planner->>CDN: POST /api/v1/quarters/2026-Q2/generate (max=600s)
+    CDN->>API: Forward HTTP POST
+    API->>Worker: Spawn Solver Thread (job_id, quarter_key)
+    Worker->>CPSAT: Launch cp_model.CpSolver.Solve()
+    API-->>CDN: 202 Accepted {job_id, status: "RUNNING"} (<50ms)
+    CDN-->>Planner: Immediate Response (bypasses 60s CDN timeout)
+
+    loop Every 2 Seconds
+        Planner->>API: GET /api/v1/quarters/2026-Q2/solver-status
+        API-->>Planner: 200 OK {status: "RUNNING", elapsed: 42s, solutions: 5}
+    end
+
+    CPSAT-->>Worker: Solve Finished (status: OPTIMAL / FEASIBLE)
+    Worker->>DB: Persist Candidate Schedule Draft & Solver Metrics
+    Worker-->>Worker: Update Job Registry (status: "COMPLETED")
+
+    Planner->>API: GET /api/v1/quarters/2026-Q2/solver-status
+    API-->>Planner: 200 OK {status: "COMPLETED", best_schedule_id}
+    Planner->>API: GET /api/v1/quarters/2026-Q2
+    API-->>Planner: Load Generated Matrix Draft
+```
+
+#### 5.5.3 Cloud Run Production Configuration Directives
+To guarantee 10-minute long-solves run without interruption:
+* **`--no-cpu-throttling` (MANDATORY)**: Guarantees 100% CPU allocation to the container even when no HTTP request is actively in flight, allowing the background solver thread to run at full speed.
+* **`--timeout=900s`**: Sets the Cloud Run service timeout to 15 minutes, accommodating 600s solves plus model generation, validation, and persistence overhead.
+* **`--memory=4Gi`**: Allocates 4 GiB memory to prevent Linux OOM kills (exit code 137) during deep branch-and-bound exploration.
+* **`--concurrency=2`**: Constrains concurrent requests per solver-bearing container to prevent CPU thrashing.
+
+#### 5.5.4 API Contract & Cancellation
+* **`POST /api/v1/quarters/{quarter_key}/generate`**:
+  - Request: `{"max_solve_time_seconds": 600, "random_seed": 42, "include_previous_context": true}`
+  - Response (`202 Accepted`):
+    ```json
+    {
+      "job_id": "job_2026_q2_solve_a8f9",
+      "quarter_key": "2026-Q2",
+      "status": "RUNNING",
+      "started_at": "2026-11-06T12:00:00Z",
+      "max_solve_time_seconds": 600
+    }
+    ```
+* **`GET /api/v1/quarters/{quarter_key}/solver-status`**:
+  - Response (`200 OK`):
+    ```json
+    {
+      "job_id": "job_2026_q2_solve_a8f9",
+      "quarter_key": "2026-Q2",
+      "status": "RUNNING",
+      "elapsed_seconds": 124.5,
+      "solutions_found": 12,
+      "best_objective": 8420.0,
+      "soft_penalty": 150.0,
+      "error": null
+    }
+    ```
+* **`POST /api/v1/quarters/{quarter_key}/cancel`**:
+  - Sets atomic cancellation flag on solver progress callback (`stop_search()`), aborting computation gracefully within milliseconds.
+
+#### 5.5.5 Frontend User Experience (Phase 3 Integration)
+* **Non-Blocking Execution**: Launching a solve opens a modal with a live timer, solution quality trajectory, and cancel button.
+* **Navigation Freedom**: Planners can close the modal and browse "Mitarbeiter" or "Abwesenheiten" while the solve proceeds in the background. A navbar indicator (`⏳ Berechnung läuft: 03:15`) maintains live context.
+* **Toast & Matrix Auto-Refresh**: When the polling hook detects `"COMPLETED"`, a toast notification alerts the planner and the Dienstplan matrix seamlessly re-renders with the newly created candidate draft.
 
 ---
 
@@ -379,7 +475,7 @@ def get_previous_quarter_context(target_year: int, target_quarter: int) -> Previ
    - Quick-entry date range form with live validation.
    - Immediate warning if an absence creates an impossible weekend or night coverage shortage.
 3. **Interactive Schedule Matrix & Operations (Hero View)**:
-   - Header with quarter status banner (`DRAFT` / `PUBLISHED` / `LOCKED`), 1-click solve trigger with synchronous progress indicator, and Excel export.
+   - Header with quarter status banner (`DRAFT` / `PUBLISHED` / `LOCKED`), 1-click solve trigger with asynchronous live progress modal / background status polling, and Excel export.
    - Matrix grid with colored badges for shift types (Night, Weekend, Day, On-Call).
    - **Click-to-Swap Drawer**: Click any shift to view eligible replacements with instant live constraint check (rest gaps, max consecutive days) via `POST /quarters/{key}/shifts/swap`.
    - Supports both Pre-Quarter Planning (Soll-Plan) and Live Realized Tracking (Ist-Plan) with full audit log.
@@ -419,7 +515,7 @@ gantt
 
     section Phase 2: Decoupled API & SSOT Backend (Active)
     FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 3d
-    Synchronous Direct Solver Integration         :p2_2, after p2_1, 2d
+    Asynchronous Background Solver & Polling API  :p2_2, after p2_1, 3d
     Data Persistence (Firestore & Local Repo)     :p2_3, after p2_2, 4d
     Automated Roll-Over Engine Implementation     :p2_4, after p2_3, 3d
     Parallel Dev Service Deployment (dienstplan-dev):p2_5, after p2_4, 2d
@@ -443,5 +539,5 @@ To achieve the single source of truth vision, the following items are now formal
 3. **Soll- vs. Ist-Tracking**: Adds shift swap and replacement logging directly into active schedules.
 4. **Automated Roll-Over Engine**: Replaces manual `Arbeitseinsaetze.xlsx` context uploads with automated database queries feeding `build_previous_context(...)`.
 5. **Excel Role Shift**: Excel is relegated from an operational storage format to a 1-click presentation/export format.
-6. **Direct Synchronous Solver Execution**: Avoids async job queues and polling state machines by running OR-Tools CP-SAT synchronously within Cloud Run's 300s timeout.
+6. **Resilient Asynchronous Solver Execution**: Replaces fragile synchronous HTTP calls with an in-process background worker (`POST /generate` $\rightarrow$ `202 Accepted`, `GET /solver-status`) and Cloud Run `--no-cpu-throttling`, withstanding 10-minute "Gründlich" solves and bypassing CDN reverse-proxy timeouts.
 7. **Zero-Risk Parallel Cloud Run Deployments**: Development and preview iterations deploy to `dienstplan-dev` with `min-instances=0` ($0 idle cost), guaranteeing zero disruption to the production service (`dienstplan-app`).
