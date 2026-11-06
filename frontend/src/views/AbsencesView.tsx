@@ -14,6 +14,7 @@ import { fetchAbsences, fetchStaff, createAbsence, deleteAbsence } from '../lib/
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { cn } from '../lib/utils';
+import { getStaffColorScheme } from '../lib/colors';
 
 type AbsenceViewMode = 'by_person' | 'chronological' | 'calendar';
 
@@ -54,51 +55,8 @@ export const AbsencesView: React.FC = () => {
 
   const getStaff = (staffId: string) => staffList.find((s) => s.id === staffId);
 
-  // Consistent pleasant colors per staff member
-  const getStaffColorStyles = (identifier: string) => {
-    const palette = [
-      {
-        bg: 'bg-blue-500',
-        text: 'text-white',
-        border: 'border-blue-600',
-        lightBg: 'bg-blue-100 text-blue-900 border-blue-300',
-      },
-      {
-        bg: 'bg-emerald-500',
-        text: 'text-white',
-        border: 'border-emerald-600',
-        lightBg: 'bg-emerald-100 text-emerald-900 border-emerald-300',
-      },
-      {
-        bg: 'bg-amber-500',
-        text: 'text-white',
-        border: 'border-amber-600',
-        lightBg: 'bg-amber-100 text-amber-900 border-amber-300',
-      },
-      {
-        bg: 'bg-purple-500',
-        text: 'text-white',
-        border: 'border-purple-600',
-        lightBg: 'bg-purple-100 text-purple-900 border-purple-300',
-      },
-      {
-        bg: 'bg-rose-500',
-        text: 'text-white',
-        border: 'border-rose-600',
-        lightBg: 'bg-rose-100 text-rose-900 border-rose-300',
-      },
-      {
-        bg: 'bg-teal-500',
-        text: 'text-white',
-        border: 'border-teal-600',
-        lightBg: 'bg-teal-100 text-teal-900 border-teal-300',
-      },
-    ];
-    let hash = 0;
-    for (let i = 0; i < identifier.length; i++) {
-      hash = identifier.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return palette[Math.abs(hash) % palette.length];
+  const getStaffColor = (stf?: StaffMember | null) => {
+    return getStaffColorScheme(stf?.beruf, stf?.abteilung);
   };
 
   const getDayCount = (start: string, end: string) => {
@@ -375,6 +333,37 @@ export const AbsencesView: React.FC = () => {
               </div>
             </div>
 
+            {/* Color Coding Legend */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 bg-stone-50/80 border-b border-stone-200/60 text-xs">
+              <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">
+                Farbcode:
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0" />
+                <span>Tierarzt (Vet)</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-sky-500 shrink-0" />
+                <span>Intern</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>TFA (OP)</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-purple-500 shrink-0" />
+                <span>TFA (Station)</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-blue-500 shrink-0" />
+                <span>TFA (Allgemein)</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-500 shrink-0" />
+                <span>Azubi</span>
+              </span>
+            </div>
+
             {/* Weekday Header */}
             <div className="grid grid-cols-7 border-b border-stone-200/80 bg-stone-50/50 text-center text-xs font-semibold text-stone-500 py-2">
               <div>Mo</div>
@@ -486,7 +475,7 @@ export const AbsencesView: React.FC = () => {
                                 dayObj.day === daysInMonth;
 
                               const isHovered = hoveredAbsenceId === activeAbsence.id;
-                              const colors = getStaffColorStyles(ident);
+                              const colors = getStaffColor(stf);
 
                               return (
                                 <div
@@ -494,12 +483,12 @@ export const AbsencesView: React.FC = () => {
                                   onMouseEnter={() => setHoveredAbsenceId(activeAbsence.id)}
                                   onMouseLeave={() => setHoveredAbsenceId(null)}
                                   className={cn(
-                                    'relative h-5 flex items-center transition-all duration-150 cursor-pointer select-none',
-                                    colors.lightBg,
+                                    'relative h-5 flex items-center transition-all duration-150 cursor-pointer select-none border',
+                                    colors.calendarStrip,
                                     isStripStart ? 'rounded-l-md pl-1.5' : '-ml-1 border-l-0 pl-1',
                                     isStripEnd ? 'rounded-r-md pr-1.5' : '-mr-1 border-r-0',
                                     isHovered
-                                      ? 'ring-2 ring-stone-900/30 z-30 brightness-95 shadow-xs scale-y-110'
+                                      ? 'ring-2 ring-stone-900/40 z-30 brightness-95 shadow-xs scale-y-110 font-bold'
                                       : 'opacity-90 hover:opacity-100'
                                   )}
                                 >
@@ -549,7 +538,12 @@ export const AbsencesView: React.FC = () => {
               {/* Person Summary Header */}
               <div className="bg-[#faf9f6] px-5 py-3 border-b border-stone-200/80 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="h-7 w-7 rounded-full bg-stone-100 border border-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
+                  <div
+                    className={cn(
+                      'h-7 w-7 rounded-full border font-bold text-xs flex items-center justify-center shrink-0',
+                      getStaffColorScheme(staff.beruf, staff.abteilung).avatar
+                    )}
+                  >
                     {staff.name
                       .split(' ')
                       .map((n) => n[0])
@@ -658,7 +652,21 @@ export const AbsencesView: React.FC = () => {
                         </td>
 
                         <td className="px-3 py-3.5 text-stone-800 font-semibold text-xs">
-                          {stf ? stf.name : rec.staff_id}
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={cn(
+                                'h-6 w-6 rounded-full border font-bold text-[10px] flex items-center justify-center shrink-0',
+                                getStaffColorScheme(stf?.beruf, stf?.abteilung).avatar
+                              )}
+                            >
+                              {(stf ? stf.name : rec.staff_id)
+                                .split(' ')
+                                .map((n) => n[0])
+                                .slice(0, 2)
+                                .join('')}
+                            </div>
+                            <span>{stf ? stf.name : rec.staff_id}</span>
+                          </div>
                         </td>
 
                         <td className="px-3 py-3.5 font-mono text-xs text-stone-600 font-bold">

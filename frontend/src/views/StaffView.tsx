@@ -10,9 +10,11 @@ import {
 } from 'lucide-react';
 import type { StaffMember, Beruf, Abteilung } from '../types/api';
 import { fetchStaff, createStaff } from '../lib/api';
-import { RoleBadge, Badge } from '../components/ui/Badge';
+import { RoleBadge, AbteilungBadge, NachtdienstBadge } from '../components/ui/Badge';
+import { getStaffColorScheme } from '../lib/colors';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { cn } from '../lib/utils';
 
 export const StaffView: React.FC = () => {
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
@@ -234,7 +236,7 @@ export const StaffView: React.FC = () => {
                 <th className="px-3 py-3.5">Kürzel</th>
                 <th className="px-3 py-3.5">Rolle</th>
                 <th className="px-3 py-3.5">Abteilung</th>
-                <th className="px-3 py-3.5">Wochenstunden</th>
+                <th className="px-3 py-3.5 text-center">Wochenstunden</th>
                 <th className="px-3 py-3.5">Nachtdienst</th>
                 <th className="py-3.5 pl-3 pr-6 text-right">Aktion</th>
               </tr>
@@ -261,7 +263,12 @@ export const StaffView: React.FC = () => {
                     {/* Name + Warm Initials Avatar */}
                     <td className="py-3.5 pl-6 pr-3">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-stone-100 border border-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center shadow-2xs">
+                        <div
+                          className={cn(
+                            'h-8 w-8 rounded-full border font-bold text-xs flex items-center justify-center shadow-2xs shrink-0',
+                            getStaffColorScheme(staff.beruf, staff.abteilung).avatar
+                          )}
+                        >
                           {staff.name
                             .split(' ')
                             .map((n) => n[0])
@@ -283,24 +290,18 @@ export const StaffView: React.FC = () => {
                     </td>
 
                     {/* Department */}
-                    <td className="px-3 py-3.5 text-stone-600 text-xs">
-                      {staff.abteilung}
+                    <td className="px-3 py-3.5">
+                      <AbteilungBadge abteilung={staff.abteilung} beruf={staff.beruf} />
                     </td>
 
-                    {/* Hours */}
-                    <td className="px-3 py-3.5 text-stone-700 text-xs font-semibold">
+                    {/* Hours (Centered) */}
+                    <td className="px-3 py-3.5 text-center text-stone-700 text-xs font-semibold">
                       {staff.beruf === 'Vet' || staff.beruf === 'Tierarzt' ? '-' : staff.hours}
                     </td>
 
                     {/* Night Shift Qualification */}
                     <td className="px-3 py-3.5">
-                      {!staff.nd_possible ? (
-                        <Badge variant="neutral">Kein ND</Badge>
-                      ) : staff.nd_alone ? (
-                        <Badge variant="success">Alleine tauglich</Badge>
-                      ) : (
-                        <Badge variant="warning">Nur Begleitung</Badge>
-                      )}
+                      <NachtdienstBadge nd_possible={staff.nd_possible} nd_alone={staff.nd_alone} />
                     </td>
 
                     {/* Actions */}

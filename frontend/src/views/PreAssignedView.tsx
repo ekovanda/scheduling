@@ -16,6 +16,7 @@ import { fetchPreAssigned, fetchStaff, createPreAssigned, deletePreAssigned } fr
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { cn } from '../lib/utils';
+import { getStaffColorScheme } from '../lib/colors';
 
 export const PreAssignedView: React.FC = () => {
   const [shifts, setShifts] = useState<PreAssignedShift[]>([]);
@@ -260,7 +261,21 @@ export const PreAssignedView: React.FC = () => {
                         </td>
 
                         <td className="px-3 py-3.5 text-stone-800 font-semibold text-xs">
-                          {stf ? stf.name : rec.staff_id}
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={cn(
+                                'h-6 w-6 rounded-full border font-bold text-[10px] flex items-center justify-center shrink-0',
+                                getStaffColorScheme(stf?.beruf, stf?.abteilung).avatar
+                              )}
+                            >
+                              {(stf ? stf.name : rec.staff_id)
+                                .split(' ')
+                                .map((n) => n[0])
+                                .slice(0, 2)
+                                .join('')}
+                            </div>
+                            <span>{stf ? stf.name : rec.staff_id}</span>
+                          </div>
                         </td>
 
                         <td className="px-3 py-3.5 font-mono text-xs text-stone-600 font-bold">
