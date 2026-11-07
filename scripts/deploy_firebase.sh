@@ -24,3 +24,4 @@ echo "=========================================================="
 echo " Firebase Hosting Deployment Complete!"
 echo " Portal URL: https://dienstplan-tierklinik-trillig.web.app"
 echo "=========================================================="
+
