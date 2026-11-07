@@ -9,6 +9,7 @@ fi
 
 # 1. Parse CLI Target Flags (--dev or --prod)
 TARGET="prod"
+APP_TARGET="fastapi"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -20,10 +21,15 @@ while [[ $# -gt 0 ]]; do
       TARGET="prod"
       shift
       ;;
+    --legacy-streamlit|--streamlit)
+      APP_TARGET="streamlit"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 [--dev | --prod]"
-      echo "  --dev   Deploy modernization API to 'dienstplan-dev' with APP_TARGET=fastapi"
-      echo "  --prod  Deploy stable application to 'dienstplan-app' with APP_TARGET=streamlit (default)"
+      echo "Usage: $0 [--dev | --prod] [--legacy-streamlit]"
+      echo "  --prod              Deploy production app to 'dienstplan-app' (FastAPI + React SPA, default)"
+      echo "  --dev               Deploy to 'dienstplan-dev' (FastAPI + React SPA)"
+      echo "  --legacy-streamlit  Deploy legacy Streamlit UI for temporary fallback"
       exit 0
       ;;
     *)
@@ -41,26 +47,33 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 if [ "$TARGET" = "dev" ]; then
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-dev}"
-    APP_TARGET="fastapi"
+    AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
 else
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-app}"
-    APP_TARGET="streamlit"
+    AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
 fi
 
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE_NAME}:${IMAGE_TAG}"
 
 echo "=========================================================="
 echo " Deploying Dienstplan App to GCP Cloud Run"
-echo " Target Mode: ${TARGET} (APP_TARGET=${APP_TARGET})"
-echo " Project:     ${PROJECT_ID}"
-echo " Region:      ${REGION}"
-echo " Service:     ${SERVICE_NAME}"
-echo " Image:       ${IMAGE_NAME}"
+echo " Target Mode:   ${TARGET} (APP_TARGET=${APP_TARGET})"
+echo " Auth Enforced: ${AUTH_REQUIRED}"
+echo " Project:       ${PROJECT_ID}"
+echo " Region:        ${REGION}"
+echo " Service:       ${SERVICE_NAME}"
+echo " Image:         ${IMAGE_NAME}"
 echo "=========================================================="
 
 # 2. Environment Variables Configuration
 STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
-ENV_VARS_LIST=("APP_TARGET=${APP_TARGET}" "STORAGE_BACKEND=${STORAGE_BACKEND}" "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" "GCP_PROJECT=${PROJECT_ID}")
+ENV_VARS_LIST=(
+  "APP_TARGET=${APP_TARGET}"
+  "STORAGE_BACKEND=${STORAGE_BACKEND}"
+  "AUTH_REQUIRED=${AUTH_REQUIRED}"
+  "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
+  "GCP_PROJECT=${PROJECT_ID}"
+)
 
 if [ -n "${APP_PASSWORD:-}" ]; then
     echo "Hashing provided APP_PASSWORD..."

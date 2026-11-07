@@ -1,7 +1,7 @@
 {
   "hosting": {
     "site": "dienstplan-tierklinik-trillig",
-    "public": "public",
+    "public": "frontend/dist",
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -9,11 +9,15 @@
     ],
     "rewrites": [
       {
-        "source": "**",
+        "source": "/api/**",
         "run": {
           "serviceId": "dienstplan-app",
           "region": "europe-west3"
         }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
     ]
   }

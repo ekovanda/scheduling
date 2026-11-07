@@ -14,7 +14,7 @@ echo " Process UID        : $(id -u):$(id -g)"
 echo "=========================================================="
 
 # Ensure persistent storage directory exists for the non-root user
-mkdir -p /app/data/db/staff /app/data/db/absences /app/data/db/schedules
+mkdir -p /app/data/db/staff /app/data/db/absences /app/data/db/schedules /app/data/db/jobs /app/data/db/preassigned
 
 if [ "${APP_TARGET}" = "streamlit" ]; then
     echo "Launching Streamlit server..."

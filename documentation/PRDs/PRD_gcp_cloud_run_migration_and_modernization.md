@@ -705,25 +705,25 @@ Shift swapping during an active quarter involves live clinical adjustments (sick
 
 ```mermaid
 gantt
-    title Phased Modernization & SSOT Roadmap (v1.4)
+    title Phased Modernization & SSOT Roadmap (v1.5)
     dateFormat  YYYY-MM-DD
     section Phase 1: Lift & Shift (Complete)
-    Dockerfile Hardening & Cloud Run Config       :p1_1, 2026-11-02, 2d
-    Deploy Streamlit to Private Cloud Run         :p1_2, after p1_1, 2d
-    Parity Verification                           :p1_3, after p1_2, 3d
+    Dockerfile Hardening & Cloud Run Config       :done, p1_1, 2026-11-02, 2d
+    Deploy Streamlit to Private Cloud Run         :done, p1_2, after p1_1, 2d
+    Parity Verification                           :done, p1_3, after p1_2, 3d
 
     section Phase 2: Decoupled API & SSOT (Complete)
-    FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 3d
-    Asynchronous Background Solver & Polling API  :p2_2, after p2_1, 3d
-    Cloud Firestore Dual-Driver Persistence       :p2_3, after p2_2, 4d
-    Automated Roll-Over & L1 Fairness Engine      :p2_4, after p2_3, 3d
+    FastAPI Core wrapping app/scheduler           :done, p2_1, after p1_3, 3d
+    Asynchronous Background Solver & Polling API  :done, p2_2, after p2_1, 3d
+    Cloud Firestore Dual-Driver Persistence       :done, p2_3, after p2_2, 4d
+    Automated Roll-Over & L1 Fairness Engine      :done, p2_4, after p2_3, 3d
 
-    section Phase 3: React SSOT Delivery (Active)
-    Phase 3A: Pre-Flight Consistency & Explainability :p3_1, 2026-11-07, 3d
-    Phase 3B: Authentication & Planner Logins     :p3_2, after p3_1, 3d
-    Phase 3C: Production Deployment & Cutover     :p3_3, after p3_2, 2d
+    section Phase 3: React SSOT Delivery (Complete)
+    Phase 3A: Pre-Flight Feasibility & Diagnostics (v1.10.0) :done, p3_1, 2026-11-07, 1d
+    Phase 3B: Planner Authentication & RBAC (v1.11.0)       :done, p3_2, after p3_1, 1d
+    Phase 3C: Production Deployment Pipeline (v1.12.0)      :done, p3_3, after p3_2, 1d
 
-    section Phase 4: Dedicated Shift Swap (Future)
+    section Phase 4: Dedicated Shift Swap (Next)
     Guided Replacement Suggester & Live Validation:p4_1, after p3_3, 5d
     Audit Trail & Soll vs. Ist Ledger Tracking    :p4_2, after p4_1, 4d
 ```

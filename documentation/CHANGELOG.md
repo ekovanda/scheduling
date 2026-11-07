@@ -9,6 +9,23 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.0] - 2026-11-07
+
+### Added: Produktions-Cutover & Firebase Hosting Pipeline (Phase 3C)
+
+- **Cloud Run Deployment Cutover (`scripts/deploy_cloud_run.sh`, `scripts/deploy_cloud_run.ps1`):**
+  - Standard-Target für `dienstplan-app` (Produktion) auf `fastapi` umgestellt, womit der FastAPI-Server sowohl die API-Endpunkte unter `/api/v1` als auch die kompilierte React-SPA unter `/` ausliefert.
+  - Optionale Rollback-Möglichkeit auf die alte Streamlit-Oberfläche via `--legacy-streamlit` bzw. `-LegacyStreamlit` erhalten.
+  - Automatische Übermittlung von `AUTH_REQUIRED=true` im Produktionsbetrieb und `AUTH_REQUIRED=false` für `dienstplan-dev`.
+- **Firebase Hosting CDN Routing (`firebase.json`):**
+  - Konfiguration von `public: frontend/dist` mit globalem CDN Edge-Caching für statische Assets.
+  - API-Proxy-Rewrites für `/api/**` an den Cloud Run Service `dienstplan-app` in `europe-west3` (Frankfurt) mit gesetzlichen DSGVO-Garantien.
+  - Client-Side SPA Fallback-Routing (`**` -> `/index.html`).
+- **Container Hardening (`Dockerfile`, `entrypoint.sh`):**
+  - Vollständige Verzeichnis-Initialisierung für alle Datastore-Entitäten (`staff`, `absences`, `schedules`, `jobs`, `preassigned`) für den Non-Root-Container-User `appuser` (UID 10001).
+- **Automatisierte Frontend-Deploy-Pipeline (`scripts/deploy_firebase.sh`):**
+  - Neues Skript zur 1-Klick-Erstellung des optimierten Vite-Produktionsbundles und Bereitstellung auf Firebase Hosting (`dienstplan-tierklinik-trillig`).
+
 ## [1.11.0] - 2026-11-07
 
 ### Added: Planer-Authentifizierung & Schneller Entwickler-Modus (Phase 3B)

@@ -56,7 +56,7 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 # Security hardening:
 # 1. Pre-create database directories so appuser has full write ownership
 # 2. Run as non-root system user (UID 10001)
-RUN mkdir -p /app/data/db/staff /app/data/db/absences /app/data/db/schedules \
+RUN mkdir -p /app/data/db/staff /app/data/db/absences /app/data/db/schedules /app/data/db/jobs /app/data/db/preassigned \
     && chmod +x /app/scripts/entrypoint.sh \
     && groupadd -r appuser && useradd -r -g appuser -u 10001 -m -d /app appuser \
     && chown -R appuser:appuser /app

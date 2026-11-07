@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.11.0"
+CURRENT_VERSION = "1.12.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.12.0",
+        date="07. November 2026",
+        summary="Produktions-Cutover & Firebase Hosting Pipeline",
+        highlights=(
+            "Vollständiger Cloud Run Cutover auf die moderne React- & FastAPI-Architektur.",
+            "Firebase Hosting CDN-Routing mit Sub-10ms Edge-Caching und API-Proxy nach Frankfurt.",
+            "Automatisierte Deployment-Pipelines für Linux und Windows mit sofortiger Rollback-Möglichkeit.",
+        ),
+    ),
     Release(
         version="1.11.0",
         date="07. November 2026",

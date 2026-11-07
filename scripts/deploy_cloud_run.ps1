@@ -2,6 +2,7 @@
 param (
     [switch]$Dev,
     [switch]$Prod,
+    [switch]$LegacyStreamlit,
     [string]$ProjectId = "tierklinik-trillig",
     [string]$Region = "europe-west3",
     [string]$Repository = "dienstplan-repo",
@@ -11,29 +12,38 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+$AppTarget = if ($LegacyStreamlit) { "streamlit" } else { "fastapi" }
+
 if ($Dev) {
     $Target = "dev"
     $ServiceName = "dienstplan-dev"
-    $AppTarget = "fastapi"
+    $AuthRequired = "false"
 } else {
     $Target = "prod"
     $ServiceName = "dienstplan-app"
-    $AppTarget = "streamlit"
+    $AuthRequired = "true"
 }
 
 $ImageName = "${Region}-docker.pkg.dev/${ProjectId}/${Repository}/${ServiceName}:${ImageTag}"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " Deploying Dienstplan App to GCP Cloud Run" -ForegroundColor Cyan
-Write-Host " Target Mode: $Target (APP_TARGET=$AppTarget)"
-Write-Host " Project:     $ProjectId"
-Write-Host " Region:      $Region"
-Write-Host " Service:     $ServiceName"
-Write-Host " Image:       $ImageName"
+Write-Host " Target Mode:   $Target (APP_TARGET=$AppTarget)"
+Write-Host " Auth Enforced: $AuthRequired"
+Write-Host " Project:       $ProjectId"
+Write-Host " Region:        $Region"
+Write-Host " Service:       $ServiceName"
+Write-Host " Image:         $ImageName"
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $StorageBackend = if ($env:STORAGE_BACKEND) { $env:STORAGE_BACKEND } else { "firestore" }
-$EnvVars = @("APP_TARGET=$AppTarget", "STORAGE_BACKEND=$StorageBackend")
+$EnvVars = @(
+    "APP_TARGET=$AppTarget",
+    "STORAGE_BACKEND=$StorageBackend",
+    "AUTH_REQUIRED=$AuthRequired",
+    "GOOGLE_CLOUD_PROJECT=$ProjectId",
+    "GCP_PROJECT=$ProjectId"
+)
 if ($AppPassword -ne "") {
     $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('SHA256')
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($AppPassword)
