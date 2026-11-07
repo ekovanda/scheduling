@@ -336,29 +336,21 @@ export const AbsencesView: React.FC = () => {
             {/* Color Coding Legend */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 bg-stone-50/80 border-b border-stone-200/60 text-xs">
               <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">
-                Farbcode:
+                Rolle:
               </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
-                <span className="h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0" />
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs font-medium">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-500 shrink-0" />
                 <span>Tierarzt (Vet)</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
-                <span className="h-2.5 w-2.5 rounded-full bg-sky-500 shrink-0" />
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs font-medium">
+                <span className="h-2.5 w-2.5 rounded-full bg-teal-500 shrink-0" />
                 <span>Intern</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0" />
-                <span>TFA (OP)</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
-                <span className="h-2.5 w-2.5 rounded-full bg-purple-500 shrink-0" />
-                <span>TFA (Station)</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs font-medium">
                 <span className="h-2.5 w-2.5 rounded-full bg-blue-500 shrink-0" />
-                <span>TFA (Allgemein)</span>
+                <span>TFA</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs">
+              <span className="inline-flex items-center gap-1.5 text-stone-700 text-xs font-medium">
                 <span className="h-2.5 w-2.5 rounded-full bg-amber-500 shrink-0" />
                 <span>Azubi</span>
               </span>

@@ -362,3 +362,32 @@ def test_preassigned_api_crud_lifecycle(client: TestClient) -> None:
     assert len(empty_resp.json()) == 0
 
 
+def test_quarter_fairness_overview_endpoint(client: TestClient) -> None:
+    """Ensure /api/v1/quarters/{quarter_key}/fairness returns structured role metrics."""
+    # 1. Onboard a staff member
+    staff_payload = {
+        "id": "STAFF_TFA1",
+        "identifier": "T1",
+        "name": "TFA One",
+        "beruf": "TFA",
+        "abteilung": "station",
+        "hours": 40,
+        "adult": True,
+        "reception": False,
+        "nd_possible": True,
+        "nd_alone": True,
+        "nd_min_consecutive": 2,
+        "nd_max_consecutive": 4,
+        "is_active": True,
+    }
+    client.post("/api/v1/staff", json=staff_payload)
+
+    # 2. Fetch fairness overview
+    resp = client.get("/api/v1/quarters/2026-Q4/fairness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["quarter_key"] == "2026-Q4"
+    assert "groups" in data
+    assert "TFA" in data["groups"]
+    assert "records" in data
+    assert any(r["identifier"] == "T1" for r in data["records"])

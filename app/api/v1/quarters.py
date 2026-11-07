@@ -27,12 +27,14 @@ from app.persistence.rollover import (
 )
 from app.scheduler.models import (
     Assignment,
+    Beruf,
     PreAssignedShift,
     Schedule,
     Shift,
     ShiftType,
     Staff,
     Vacation,
+    calculate_available_days,
 )
 from app.scheduler.solver import generate_schedule
 from app.scheduler.validator import validate_schedule
@@ -45,9 +47,10 @@ RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 class GenerateScheduleRequest(BaseModel):
     """Payload for triggering the asynchronous solver."""
 
-    max_solve_time_seconds: int = Field(default=120, ge=5, le=900)
+    max_solve_time_seconds: int = Field(default=600, ge=5, le=1200)
     random_seed: int | None = None
     include_previous_context: bool = True
+    stagnation_limit_seconds: float | None = Field(default=30.0, ge=2.0, le=300.0)
 
 
 class ShiftSwapRequest(BaseModel):
@@ -153,6 +156,227 @@ def get_quarter_rollover_context(
     }
 
 
+class StaffFairnessRecord(BaseModel):
+    identifier: str
+    name: str
+    beruf: str
+    hours: int
+    vacation_days: int
+    presence_factor: float
+    effective_nights: float
+    weekend_shifts: int
+    total_notdienst: float
+    normalized_40h: float
+    group_mean_40h: float
+    plan_delta: float
+    cf_delta: float
+    net_delta: float
+    status: str
+    explanation: str
+
+
+class GroupFairnessSummary(BaseModel):
+    beruf: str
+    total_staff: int
+    active_with_shifts: int
+    group_mean_40h: float
+    min_norm: float
+    max_norm: float
+    plan_spread: float
+    min_net: float
+    max_net: float
+    net_spread: float
+    balanced_pct: float
+
+
+class QuarterFairnessOverviewResponse(BaseModel):
+    quarter_key: str
+    has_schedule: bool
+    total_shifts: int
+    groups: dict[str, GroupFairnessSummary]
+    records: list[StaffFairnessRecord]
+
+
+@router.get("/{quarter_key}/fairness", response_model=QuarterFairnessOverviewResponse)
+def get_quarter_fairness_overview(
+    quarter_key: str,
+    repo: RepoDep,
+) -> QuarterFairnessOverviewResponse:
+    """Retrieve structured fairness metrics, balanced deltas, and group distributions."""
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+    total_quarter_days = (q_end - q_start).days + 1
+
+    doc = repo.get_schedule(quarter_key)
+    has_schedule = doc is not None and bool(doc.assignments)
+    total_shifts = len(doc.assignments) if (doc and doc.assignments) else 0
+
+    active_members = repo.list_staff(active_only=False)
+    all_staff = [m.to_scheduler_staff() for m in active_members]
+    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+
+    raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
+    vacations = [
+        Vacation(
+            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+            start_date=a.start_date,
+            end_date=a.end_date,
+        )
+        for a in raw_absences
+    ]
+
+    context = get_previous_quarter_context(year, quarter, repo)
+    prev_cf = (
+        {entry.identifier: entry.carry_forward_delta for entry in context.carry_forward}
+        if context
+        else {}
+    )
+
+    current_assignments: list[Assignment] = []
+    if doc and doc.assignments:
+        current_assignments = [
+            Assignment(
+                shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
+                staff_identifier=a.actual_staff_id,
+                is_paired=a.is_paired,
+            )
+            for a in doc.assignments
+        ]
+    schedule = Schedule(quarter_start=q_start, quarter_end=q_end, assignments=current_assignments)
+
+    all_records: list[StaffFairnessRecord] = []
+    groups_summary: dict[str, GroupFairnessSummary] = {}
+
+    for role_name in ["TFA", "Azubi", "Intern", "Vet"]:
+        group_staff = [
+            s
+            for s in all_staff
+            if (s.beruf.value == role_name) or (role_name == "Vet" and s.beruf == Beruf.VET)
+        ]
+
+        temp_recs = []
+        for s in group_staff:
+            avail_days = calculate_available_days(
+                s.identifier, vacations, q_start, q_end, effective_start=s.available_from
+            )
+            if avail_days <= 0:
+                continue
+            vacation_days = max(0, total_quarter_days - avail_days)
+            presence = avail_days / total_quarter_days if total_quarter_days > 0 else 1.0
+            eff_hours = s.hours if s.hours > 0 else 40
+
+            we = schedule.count_weekends(s.identifier, s)
+            nights = schedule.count_effective_nights(s.identifier, s)
+            tot = schedule.count_total_notdienst(s.identifier, s)
+
+            load = nights if s.beruf == Beruf.INTERN else tot
+            norm = (load / eff_hours / presence) * 40 if presence > 0 else 0.0
+
+            temp_recs.append(
+                {
+                    "staff": s,
+                    "hours": s.hours,
+                    "vacation_days": vacation_days,
+                    "presence_factor": round(presence, 4),
+                    "effective_nights": round(nights, 2),
+                    "weekend_shifts": we,
+                    "total_notdienst": round(tot, 2),
+                    "normalized_40h": round(norm, 2),
+                    "weight": eff_hours * presence,
+                }
+            )
+
+        total_w = sum(r["weight"] for r in temp_recs)
+        group_mean = (
+            sum(r["normalized_40h"] * r["weight"] for r in temp_recs) / total_w
+            if total_w > 0
+            else 0.0
+        )
+        group_mean = round(group_mean, 2)
+
+        role_records: list[StaffFairnessRecord] = []
+        for r in temp_recs:
+            s = r["staff"]
+            plan_delta = round(r["normalized_40h"] - group_mean, 2)
+            cf_delta = round(prev_cf.get(s.identifier, 0.0), 2)
+            net_delta = round(plan_delta + cf_delta, 2)
+
+            abs_net = abs(net_delta)
+            if abs_net <= 0.5:
+                status_str = "balanced"
+                if abs(cf_delta) >= 0.5:
+                    exp = f"Vorquartal ({cf_delta:+.2f}) durch aktuellen Plan ({plan_delta:+.2f}) erfolgreich neutralisiert."
+                else:
+                    exp = "Exakt im fairen Zielbereich der Berufsgruppe."
+            elif abs_net <= 1.0:
+                status_str = "slight_deviation"
+                exp = f"Leichte Netto-Abweichung von {net_delta:+.2f} Diensten (wird im Folgequartal ausgeglichen)."
+            else:
+                status_str = "warning"
+                exp = f"Netto-Abweichung von {net_delta:+.2f} Diensten (Prioritärer Ausgleich im Folgequartal)."
+
+            rec = StaffFairnessRecord(
+                identifier=s.identifier,
+                name=s.name,
+                beruf=role_name,
+                hours=r["hours"],
+                vacation_days=r["vacation_days"],
+                presence_factor=r["presence_factor"],
+                effective_nights=r["effective_nights"],
+                weekend_shifts=r["weekend_shifts"],
+                total_notdienst=r["total_notdienst"],
+                normalized_40h=r["normalized_40h"],
+                group_mean_40h=group_mean,
+                plan_delta=plan_delta,
+                cf_delta=cf_delta,
+                net_delta=net_delta,
+                status=status_str,
+                explanation=exp,
+            )
+            role_records.append(rec)
+            all_records.append(rec)
+
+        if role_records:
+            norms = [r.normalized_40h for r in role_records]
+            nets = [r.net_delta for r in role_records]
+            balanced_c = sum(1 for r in role_records if r.status == "balanced")
+            groups_summary[role_name] = GroupFairnessSummary(
+                beruf=role_name,
+                total_staff=len(role_records),
+                active_with_shifts=sum(1 for r in role_records if r.total_notdienst > 0),
+                group_mean_40h=group_mean,
+                min_norm=round(min(norms), 2),
+                max_norm=round(max(norms), 2),
+                plan_spread=round(max(norms) - min(norms), 2),
+                min_net=round(min(nets), 2),
+                max_net=round(max(nets), 2),
+                net_spread=round(max(nets) - min(nets), 2),
+                balanced_pct=round((balanced_c / len(role_records)) * 100, 1),
+            )
+        else:
+            groups_summary[role_name] = GroupFairnessSummary(
+                beruf=role_name,
+                total_staff=0,
+                active_with_shifts=0,
+                group_mean_40h=0.0,
+                min_norm=0.0,
+                max_norm=0.0,
+                plan_spread=0.0,
+                min_net=0.0,
+                max_net=0.0,
+                net_spread=0.0,
+                balanced_pct=100.0,
+            )
+
+    return QuarterFairnessOverviewResponse(
+        quarter_key=quarter_key,
+        has_schedule=has_schedule,
+        total_shifts=total_shifts,
+        groups=groups_summary,
+        records=all_records,
+    )
+
+
 @router.post(
     "/{quarter_key}/init",
     response_model=QuarterScheduleDocument,
@@ -213,6 +437,7 @@ def _execute_solver_worker(
     repo: RepositoryProtocol,
     cancellation_event: threading.Event,
     active_job: ActiveJobState,
+    stagnation_limit_seconds: float | None = 15.0,
 ) -> None:
     """Worker function executed inside background thread."""
     year, quarter = _parse_quarter_key(quarter_key)
@@ -260,6 +485,7 @@ def _execute_solver_worker(
                 except ValueError:
                     if "nacht" in r.shift_type.lower():
                         from app.scheduler.file_loader import _WEEKDAY_TO_NIGHT
+
                         st = ShiftType(_WEEKDAY_TO_NIGHT[r.shift_date.weekday()])
                 if st is not None:
                     is_paired = False
@@ -291,6 +517,7 @@ def _execute_solver_worker(
             cancellation_event=cancellation_event,
             on_progress=on_progress,
             on_solver_created=on_solver_created,
+            stagnation_limit_seconds=stagnation_limit_seconds,
         )
 
         elapsed = round(time.time() - start_time, 1)
@@ -435,6 +662,7 @@ def generate_quarter_schedule(
                 repo,
                 cancellation_event,
                 active_job,
+                solver_req.stagnation_limit_seconds,
             ),
             daemon=True,
         )
@@ -481,9 +709,7 @@ def get_solver_status(
                 job.completed_at = datetime.now(UTC)
                 repo.save_solver_job(job)
             else:
-                job.elapsed_seconds = round(
-                    (datetime.now(UTC) - job.started_at).total_seconds(), 1
-                )
+                job.elapsed_seconds = round((datetime.now(UTC) - job.started_at).total_seconds(), 1)
 
     return job
 
@@ -510,7 +736,6 @@ def cancel_solver_job(
                 pass
 
     return {"message": f"Abbruch für Quartal '{quarter_key}' angefordert."}
-
 
 
 @router.post("/{quarter_key}/shifts/swap", response_model=QuarterScheduleDocument)

@@ -1,5 +1,5 @@
 export type Beruf = 'Vet' | 'Tierarzt' | 'TFA' | 'Azubi' | 'Intern';
-export type Abteilung = 'Station' | 'OP' | 'Sprechstunde' | 'Sonstiges';
+export type Abteilung = 'Station' | 'OP' | 'other' | 'Sprechstunde' | 'Sonstiges';
 
 export interface StaffMember {
   id: string;
@@ -84,6 +84,49 @@ export interface SolverJobRecord {
   best_objective?: number | null;
   soft_penalty?: number | null;
   error?: string | null;
+}
+
+export type FairnessStatus = 'balanced' | 'slight_deviation' | 'warning';
+
+export interface StaffFairnessRecord {
+  identifier: string;
+  name: string;
+  beruf: string;
+  hours: number;
+  vacation_days: number;
+  presence_factor: number;
+  effective_nights: number;
+  weekend_shifts: number;
+  total_notdienst: number;
+  normalized_40h: number;
+  group_mean_40h: number;
+  plan_delta: number;
+  cf_delta: number;
+  net_delta: number;
+  status: FairnessStatus;
+  explanation: string;
+}
+
+export interface GroupFairnessSummary {
+  beruf: string;
+  total_staff: number;
+  active_with_shifts: number;
+  group_mean_40h: number;
+  min_norm: number;
+  max_norm: number;
+  plan_spread: number;
+  min_net: number;
+  max_net: number;
+  net_spread: number;
+  balanced_pct: number;
+}
+
+export interface QuarterFairnessOverviewResponse {
+  quarter_key: string;
+  has_schedule: boolean;
+  total_shifts: number;
+  groups: Record<string, GroupFairnessSummary>;
+  records: StaffFairnessRecord[];
 }
 
 

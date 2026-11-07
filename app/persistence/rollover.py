@@ -69,11 +69,19 @@ def get_previous_quarter_context(
 
     prev_start, prev_end = get_quarter_date_range(prev_year, prev_quarter)
 
-    # Reconstruct realized schedule using actual_staff_id
+    all_members = repo.list_staff()
+    if not all_members:
+        return None
+
+    # Map staff id / identifier case-insensitively to the authoritative staff.identifier
+    id_to_ident: dict[str, str] = {m.id.casefold(): m.identifier for m in all_members}
+    id_to_ident.update({m.identifier.casefold(): m.identifier for m in all_members})
+
+    # Reconstruct realized schedule using actual_staff_id resolved to clinic identifier
     realized_assignments: list[Assignment] = [
         Assignment(
             shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
-            staff_identifier=a.actual_staff_id,
+            staff_identifier=id_to_ident.get(a.actual_staff_id.casefold(), a.actual_staff_id),
             is_paired=a.is_paired,
         )
         for a in prev_doc.assignments
@@ -85,7 +93,7 @@ def get_previous_quarter_context(
         assignments=realized_assignments,
     )
 
-    active_members = repo.list_staff(active_only=True)
+    active_members = [m for m in all_members if m.is_active]
     if not active_members:
         return None
 

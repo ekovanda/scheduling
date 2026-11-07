@@ -5,3 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Checks whether a given birthday string (format "MM-DD") matches today's date.
+ * Robust against leading zeros (e.g. "04-05" vs "4-5").
+ */
+export function isBirthdayToday(birthday?: string | null, targetDate = new Date()): boolean {
+  if (!birthday) return false;
+  const parts = birthday.trim().split('-');
+  if (parts.length !== 2) return false;
+  const bMonth = parseInt(parts[0], 10);
+  const bDay = parseInt(parts[1], 10);
+  return targetDate.getMonth() + 1 === bMonth && targetDate.getDate() === bDay;
+}
+

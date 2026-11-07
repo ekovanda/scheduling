@@ -14,6 +14,7 @@ import {
   Clock,
   AlertCircle,
   StopCircle,
+  Sparkles,
 } from 'lucide-react';
 import type {
   QuarterScheduleDocument,
@@ -37,9 +38,17 @@ import {
 } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { cn } from '../lib/utils';
+import { cn, isBirthdayToday } from '../lib/utils';
 
-export const MatrixView: React.FC = () => {
+interface MatrixViewProps {
+  currentQuarter?: string;
+  onQuarterChange?: (q: string) => void;
+}
+
+export const MatrixView: React.FC<MatrixViewProps> = ({
+  currentQuarter: propCurrentQuarter,
+  onQuarterChange,
+}) => {
   const [schedule, setSchedule] = useState<QuarterScheduleDocument | null>(null);
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [preAssigned, setPreAssigned] = useState<PreAssignedShift[]>([]);
@@ -49,20 +58,44 @@ export const MatrixView: React.FC = () => {
 
   // Mode: 'view' (schedule display) or 'setup' (distraction-free plan generation)
   const [pageMode, setPageMode] = useState<'view' | 'setup'>('view');
-  const [subView, setSubView] = useState<'matrix' | 'rollover'>('matrix');
+  const [subView, setSubView] = useState<'schedule' | 'rollover'>('schedule');
   const [rollover, setRollover] = useState<RolloverContextData | null>(null);
 
   // Display toggles matching Streamlit original
   const [showFullNames, setShowFullNames] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<number | 'ALL'>('ALL'); // 3=Apr, 4=May, 5=Jun
 
-  // Setup form states (defaults to 2027-Q1 for upcoming planning)
-  const [setupQuarter, setSetupQuarter] = useState('Q1');
-  const [setupYear, setSetupYear] = useState(2027);
-  const [solveDepth, setSolveDepth] = useState<'fast' | 'thorough'>('fast');
+  // Setup form states (initialized from prop or default 2027-Q1)
+  const [setupQuarter, setSetupQuarter] = useState(() => {
+    if (propCurrentQuarter) {
+      const parts = propCurrentQuarter.split('-');
+      return parts[1] || 'Q1';
+    }
+    return 'Q1';
+  });
+  const [setupYear, setSetupYear] = useState(() => {
+    if (propCurrentQuarter) {
+      const parts = propCurrentQuarter.split('-');
+      return Number(parts[0]) || 2027;
+    }
+    return 2027;
+  });
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [maxSolveMinutes, setMaxSolveMinutes] = useState(10);
   const [blockGapDays, setBlockGapDays] = useState(21);
+  const [includePreviousQuarter, setIncludePreviousQuarter] = useState(true);
   const [rolloverRoleFilter, setRolloverRoleFilter] = useState<'ALL' | 'Vet' | 'TFA' | 'Intern'>('ALL');
+
+  // Sync state if global prop changes
+  useEffect(() => {
+    if (propCurrentQuarter) {
+      const [y, q] = propCurrentQuarter.split('-');
+      if (y && q) {
+        setSetupYear(Number(y));
+        setSetupQuarter(q);
+      }
+    }
+  }, [propCurrentQuarter]);
 
   // Swap modal state
   const [swapModalOpen, setSwapModalOpen] = useState(false);
@@ -95,6 +128,9 @@ export const MatrixView: React.FC = () => {
             if (isMounted) {
               setSchedule(fresh);
               setSolving(false);
+              if (fresh && fresh.assignments && fresh.assignments.length > 0) {
+                setPageMode('view');
+              }
             }
           } else if (status.status === 'FAILED' || status.status === 'CANCELLED') {
             if (isMounted) {
@@ -133,6 +169,14 @@ export const MatrixView: React.FC = () => {
       setActiveJob(jobData);
       setSolving(true);
     }
+
+    // Automatically open in setup mode if no schedule exists yet
+    if (!schedData || !schedData.assignments || schedData.assignments.length === 0) {
+      setPageMode('setup');
+    } else {
+      setPageMode('view');
+    }
+
     setLoading(false);
   };
 
@@ -154,15 +198,16 @@ export const MatrixView: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Run Solver (Async Background Runner)
+  // Run Solver (Async Background Runner with Smart Auto-Stop)
   const handleRunSolver = async () => {
     setSolving(true);
     setSolverError(null);
     setSolverModalOpen(true);
     try {
-      const maxSeconds = solveDepth === 'thorough' ? 600 : 120;
       const job = await startSolverJob(currentQuarterKey, {
-        max_solve_time_seconds: maxSeconds,
+        max_solve_time_seconds: maxSolveMinutes * 60,
+        stagnation_limit_seconds: 30,
+        include_previous_context: includePreviousQuarter,
       });
       setActiveJob(job);
     } catch (err: unknown) {
@@ -228,6 +273,9 @@ export const MatrixView: React.FC = () => {
     return Number(mStr) - 1 === selectedMonth;
   });
 
+  // Staff with birthday today
+  const birthdayStaff = staffList.filter((s) => s.is_active && isBirthdayToday(s.birthday));
+
   const monthTabs = React.useMemo(() => {
     switch (setupQuarter) {
       case 'Q1':
@@ -275,10 +323,6 @@ export const MatrixView: React.FC = () => {
     return weekdays[d.getDay()];
   };
 
-  const isDatePreAssigned = (dateStr: string, shiftType: string) => {
-    return preAssigned.some((pa) => pa.shift_date === dateStr && pa.shift_type === shiftType);
-  };
-
   return (
     <div className="space-y-6">
       {/* Persistent Background Solver Notification Banner */}
@@ -317,9 +361,22 @@ export const MatrixView: React.FC = () => {
         <div className="max-w-3xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
-                Plan erstellen
-              </h1>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
+                  Plan erstellen
+                </h1>
+                {birthdayStaff.length > 0 && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs">
+                    <span>🎂</span>
+                    <span>
+                      Heute Geburtstag:{' '}
+                      <strong className="font-semibold">
+                        {birthdayStaff.map((s) => s.name).join(', ')}
+                      </strong>
+                    </span>
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-stone-500 mt-0.5">
                 Automatische Dienstplanoptimierung mit dem CP-SAT Solver.
               </p>
@@ -346,7 +403,11 @@ export const MatrixView: React.FC = () => {
                 </label>
                 <select
                   value={setupQuarter}
-                  onChange={(e) => setSetupQuarter(e.target.value)}
+                  onChange={(e) => {
+                    const q = e.target.value;
+                    setSetupQuarter(q);
+                    onQuarterChange?.(`${setupYear}-${q}`);
+                  }}
                   className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#324b9b]/20"
                 >
                   <option value="Q1">Q1 (Januar – März)</option>
@@ -362,7 +423,11 @@ export const MatrixView: React.FC = () => {
                 </label>
                 <select
                   value={setupYear}
-                  onChange={(e) => setSetupYear(Number(e.target.value))}
+                  onChange={(e) => {
+                    const y = Number(e.target.value);
+                    setSetupYear(y);
+                    onQuarterChange?.(`${y}-${setupQuarter}`);
+                  }}
                   className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#324b9b]/20"
                 >
                   <option value={2026}>2026</option>
@@ -379,76 +444,68 @@ export const MatrixView: React.FC = () => {
                 {setupQuarter === 'Q1'
                   ? `01.01.${setupYear} – 31.03.${setupYear} (90 Tage)`
                   : setupQuarter === 'Q2'
-                  ? `01.04.${setupYear} – 30.06.${setupYear} (91 Tage)`
-                  : setupQuarter === 'Q3'
-                  ? `01.07.${setupYear} – 30.09.${setupYear} (92 Tage)`
-                  : `01.10.${setupYear} – 31.12.${setupYear} (92 Tage)`}
+                    ? `01.04.${setupYear} – 30.06.${setupYear} (91 Tage)`
+                    : setupQuarter === 'Q3'
+                      ? `01.07.${setupYear} – 30.09.${setupYear} (92 Tage)`
+                      : `01.10.${setupYear} – 31.12.${setupYear} (92 Tage)`}
               </span>
             </div>
           </div>
 
-          {/* Solver Settings */}
+          {/* Solver Settings - Streamlined Smart-Stop */}
           <div className="bg-white rounded-xl border border-stone-200/80 p-5 shadow-2xs space-y-4">
             <h2 className="text-sm font-bold text-stone-900">2. Solver-Einstellungen</h2>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-stone-700">
-                Berechnungstiefe
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setSolveDepth('fast')}
-                  className={cn(
-                    'p-3 rounded-lg border text-left transition-all cursor-pointer text-xs',
-                    solveDepth === 'fast'
-                      ? 'border-[#324b9b] bg-blue-50/50 ring-1 ring-[#324b9b]'
-                      : 'border-stone-200 bg-white hover:bg-stone-50'
-                  )}
-                >
-                  <span className="font-bold text-stone-900 block">
-                    Schnell (~60 Sek.)
-                  </span>
-                  <span className="text-[11px] text-stone-500 mt-0.5 block">
-                    Standard-Zeitlimit für zügige, praxisfertige Dienstpläne.
-                  </span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => setSolveDepth('thorough')}
-                  className={cn(
-                    'p-3 rounded-lg border text-left transition-all cursor-pointer text-xs',
-                    solveDepth === 'thorough'
-                      ? 'border-[#324b9b] bg-blue-50/50 ring-1 ring-[#324b9b]'
-                      : 'border-stone-200 bg-white hover:bg-stone-50'
-                  )}
-                >
-                  <span className="font-bold text-stone-900 block">
-                    Gründlich (~3-5 Min.)
+            {/* Smart-Stop Card */}
+            <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-[#324b9b]" />
+                  <span className="text-xs font-bold text-stone-900">
+                    Automatische Optimierung mit Smart-Stop
                   </span>
-                  <span className="text-[11px] text-stone-500 mt-0.5 block">
-                    Tiefe Suche für maximale Fairness- und Wochenend-Spreizung.
-                  </span>
-                </button>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Aktiv
+                </span>
               </div>
+              <p className="text-xs text-stone-600 leading-relaxed">
+                Der CP-SAT Solver ermittelt die fairste Verteilung aller Notdienste und stoppt selbstständig, sobald Verbesserungen stagnieren (üblicherweise nach 20–60 Sekunden; maximale Obergrenze: bis zu {maxSolveMinutes} Minuten).
+              </p>
             </div>
 
-            {/* Advanced Settings Toggle */}
-            <div className="pt-2">
+            {/* Collapsible Advanced Parameters */}
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="flex items-center gap-1.5 text-xs text-stone-600 font-medium hover:text-stone-900 cursor-pointer"
               >
                 <Settings2 className="h-3.5 w-3.5" />
-                <span>Erweiterte Constraints {showAdvanced ? 'ausblenden' : 'einblenden'}</span>
+                <span>Erweiterte Einstellungen {showAdvanced ? 'ausblenden' : 'einblenden'}</span>
                 <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced ? 'rotate-180' : '')} />
               </button>
 
               {showAdvanced && (
-                <div className="mt-3 p-3.5 rounded-lg bg-stone-50 border border-stone-200/70 grid grid-cols-2 gap-3 text-xs">
+                <div className="mt-3 p-3.5 rounded-lg bg-stone-50 border border-stone-200/70 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                   <div>
-                    <label className="block text-stone-600 mb-1">
+                    <label className="block text-stone-700 font-semibold mb-1">
+                      Max. Suchdauer (Minuten)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={maxSolveMinutes}
+                      onChange={(e) => setMaxSolveMinutes(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                      className="w-full px-2.5 py-1.5 bg-white border border-stone-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#324b9b]"
+                    />
+                    <span className="text-[11px] text-stone-500 mt-1 block">
+                      Obergrenze für die solver-Suche (Standard: 10 Min.). Smart-Stop bricht bei Stagnation früher ab.
+                    </span>
+                  </div>
+                  <div>
+                    <label className="block text-stone-700 font-semibold mb-1">
                       Mindest-Blockabstand (Tage)
                     </label>
                     <input
@@ -457,19 +514,30 @@ export const MatrixView: React.FC = () => {
                       max={42}
                       value={blockGapDays}
                       onChange={(e) => setBlockGapDays(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 bg-white border border-stone-200 rounded text-xs"
+                      className="w-full px-2.5 py-1.5 bg-white border border-stone-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#324b9b]"
                     />
+                    <span className="text-[11px] text-stone-500 mt-1 block">
+                      Gesetzliche Pause zwischen aufeinanderfolgenden Nachtblöcken (Standard: 21 Tage).
+                    </span>
                   </div>
                   <div>
-                    <label className="block text-stone-600 mb-1">
-                      Vorquartal einbeziehen
+                    <label className="block text-stone-700 font-semibold mb-1">
+                      Vorquartal berücksichtigen
                     </label>
-                    <div className="flex items-center h-8">
-                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        Aktiv (Trailing 21 Tage)
+                    <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={includePreviousQuarter}
+                        onChange={(e) => setIncludePreviousQuarter(e.target.checked)}
+                        className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
+                      />
+                      <span className="text-stone-800 font-medium text-xs">
+                        Ruhezeiten & Ausgleichssaldo einbeziehen
                       </span>
-                    </div>
+                    </label>
+                    <span className="text-[11px] text-stone-500 mt-1 block">
+                      Guthaben/Rückstände aus dem Vorquartal anrechnen und Grenz-Schichten schützen.
+                    </span>
                   </div>
                 </div>
               )}
@@ -526,13 +594,25 @@ export const MatrixView: React.FC = () => {
           {/* Top Streamlit-Style Control Ribbon */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-xl border border-stone-200/80 shadow-2xs">
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-lg sm:text-xl font-bold tracking-tight text-stone-900">
                   Dienstplan Übersicht
                 </h1>
                 <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-[#324b9b] border border-blue-200">
                   {currentQuarterKey}
                 </span>
+
+                {birthdayStaff.length > 0 && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs">
+                    <span>🎂</span>
+                    <span>
+                      Heute Geburtstag:{' '}
+                      <strong className="font-semibold">
+                        {birthdayStaff.map((s) => s.name).join(', ')}
+                      </strong>
+                    </span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-stone-500 mt-0.5">
                 Kompakte Schichtübersicht nach Vorbild der bewährten Klinik-Tabelle.
@@ -540,19 +620,19 @@ export const MatrixView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Sub-view toggle: Matrix vs Vorplan-Übertrag */}
+              {/* Sub-view toggle: Dienstplan vs Vorquartal & Ausgleich */}
               <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100/70 p-0.5 text-xs font-medium shadow-2xs">
                 <button
                   type="button"
-                  onClick={() => setSubView('matrix')}
+                  onClick={() => setSubView('schedule')}
                   className={cn(
                     'px-2.5 py-1 rounded-md transition-all cursor-pointer',
-                    subView === 'matrix'
+                    subView === 'schedule'
                       ? 'bg-white text-stone-900 font-bold shadow-2xs'
                       : 'text-stone-600 hover:text-stone-900'
                   )}
                 >
-                  Plan-Matrix
+                  Dienstplan
                 </button>
                 <button
                   type="button"
@@ -564,7 +644,7 @@ export const MatrixView: React.FC = () => {
                       : 'text-stone-600 hover:text-stone-900'
                   )}
                 >
-                  Vorplan-Übertrag
+                  Vorquartal & Ausgleich
                 </button>
               </div>
 
@@ -591,7 +671,7 @@ export const MatrixView: React.FC = () => {
 
           {subView === 'rollover' ? (
             /* ============================================================== */
-            /* SUBVIEW: VORPLAN-ÜBERTRAG & GRENZ-RESTRIKTIONEN */
+            /* SUBVIEW: VORQUARTAL & AUSGLEICH */
             /* ============================================================== */
             <div className="space-y-6">
               {/* Context Overview Banner */}
@@ -603,10 +683,10 @@ export const MatrixView: React.FC = () => {
                     </div>
                     <div>
                       <h2 className="text-sm font-bold text-stone-900">
-                        Vorplan-Übertrag & Grenz-Restriktionen für {currentQuarterKey}
+                        Vorquartal & Historischer Ausgleich ({currentQuarterKey})
                       </h2>
                       <p className="text-xs text-stone-500">
-                        Historische Ausgleichsdaten und Restriktionen aus dem vorherigen Planungszeitraum.
+                        Geleistete Dienste, Ausgleichs-Salden und gesetzliche Ruhezeiten aus dem vorangegangenen Quartal.
                       </p>
                     </div>
                   </div>
@@ -614,32 +694,32 @@ export const MatrixView: React.FC = () => {
                   {rollover?.has_context ? (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                      Aktiver Vorplan ({rollover.quarter_start} bis {rollover.quarter_end})
+                      Vorquartal aktiv ({rollover.quarter_start} bis {rollover.quarter_end})
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-stone-100 text-stone-600 border border-stone-200">
-                      Kein Vorplan gefunden
+                      Kein Vorquartal hinterlegt
                     </span>
                   )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-xs">
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
-                    <span className="text-stone-500 block">Personal im Übertrag:</span>
+                    <span className="text-stone-500 block">Mitarbeiter mit Historie:</span>
                     <span className="text-sm font-bold text-stone-900">
                       {rollover?.carry_forward.length ?? 0} Mitarbeiter
                     </span>
                   </div>
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
-                    <span className="text-stone-500 block">Grenz-Schichten (letzte 21 Tage):</span>
+                    <span className="text-stone-500 block">Ruhezeiten Vorquartal (letzte 21 Tage):</span>
                     <span className="text-sm font-bold text-stone-900">
                       {rollover?.trailing_assignments.length ?? 0} Schichten
                     </span>
                   </div>
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200/70">
-                    <span className="text-stone-500 block">Solver-Einfluss:</span>
+                    <span className="text-stone-500 block">Solver-Berücksichtigung:</span>
                     <span className="text-sm font-bold text-[#324b9b]">
-                      Deltas + 21-Tage Pausen aktiv
+                      Punkte-Ausgleich & 21-Tage-Schutz aktiv
                     </span>
                   </div>
                 </div>
@@ -651,10 +731,10 @@ export const MatrixView: React.FC = () => {
                   <div>
                     <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
                       <Scale className="h-4 w-4 text-[#324b9b]" />
-                      Fairness-Übertrag (Carry-Forward Deltas)
+                      Ausgleichs-Punkte (Vorquartals-Saldo)
                     </h3>
                     <p className="text-xs text-stone-500 mt-0.5">
-                      Mitarbeiter mit positivem Delta leisteten überdurchschnittlich viele Notdienste und werden im neuen Quartal entlastet.
+                      Mitarbeiter mit Guthaben leisteten im Vorquartal überdurchschnittlich viele Dienste und werden nun entlastet.
                     </p>
                   </div>
 
@@ -686,14 +766,14 @@ export const MatrixView: React.FC = () => {
                         <th className="py-2.5 px-3 border-r border-stone-200 text-center">Wochenstunden</th>
                         <th className="py-2.5 px-3 border-r border-stone-200 text-center">Nachtdienste</th>
                         <th className="py-2.5 px-3 border-r border-stone-200 text-center">Wochenenden</th>
-                        <th className="py-2.5 px-3 text-right">Übertrag-Delta</th>
+                        <th className="py-2.5 px-3 text-right">Ausgleichs-Saldo</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200">
                       {!rollover || rollover.carry_forward.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-8 text-center text-stone-500">
-                            Keine Carry-Forward-Daten für dieses Quartal verfügbar.
+                            Keine Ausgleichsdaten für dieses Quartal verfügbar.
                           </td>
                         </tr>
                       ) : (
@@ -733,11 +813,11 @@ export const MatrixView: React.FC = () => {
                                     </span>
                                   ) : delta < -0.05 ? (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                      {deltaFormatted} (Rückstand)
+                                      {deltaFormatted} (Nachholbedarf)
                                     </span>
                                   ) : (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-600">
-                                      0.00 (Neutral)
+                                      0.00 (Ausgeglichen)
                                     </span>
                                   )}
                                 </td>
@@ -755,10 +835,10 @@ export const MatrixView: React.FC = () => {
                 <div className="p-4 border-b border-stone-200">
                   <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
                     <Clock className="h-4 w-4 text-[#324b9b]" />
-                    Grenz-Schichten der letzten 21 Tage ({rollover?.trailing_assignments.length ?? 0} Schichten)
+                    Letzte Schichten des Vorquartals (Ruhezeiten & Abstände)
                   </h3>
                   <p className="text-xs text-stone-500 mt-0.5">
-                    Diese realisierten Schichten am Ende des Vorquartals definieren gesetzliche Ruhezeiten und Block-Abstände für die ersten Wochen im neuen Plan.
+                    Realisierte Dienste der letzten 21 Tage vor Quartalsbeginn – schützen Mitarbeiter vor zu dichten Folgediensten im neuen Plan.
                   </p>
                 </div>
 
@@ -769,7 +849,7 @@ export const MatrixView: React.FC = () => {
                         <th className="py-2.5 px-3 border-r border-stone-200 w-32">Datum</th>
                         <th className="py-2.5 px-3 border-r border-stone-200 w-44">Schichtart</th>
                         <th className="py-2.5 px-3 border-r border-stone-200">Eingeteilte Person</th>
-                        <th className="py-2.5 px-3 text-stone-500 font-normal">Grenz-Restriktion im Solver</th>
+                        <th className="py-2.5 px-3 text-stone-500 font-normal">Gesetzliche Schutzregel</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200">
@@ -806,7 +886,7 @@ export const MatrixView: React.FC = () => {
                               </td>
                               <td className="py-2 px-3 text-stone-500 font-sans text-[11px]">
                                 {t.is_night
-                                  ? 'Block-Abstand von 21 Tagen zu Folge-Nachtdienst geschützt'
+                                  ? '21 Tage Mindestabstand zu Folge-Nachtdienst geschützt'
                                   : 'Wochenend-Ruhezeit über Quartalsgrenze geschützt'}
                               </td>
                             </tr>
@@ -820,7 +900,7 @@ export const MatrixView: React.FC = () => {
             </div>
           ) : (
             /* ============================================================== */
-            /* SUBVIEW: PLAN-MATRIX (STREAMLIT CALENDAR TABLE) */
+            /* SUBVIEW: DIENSTPLAN (STREAMLIT CALENDAR TABLE) */
             /* ============================================================== */
             <div className="space-y-4">
               {/* Sub-Toolbar: Name Toggle & Month Tabs (Streamlit-style) */}
@@ -855,250 +935,323 @@ export const MatrixView: React.FC = () => {
                 </label>
               </div>
 
-          {/* Legend Banner (Streamlit-style) */}
-          <div className="flex items-center gap-4 text-[11px] text-stone-600 px-1">
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded bg-[#e8e0f0] border border-purple-200 inline-block" />
-              <span>🌙 Nachtdienst</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded bg-[#fff3e0] border border-amber-200 inline-block" />
-              <span>☀️ Wochenenddienst</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded bg-[#b2dfdb] border border-teal-300 inline-block" />
-              <span>📌 Fest vorbelegt</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <span>⚠️ Schichttausch</span>
-            </span>
-          </div>
+              {/* Legend Banner (Streamlit-style) */}
+              <div className="flex items-center gap-4 text-[11px] text-stone-600 px-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3 w-3 rounded bg-[#e8e0f0] border border-purple-200 inline-block" />
+                  <span>🌙 Nachtdienst</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3 w-3 rounded bg-[#fff3e0] border border-amber-200 inline-block" />
+                  <span>☀️ Wochenenddienst</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3 w-3 rounded bg-[#b2dfdb] border border-teal-300 inline-block" />
+                  <span>📌 Fest vorbelegt</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span>⚠️ Schichttausch</span>
+                </span>
+              </div>
 
-          {/* The Streamlit-Style Calendar Matrix Table */}
-          <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-[#f5f4f0] border-b border-stone-300 text-stone-700 font-bold">
-                  <tr>
-                    <th className="py-2.5 px-3 border-r border-stone-200 w-28">Datum</th>
-                    <th className="py-2.5 px-3 border-r border-stone-200 w-52 bg-[#eee8f5]">
-                      🌙 Nacht
-                    </th>
-                    <th className="py-2.5 px-3 border-r border-stone-200 w-48 bg-[#fff8e7]">
-                      ☀️ Sa/So Dienst
-                    </th>
-                    <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#fff8e7]">
-                      ☀️ Rufbereitschaft
-                    </th>
-                    <th className="py-2.5 px-3 text-right">Aktion</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-200 font-mono">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
-                        Lade Dienstplan...
-                      </td>
-                    </tr>
-                  ) : filteredDates.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
-                        Keine Schichten vorhanden.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredDates.map((dateStr) => {
-                      const isWknd = isWeekendDay(dateStr);
-                      const dayShifts = assignments.filter((a) => a.shift_date === dateStr);
-                      const nightShift = dayShifts.find((a) => a.shift_type === 'Nachtdienst');
-                      const weekendShift = dayShifts.find((a) => a.shift_type === 'Wochenende_Tag');
-
-                      const isNightPreAssigned = isDatePreAssigned(dateStr, 'Nachtdienst');
-                      const isWkndPreAssigned = isDatePreAssigned(dateStr, 'Wochenenddienst');
-
-                      const [, month, day] = dateStr.split('-');
-                      const dayLabel = `${day}.${month}. ${getWeekdayShort(dateStr)}`;
-
-                      return (
-                        <tr
-                          key={dateStr}
-                          className={cn(
-                            'hover:brightness-95 transition-all group',
-                            isWknd ? 'bg-[#fffaf0]' : 'bg-white'
-                          )}
-                        >
-                          {/* Date Column */}
-                          <td
-                            className={cn(
-                              'py-2 px-3 border-r border-stone-200 font-sans font-medium',
-                              isWknd ? 'text-amber-900 font-bold bg-[#fff5e0]/60' : 'text-stone-800'
-                            )}
-                          >
-                            {dayLabel}
-                          </td>
-
-                          {/* 🌙 Nacht Column (Styled with Streamlit #e8e0f0 background) */}
-                          <td
-                            className={cn(
-                              'py-2 px-3 border-r border-stone-200 font-sans font-semibold transition-colors',
-                              isNightPreAssigned
-                                ? 'bg-[#b2dfdb] text-teal-950'
-                                : 'bg-[#f2ecf8] text-purple-950'
-                            )}
-                          >
-                            {nightShift ? (
-                              <button
-                                onClick={() => {
-                                  setSelectedShift(nightShift);
-                                  const c = staffList.filter(
-                                    (s) => s.id !== nightShift.actual_staff_id
-                                  );
-                                  if (c.length > 0) setNewStaffId(c[0].id);
-                                  setSwapModalOpen(true);
-                                }}
-                                className="flex items-center gap-1.5 hover:underline cursor-pointer text-left w-full"
-                                title="Klicken für Diensttausch"
-                              >
-                                {isNightPreAssigned && (
-                                  <Pin className="h-3 w-3 text-teal-800 shrink-0" />
-                                )}
-                                <span>
-                                  {getStaffDisplayName(nightShift.actual_staff_id, true)}
-                                </span>
-                                {nightShift.is_paired && (
-                                  <span className="text-[10px] text-stone-500 font-normal">
-                                    + TFA
-                                  </span>
-                                )}
-                                {nightShift.is_override && (
-                                  <span className="text-[11px]" title="Getauchter Dienst">
-                                    ⚠️
-                                  </span>
-                                )}
-                              </button>
-                            ) : (
-                              <span className="text-stone-400 font-normal">—</span>
-                            )}
-                          </td>
-
-                          {/* ☀️ Weekend Day Shift Column (#fff3e0 styling) */}
-                          <td
-                            className={cn(
-                              'py-2 px-3 border-r border-stone-200 font-sans font-semibold transition-colors',
-                              !isWknd
-                                ? 'bg-stone-50/30 text-stone-400 font-normal'
-                                : isWkndPreAssigned
-                                ? 'bg-[#b2dfdb] text-teal-950'
-                                : 'bg-[#fff4e3] text-amber-950'
-                            )}
-                          >
-                            {weekendShift ? (
-                              <button
-                                onClick={() => {
-                                  setSelectedShift(weekendShift);
-                                  const c = staffList.filter(
-                                    (s) => s.id !== weekendShift.actual_staff_id
-                                  );
-                                  if (c.length > 0) setNewStaffId(c[0].id);
-                                  setSwapModalOpen(true);
-                                }}
-                                className="flex items-center gap-1.5 hover:underline cursor-pointer text-left w-full"
-                                title="Klicken für Diensttausch"
-                              >
-                                {isWkndPreAssigned && (
-                                  <Pin className="h-3 w-3 text-teal-800 shrink-0" />
-                                )}
-                                <span>
-                                  {getStaffDisplayName(weekendShift.actual_staff_id, false)}
-                                </span>
-                                {weekendShift.is_override && <span>⚠️</span>}
-                              </button>
-                            ) : (
-                              <span className="text-stone-300 font-normal">—</span>
-                            )}
-                          </td>
-
-                          {/* ☀️ Rufbereitschaft Column */}
-                          <td
-                            className={cn(
-                              'py-2 px-3 border-r border-stone-200 font-sans',
-                              isWknd ? 'bg-[#fff8ed] text-stone-600' : 'bg-stone-50/30 text-stone-300'
-                            )}
-                          >
-                            {isWknd ? (
-                              <span className="text-stone-600">
-                                {showFullNames ? 'Bereitschaft aktiv' : 'Ruf aktiv'}
-                              </span>
-                            ) : (
-                              <span>—</span>
-                            )}
-                          </td>
-
-                          {/* Quick Swap Action */}
-                          <td className="py-2 px-3 text-right font-sans">
-                            {nightShift && (
-                              <button
-                                onClick={() => {
-                                  setSelectedShift(nightShift);
-                                  const c = staffList.filter(
-                                    (s) => s.id !== nightShift.actual_staff_id
-                                  );
-                                  if (c.length > 0) setNewStaffId(c[0].id);
-                                  setSwapModalOpen(true);
-                                }}
-                                className="text-[11px] text-stone-500 hover:text-[#324b9b] font-medium cursor-pointer"
-                              >
-                                Tauschen
-                              </button>
-                            )}
+              {/* The Streamlit-Style Calendar Matrix Table */}
+              <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-[#f5f4f0] border-b border-stone-300 text-stone-700 font-bold">
+                      <tr>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-28">Datum</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-52 bg-[#eee8f5]">
+                          🌙 Nacht
+                        </th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-48 bg-[#fff8e7]">
+                          ☀️ Sa/So Dienst
+                        </th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#fff8e7]">
+                          ☀️ Rufbereitschaft
+                        </th>
+                        <th className="py-2.5 px-3 text-right">Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200 font-mono">
+                      {loading ? (
+                        <tr>
+                          <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
+                            Lade Dienstplan...
                           </td>
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                      ) : filteredDates.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
+                            Keine Schichten vorhanden.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredDates.map((dateStr) => {
+                          const isWknd = isWeekendDay(dateStr);
+                          const dayShifts = assignments.filter((a) => a.shift_date === dateStr);
 
-          {/* Bottom Streamlit Metrics Summary */}
-          <div className="bg-stone-50 rounded-lg border border-stone-200/80 p-3.5 flex flex-wrap items-center justify-between gap-4 text-xs">
-            <div className="flex items-center gap-6">
-              <div>
-                <span className="text-stone-500">Dienste gesamt: </span>
-                <span className="font-bold text-stone-900">{assignments.length}</span>
-              </div>
-              <div>
-                <span className="text-stone-500">Nachtdienste: </span>
-                <span className="font-bold text-stone-900">
-                  {assignments.filter((a) => a.shift_type === 'Nachtdienst').length}
-                </span>
-              </div>
-              <div>
-                <span className="text-stone-500">Wochenenden: </span>
-                <span className="font-bold text-stone-900">
-                  {assignments.filter((a) => a.shift_type === 'Wochenende_Tag').length}
-                </span>
-              </div>
-              <div>
-                <span className="text-stone-500">Vorbelegt: </span>
-                <span className="font-bold text-teal-800">{preAssigned.length}</span>
-              </div>
-            </div>
+                          // 1. Night shifts (starts with 'N_')
+                          const nightShifts = dayShifts.filter((a) => a.shift_type.startsWith('N_'));
 
-            <div className="flex items-center gap-2 text-stone-500">
-              <span>Solver-Laufzeit: 14.2s</span>
-              <span>&middot;</span>
-              <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                Optimale Lösung
-              </span>
+                          // 2. Rufbereitschaft shifts (10-22 or 20:30)
+                          const rufShifts = dayShifts.filter(
+                            (a) => a.shift_type.includes('10-22') || a.shift_type.includes('20:30')
+                          );
+
+                          // 3. Weekend day shifts (e.g. 10-21, 8-20, 10-19, Intern)
+                          const weekendShifts = dayShifts.filter(
+                            (a) => !a.shift_type.startsWith('N_') && !rufShifts.includes(a)
+                          );
+
+                          const isNightPreAssigned = preAssigned.some(
+                            (pa) => pa.shift_date === dateStr && pa.shift_type.startsWith('N_')
+                          );
+                          const isWkndPreAssigned = preAssigned.some(
+                            (pa) => pa.shift_date === dateStr && !pa.shift_type.startsWith('N_')
+                          );
+
+                          const [, month, day] = dateStr.split('-');
+                          const dayLabel = `${day}.${month}. ${getWeekdayShort(dateStr)}`;
+
+                          return (
+                            <tr
+                              key={dateStr}
+                              className={cn(
+                                'hover:brightness-95 transition-all group',
+                                isWknd ? 'bg-[#fffaf0]' : 'bg-white'
+                              )}
+                            >
+                              {/* Date Column */}
+                              <td
+                                className={cn(
+                                  'py-2 px-3 border-r border-stone-200 font-sans font-medium',
+                                  isWknd ? 'text-amber-900 font-bold bg-[#fff5e0]/60' : 'text-stone-800'
+                                )}
+                              >
+                                {dayLabel}
+                              </td>
+
+                              {/* 🌙 Nacht Column */}
+                              <td
+                                className={cn(
+                                  'py-2 px-3 border-r border-stone-200 font-sans font-semibold transition-colors',
+                                  isNightPreAssigned
+                                    ? 'bg-[#b2dfdb] text-teal-950'
+                                    : 'bg-[#f2ecf8] text-purple-950'
+                                )}
+                              >
+                                {nightShifts.length > 0 ? (
+                                  <div className="flex flex-col gap-1">
+                                    {nightShifts.map((shift, idx) => {
+                                      const isPaired = shift.is_paired || nightShifts.length > 1;
+                                      const isPre = preAssigned.some(
+                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
+                                      );
+                                      return (
+                                        <button
+                                          key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
+                                          onClick={() => {
+                                            setSelectedShift(shift);
+                                            const c = staffList.filter(
+                                              (s) => s.id !== shift.actual_staff_id
+                                            );
+                                            if (c.length > 0) setNewStaffId(c[0].id);
+                                            setSwapModalOpen(true);
+                                          }}
+                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-semibold"
+                                          title="Klicken für Diensttausch"
+                                        >
+                                          {isPre && (
+                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
+                                          )}
+                                          <span>
+                                            {getStaffDisplayName(shift.actual_staff_id, true)}
+                                          </span>
+                                          {isPaired && (
+                                            <span className="text-[10px] text-purple-700 bg-purple-100/80 px-1 py-0.2 rounded font-normal">
+                                              TFA
+                                            </span>
+                                          )}
+                                          {shift.is_override && (
+                                            <span className="text-[11px]" title="Getauchter Dienst">
+                                              ⚠️
+                                            </span>
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-stone-400 font-normal">—</span>
+                                )}
+                              </td>
+
+                              {/* ☀️ Weekend Day Shift Column */}
+                              <td
+                                className={cn(
+                                  'py-2 px-3 border-r border-stone-200 font-sans font-semibold transition-colors',
+                                  !isWknd
+                                    ? 'bg-stone-50/30 text-stone-400 font-normal'
+                                    : isWkndPreAssigned
+                                      ? 'bg-[#b2dfdb] text-teal-950'
+                                      : 'bg-[#fff4e3] text-amber-950'
+                                )}
+                              >
+                                {weekendShifts.length > 0 ? (
+                                  <div className="flex flex-col gap-1">
+                                    {weekendShifts.map((shift, idx) => {
+                                      const isPre = preAssigned.some(
+                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
+                                      );
+                                      return (
+                                        <button
+                                          key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
+                                          onClick={() => {
+                                            setSelectedShift(shift);
+                                            const c = staffList.filter(
+                                              (s) => s.id !== shift.actual_staff_id
+                                            );
+                                            if (c.length > 0) setNewStaffId(c[0].id);
+                                            setSwapModalOpen(true);
+                                          }}
+                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-semibold text-amber-950"
+                                          title="Klicken für Diensttausch"
+                                        >
+                                          {isPre && (
+                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
+                                          )}
+                                          <span>
+                                            {getStaffDisplayName(shift.actual_staff_id, false)}
+                                          </span>
+                                          {shift.shift_type.includes('Intern') && (
+                                            <span className="text-[10px] text-amber-800 bg-amber-100/80 px-1 py-0.2 rounded font-normal">
+                                              Intern
+                                            </span>
+                                          )}
+                                          {shift.is_override && <span>⚠️</span>}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-stone-300 font-normal">—</span>
+                                )}
+                              </td>
+
+                              {/* ☀️ Rufbereitschaft Column (Shows actual on-call staff!) */}
+                              <td
+                                className={cn(
+                                  'py-2 px-3 border-r border-stone-200 font-sans',
+                                  isWknd ? 'bg-[#fff8ed] text-stone-700' : 'bg-stone-50/30 text-stone-300'
+                                )}
+                              >
+                                {rufShifts.length > 0 ? (
+                                  <div className="flex flex-col gap-1">
+                                    {rufShifts.map((shift, idx) => {
+                                      const isPre = preAssigned.some(
+                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
+                                      );
+                                      return (
+                                        <button
+                                          key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
+                                          onClick={() => {
+                                            setSelectedShift(shift);
+                                            const c = staffList.filter(
+                                              (s) => s.id !== shift.actual_staff_id
+                                            );
+                                            if (c.length > 0) setNewStaffId(c[0].id);
+                                            setSwapModalOpen(true);
+                                          }}
+                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-medium text-stone-800"
+                                          title="Klicken für Diensttausch"
+                                        >
+                                          {isPre && (
+                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
+                                          )}
+                                          <span>
+                                            {getStaffDisplayName(shift.actual_staff_id, false)}
+                                          </span>
+                                          {shift.shift_type.includes('20:30') && (
+                                            <span className="text-[10px] text-stone-500 bg-stone-100 px-1 py-0.2 rounded font-normal">
+                                              Azubi
+                                            </span>
+                                          )}
+                                          {shift.is_override && <span>⚠️</span>}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-stone-300 font-normal">—</span>
+                                )}
+                              </td>
+
+                              {/* Quick Swap Action */}
+                              <td className="py-2 px-3 text-right font-sans">
+                                {dayShifts.length > 0 && (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedShift(dayShifts[0]);
+                                      const c = staffList.filter(
+                                        (s) => s.id !== dayShifts[0].actual_staff_id
+                                      );
+                                      if (c.length > 0) setNewStaffId(c[0].id);
+                                      setSwapModalOpen(true);
+                                    }}
+                                    className="text-[11px] text-stone-500 hover:text-[#324b9b] font-medium cursor-pointer"
+                                  >
+                                    Tauschen
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Bottom Streamlit Metrics Summary */}
+              <div className="bg-stone-50 rounded-lg border border-stone-200/80 p-3.5 flex flex-wrap items-center justify-between gap-4 text-xs">
+                <div className="flex items-center gap-6">
+                  <div>
+                    <span className="text-stone-500">Dienste gesamt: </span>
+                    <span className="font-bold text-stone-900">{assignments.length}</span>
+                  </div>
+                  <div>
+                    <span className="text-stone-500">Nachtdienste: </span>
+                    <span className="font-bold text-stone-900">
+                      {assignments.filter((a) => a.shift_type.startsWith('N_')).length}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-stone-500">Wochenenden: </span>
+                    <span className="font-bold text-stone-900">
+                      {assignments.filter((a) => !a.shift_type.startsWith('N_')).length}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-stone-500">Vorbelegt: </span>
+                    <span className="font-bold text-teal-800">{preAssigned.length}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-stone-500">
+                  <span>Solver-Laufzeit: 14.2s</span>
+                  <span>&middot;</span>
+                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Optimale Lösung
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
-    </div>
-  )}
 
       {/* SHIFT SWAP MODAL */}
       <Modal
@@ -1197,7 +1350,7 @@ export const MatrixView: React.FC = () => {
               </h4>
               <p className="text-xs text-stone-500 mt-0.5">
                 {activeJob?.status === 'RUNNING' &&
-                  'OR-Tools CP-SAT sucht nach fairen Schichten und prüft 21-Tage-Ruhezeiten.'}
+                  'CP-SAT optimiert die Fairness und stoppt automatisch bei stabiler Lösung.'}
                 {activeJob?.status === 'COMPLETED' &&
                   'Der neue Dienstplan wurde gespeichert und kann geprüft werden.'}
                 {activeJob?.status === 'CANCELLED' &&
@@ -1215,7 +1368,9 @@ export const MatrixView: React.FC = () => {
               <div className="text-lg font-bold font-mono text-stone-900 mt-0.5">
                 {activeJob ? formatTimer(activeJob.elapsed_seconds) : '00:00'}
               </div>
-              <span className="text-[10px] text-stone-400">max {solveDepth === 'thorough' ? '10:00' : '02:00'}</span>
+              <span className="text-[10px] text-stone-400">
+                max {String(maxSolveMinutes).padStart(2, '0')}:00 (Smart-Stop)
+              </span>
             </div>
             <div className="p-3 bg-stone-50 rounded-lg border border-stone-200/80">
               <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">Lösungen</span>

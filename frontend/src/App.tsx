@@ -26,9 +26,19 @@ export function App() {
       case 'preassignments':
         return <PreAssignedView />;
       case 'matrix':
-        return <MatrixView />;
+        return (
+          <MatrixView
+            currentQuarter={currentQuarter}
+            onQuarterChange={setCurrentQuarter}
+          />
+        );
       case 'fairness':
-        return <FairnessView />;
+        return (
+          <FairnessView
+            currentQuarter={currentQuarter}
+            onQuarterChange={setCurrentQuarter}
+          />
+        );
       case 'about':
         return <AboutView />;
       default:

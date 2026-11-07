@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Users, Ban } from 'lucide-react';
+import { User, Users } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Beruf, AbsenceType } from '../../types/api';
 import { getAbteilungDisplay } from '../../lib/colors';
@@ -40,29 +40,30 @@ export const Badge: React.FC<BadgeProps> = ({
 };
 
 export const RoleBadge: React.FC<{ role: Beruf }> = ({ role }) => {
-  switch (role) {
-    case 'Vet':
-    case 'Tierarzt':
+  const r = (role || '').trim().toLowerCase();
+  switch (r) {
+    case 'vet':
+    case 'tierarzt':
       return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/80 shadow-2xs">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80 shadow-2xs">
           Tierarzt (Vet)
         </span>
       );
-    case 'Intern':
+    case 'intern':
       return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200/80 shadow-2xs">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200/80 shadow-2xs">
           Intern
         </span>
       );
-    case 'TFA':
+    case 'tfa':
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs">
           TFA
         </span>
       );
-    case 'Azubi':
+    case 'azubi':
       return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200/80 shadow-2xs">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200/80 shadow-2xs">
           Azubi
         </span>
       );
@@ -76,6 +77,9 @@ export const AbteilungBadge: React.FC<{
   beruf?: string | null;
 }> = ({ abteilung, beruf }) => {
   const display = getAbteilungDisplay(abteilung, beruf);
+  if (display.isNone) {
+    return <span className="text-stone-300 text-xs font-medium pl-1">—</span>;
+  }
   return (
     <span
       className={cn(
@@ -94,24 +98,29 @@ export const NachtdienstBadge: React.FC<{
 }> = ({ nd_possible, nd_alone }) => {
   if (!nd_possible) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80 shadow-2xs">
-        <Ban className="h-3.5 w-3.5 text-rose-500" />
-        <span>Kein ND</span>
+      <span className="text-stone-300 text-xs font-medium pl-1" title="Kein Nachtdienst">
+        —
       </span>
     );
   }
   if (nd_alone) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs">
-        <User className="h-3.5 w-3.5 text-emerald-600" />
-        <span>Alleine</span>
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-50 text-purple-900 border border-purple-200/80 shadow-2xs"
+        title="Alleine tauglich (1 Person)"
+      >
+        <User className="h-3 w-3 text-purple-700" />
+        Alleine
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200/80 shadow-2xs">
-      <Users className="h-3.5 w-3.5 text-amber-600" />
-      <span>Zu zweit</span>
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#324b9b] border border-blue-200/80 shadow-2xs"
+      title="Nur zu zweit / Begleitung (2 Personen)"
+    >
+      <Users className="h-3 w-3 text-[#324b9b]" />
+      Zu zweit
     </span>
   );
 };

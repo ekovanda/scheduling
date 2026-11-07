@@ -1,4 +1,12 @@
-import type { StaffMember, AbsenceRecord, PreAssignedShift, QuarterScheduleDocument, ShiftAssignmentRecord, SolverJobRecord } from '../types/api';
+import type {
+  StaffMember,
+  AbsenceRecord,
+  PreAssignedShift,
+  QuarterScheduleDocument,
+  ShiftAssignmentRecord,
+  SolverJobRecord,
+  QuarterFairnessOverviewResponse,
+} from '../types/api';
 
 const API_BASE = '/api/v1';
 
@@ -27,6 +35,18 @@ export async function createStaff(staff: Omit<StaffMember, 'id'>): Promise<Staff
   });
   if (!res.ok) {
     throw new Error(`Error creating staff: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateStaff(staffId: string, staff: StaffMember): Promise<StaffMember> {
+  const res = await fetch(`${API_BASE}/staff/${staffId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(staff),
+  });
+  if (!res.ok) {
+    throw new Error(`Error updating staff: ${res.statusText}`);
   }
   return res.json();
 }
@@ -91,30 +111,36 @@ export async function deletePreAssigned(id: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete preassigned shift: ${res.statusText}`);
 }
 
-export async function fetchSchedule(quarterKey: string): Promise<QuarterScheduleDocument> {
+export async function fetchSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
   try {
     const res = await fetch(`${API_BASE}/quarters/${quarterKey}`);
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) return null;
     const doc = await res.json();
     if (doc && doc.assignments && doc.assignments.length > 0) return doc;
-    return getMockSchedule(quarterKey);
+    return null;
   } catch (err) {
-    console.warn('Backend schedule not reachable, using sample schedule:', err);
-    return getMockSchedule(quarterKey);
+    console.warn('Backend schedule fetch failed:', err);
+    return null;
   }
 }
 
 export async function startSolverJob(
   quarterKey: string,
-  options?: { max_solve_time_seconds?: number; random_seed?: number; include_previous_context?: boolean }
+  options?: {
+    max_solve_time_seconds?: number;
+    random_seed?: number;
+    include_previous_context?: boolean;
+    stagnation_limit_seconds?: number;
+  }
 ): Promise<SolverJobRecord> {
   const res = await fetch(`${API_BASE}/quarters/${quarterKey}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      max_solve_time_seconds: options?.max_solve_time_seconds ?? 120,
+      max_solve_time_seconds: options?.max_solve_time_seconds ?? 600,
       random_seed: options?.random_seed,
       include_previous_context: options?.include_previous_context ?? true,
+      stagnation_limit_seconds: options?.stagnation_limit_seconds ?? 30,
     }),
   });
   if (!res.ok && res.status !== 202) {
@@ -143,11 +169,11 @@ export async function cancelSolverJob(quarterKey: string): Promise<{ message: st
   return res.json();
 }
 
-export async function generateSchedule(quarterKey: string): Promise<QuarterScheduleDocument> {
+export async function generateSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
   const res = await fetch(`${API_BASE}/quarters/${quarterKey}/generate?sync=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_solve_time_seconds: 60 }),
+    body: JSON.stringify({ max_solve_time_seconds: 90, stagnation_limit_seconds: 15 }),
   });
   if (!res.ok) {
     throw new Error(`Solver failed: ${res.statusText}`);
@@ -449,5 +475,16 @@ export async function fetchRolloverContext(quarterKey: string): Promise<Rollover
       carry_forward: [],
       trailing_assignments: [],
     };
+  }
+}
+
+export async function fetchFairnessOverview(quarterKey: string): Promise<QuarterFairnessOverviewResponse | null> {
+  try {
+    const res = await fetch(`${API_BASE}/quarters/${quarterKey}/fairness`);
+    if (!res.ok) throw new Error(res.statusText);
+    return res.json();
+  } catch (err) {
+    console.warn('Fairness overview fetch failed:', err);
+    return null;
   }
 }

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.6.0"
+CURRENT_VERSION = "1.9.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,36 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.9.0",
+        date="07. November 2026",
+        summary="Vorher-Nachher Ausgleichs-Pfeile & Fairness-Vektoren",
+        highlights=(
+            "Interaktiver Vektor-Plot zeigt Vorher- und Nachher-Stand jeder Person mit dynamischen Ausgleichspfeilen.",
+            "Direkte Erfolgsmetriken für die Quote verbesserter Mitarbeiter und den Abbau der Unwucht.",
+            "Wahl zwischen Einzel-Dumbbell-Vektoren je Mitarbeiter und globalem Konvergenz-Trichter.",
+        ),
+    ),
+    Release(
+        version="1.8.0",
+        date="07. November 2026",
+        summary="Transparente Fairness-Übersicht & L1-Ausgleichsoptimierung",
+        highlights=(
+            "Transparente 3-Spalten-Fairness: Plan vs. Soll, Vorquartals-Saldo und Netto-Gesamtsaldo je Berufsgruppe.",
+            "Interaktives Fairness-Dashboard mit Balance-Balken, 2D-Ausgleichs-Scatterplot und Dichte-Streifen.",
+            "L1-Summenfairness im Solver kompensiert Vorquartals-Salden gezielt über das gesamte Team.",
+        ),
+    ),
+    Release(
+        version="1.7.0",
+        date="06. November 2026",
+        summary="Dienstplan-Verschlankung, Smart-Stop & Personal-Flow",
+        highlights=(
+            "Kliniknahe Begriffe ('Dienstplan', 'Vorquartal & Ausgleich') und direkter Start im Planer.",
+            "Personalverwaltung mit 1-Klick-Nachtdienst, Wochentag-Filter und schlanker Abteilungsanzeige.",
+            "CP-SAT Smart-Stop mit bis zu 10 Min. Suchdauer und echter Anzeige von Rufbereitschaft & Paaren.",
+        ),
+    ),
     Release(
         version="1.6.0",
         date="06. November 2026",

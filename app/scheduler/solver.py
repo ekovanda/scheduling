@@ -26,6 +26,7 @@ def generate_schedule(
     cancellation_event: threading.Event | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
+    stagnation_limit_seconds: float | None = 15.0,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -57,6 +58,8 @@ def generate_schedule(
         kwargs["on_progress"] = on_progress
     if on_solver_created is not None:
         kwargs["on_solver_created"] = on_solver_created
+    if stagnation_limit_seconds is not None:
+        kwargs["stagnation_limit_seconds"] = stagnation_limit_seconds
 
     return generate_schedule_cpsat(
         staff_list,

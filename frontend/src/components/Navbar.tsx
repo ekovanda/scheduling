@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown, Pin } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, isBirthdayToday } from '../lib/utils';
+import { fetchStaff } from '../lib/api';
 
 export type NavTab = 'staff' | 'absences' | 'preassignments' | 'matrix' | 'fairness' | 'about';
 
@@ -17,6 +18,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentQuarter,
   onQuarterChange,
 }) => {
+  const [todaysBirthdays, setTodaysBirthdays] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    fetchStaff()
+      .then((staff) => {
+        const matches = staff
+          .filter((s) => s.is_active && isBirthdayToday(s.birthday))
+          .map((s) => s.name);
+        setTodaysBirthdays(matches);
+      })
+      .catch(() => {});
+  }, []);
+
   const tabs = [
     { id: 'staff' as NavTab, label: 'Mitarbeiter', icon: Users },
     { id: 'absences' as NavTab, label: 'Abwesenheiten', icon: CalendarDays },
@@ -41,26 +55,35 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <div className="h-5 w-[1px] bg-stone-200 hidden sm:block" />
 
-          {/* Quarter Pill Selector */}
-          <div className="flex items-center gap-1.5 rounded-full border border-stone-200 bg-stone-50/80 px-2.5 py-1 text-xs shadow-2xs">
-            <span className="text-stone-500 font-medium hidden md:inline">Quartal:</span>
+          {/* Quarter Selector */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50/80 px-2.5 py-1 text-xs shadow-2xs">
+            <span className="text-stone-500 font-medium hidden md:inline">Planungsquartal:</span>
             <div className="relative inline-flex items-center">
               <select
                 value={currentQuarter}
                 onChange={(e) => onQuarterChange(e.target.value)}
                 className="appearance-none bg-transparent pr-4 font-semibold text-stone-800 focus:outline-none cursor-pointer text-xs"
               >
-                <option value="2026-Q2">2026 - Q2</option>
-                <option value="2026-Q1">2026 - Q1</option>
-                <option value="2025-Q4">2025 - Q4</option>
+                <option value="2027-Q1">Q1 / 2027 (Planung)</option>
+                <option value="2026-Q4">Q4 / 2026</option>
+                <option value="2026-Q3">Q3 / 2026</option>
+                <option value="2026-Q2">Q2 / 2026</option>
+                <option value="2026-Q1">Q1 / 2026</option>
               </select>
               <ChevronDown className="pointer-events-none absolute right-0 h-3 w-3 text-stone-400" />
             </div>
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100/80 text-emerald-800">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Aktiv
-            </span>
           </div>
+
+          {/* Subtle Birthday Note in Header Whitespace */}
+          {todaysBirthdays.length > 0 && (
+            <div className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200/90 shadow-2xs animate-in fade-in">
+              <span className="text-xs">🎂</span>
+              <span>
+                Heute Geburtstag:{' '}
+                <strong className="font-semibold">{todaysBirthdays.join(', ')}</strong>
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Right: Single-Line Nav Tabs */}

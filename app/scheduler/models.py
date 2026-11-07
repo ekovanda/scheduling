@@ -379,8 +379,9 @@ class Schedule(BaseModel):
     assignments: list[Assignment] = Field(default_factory=list)
 
     def get_staff_assignments(self, staff_identifier: str) -> list[Assignment]:
-        """Get all assignments for a specific staff member."""
-        return [a for a in self.assignments if a.staff_identifier == staff_identifier]
+        """Get all assignments for a specific staff member (case-insensitive)."""
+        target = staff_identifier.casefold()
+        return [a for a in self.assignments if a.staff_identifier.casefold() == target]
 
     def get_shift_assignments(self, shift: Shift) -> list[Assignment]:
         """Get all assignments for a specific shift."""

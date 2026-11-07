@@ -9,6 +9,74 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.9.0] - 2026-11-07
+
+### Added: Vorher-Nachher Ausgleichs-Pfeile & Fairness-Vektoren (`FairnessView.tsx`)
+
+- **Vorher-Nachher Vektor-Visualisierung (Ausgleichs-Pfeile):**
+  - Neuer Visualisierungs-Modus `arrows` in `FairnessView.tsx`, der für jede Person den Ausgangszustand vor der Einteilung (Vorquartals-Saldo / Guthaben als ausgegrauter Punkt) und den neuen Netto-Saldo nach der Planung (farbiger Punkt) verbindet.
+  - Dynamisch gefärbte SVG-Ausgleichsvektoren mit Pfeilspitzen (`#10b981` grün bei Annäherung an Null, `#f43f5e` rot bei Entfernung, gestrichelt bei Verharren).
+  - Zielkorridor ($\pm 0.5$ Dienste auf 40h-Basis) mit weicher grüner Schattierung und neutraler Nullachse.
+- **Erfolgs-KPIs & Richtungsanalyse:**
+  - 3 zusammenfassende Metriken über dem Plot:
+    1. **Korrektur-Erfolg**: Zeigt absolut und prozentual, wie viele Mitarbeitende sich der Nulllinie angenähert haben oder im Idealbereich geblieben sind.
+    2. **Zielkorridor-Quote**: Anteil der Mitarbeitenden im Toleranzband $\pm 0.5$ inkl. Ausreißer-Counter ($> 1.0$).
+    3. **Unwucht-Reduktion**: Mittlerer absoluter Abstand zur Nulllinie vor der Einteilung im direkten Vergleich zum Zustand nach der Einteilung (Prozentuale Reduktion).
+- **Zwei komplementäre Darstellungsformen:**
+  - **Einzel-Vektoren (Dumbbell-Plot)**: Jede Person in einer eigenen horizontalen Spur ohne Überlappungen; sortierbar nach größter Verbesserung, höchster Vorbelastung, Rest-Saldo oder Name; filterbar nach Vorbelasteten, Verbesserten oder Ausreißern.
+  - **Konvergenz-Trichter (Parallel Coordinates)**: Zeigt auf zwei vertikalen Achsen (Vorher vs. Nachher) die globale Kompression des gesamten Teams in den schmalen grünen Zielkorridor.
+- **Interaktiver Detail-Inspector:**
+  - Nahtlose Verknüpfung mit Tooltips und dem bestehenden Mitarbeiter-Inspektor bei Klick oder Hover.
+
+## [1.8.0] - 2026-11-07
+
+### Added: Transparente Fairness-Übersicht & L1-Ausgleichsoptimierung im Solver
+
+- **Transparente 3-Spalten-Fairness (`FairnessView.tsx`, `quarters.py`):**
+  - Intuitive, kliniknahe Aufbereitung der Dienstverteilung nach der 3-Spalten-Formel:
+    1. **Plan vs. Soll** (relative Abweichung bezogen auf den Berufsgruppen-Sollwert auf 40h-Vollzeit-Basis).
+    2. **Vorquartals-Saldo** (Guthaben oder Schuld aus dem vorherigen Quartal).
+    3. **Netto-Gesamtsaldo** (Summe beider Werte: zeigt sofort, ob das Saldo fair ausgeglichen wird).
+  - Gruppenspezifische Tabs zur getrennten Betrachtung von `TFA`, `Azubi`, `Intern` und `Tierarzt (Vet)`.
+  - Detail-Inspektor-Karte für einzelne Mitarbeitende mit Schichtaufschlüsselung, Teilzeitfaktor und Anwesenheitsquote.
+- **Interaktive Visualisierungen (`FairnessView.tsx`):**
+  - **Option 1: Balance-Balken (Diverging Bar Chart)**: Horizontal ausgerichteter Abweichungsbalken mit grünem $\pm 0.5$-Toleranzkorridor.
+  - **Option 2: 2D-Ausgleichs-Scatterplot**: Visualisiert Plan-Abweichung vs. Vorquartals-Saldo mit mathematisch korrekter Ausgleichsdiagonale $y = -x$ von oben links nach unten rechts inkl. Quadranten-Beschriftungen.
+  - **Option 3: Dichte-Streifen (Strip Plot)**: Zeigt die Streuung und Schwarmdichte des gesamten Teams auf einer kontinuierlichen Skala.
+- **CP-SAT Solver: L1-Summenfairness & Gewichtungshierarchie (`solver_cpsat.py`):**
+  - Implementierung von $L_1$-Summenfairness ($\sum_i |\Delta_i|$) über alle Mitarbeitenden ergänzend zum Chebyshev-Min-Max-Term. Dadurch erhält jeder einzelne Mitarbeiter einen aktiven Gradienten zur Kompensation seines Vorquartals (behebt das Bottleneck, bei dem nur die extremsten 2 Mitarbeiter optimiert wurden).
+  - Neujustierung der Penalty-Gewichte: `RANGE_WEIGHT = 50`, `L1_WEIGHT = 10` (zuvor `1`), um dem Notdienst-Ausgleich im CP-SAT-Zielfunktions-Gefüge das notwendige Gewicht gegenüber reinen Schichtabstands-Boni zu verleihen.
+  - Statistische Validierung: Korrelation $r(\text{Vorquartal}, \text{Plan})$ sinkt bei TFAs von $+0.13$ auf $-0.32$, bei Azubis von $-0.15$ auf $-0.63$ und bei Interns auf $-1.00$ (vollständiger Netto-Ausgleich).
+
+## [1.7.0] - 2026-11-06
+
+### Changed: UI-Verschlankung Dienstplan, Solver Smart-Stop (10 Min.), Personal-Flow & Schichtanzeige
+
+- **Dienstplan-Lifecycle & Empty State (`MatrixView.tsx`, `frontend/src/lib/api.ts`):**
+  - `fetchSchedule()` liefert bei nicht-existentem oder leerem Plan `null` statt eines synthetischen Dummy-Plans.
+  - Wenn kein Plan vorliegt, öffnet `MatrixView` direkt in der schlanken Erstellungsansicht (`pageMode = 'setup'`) mit synchronisiertem Quartals-Selector aus der globalen Navigationsleiste.
+- **Kliniknahe Fachbegriffe (`MatrixView.tsx`):**
+  - Ersetzung technischer Bezeichnungen: "Plan-Matrix" wurde zu **"Dienstplan"**, "Vorplan-Übertrag" zu **"Vorquartal & Ausgleich"**.
+  - Bereinigung interner Tabellenbegriffe: "Übertrag-Delta" zu "Ausgleichs-Saldo", "Grenz-Restriktion" zu "Gesetzliche Schutzregel".
+- **CP-SAT Solver Smart-Stop & 10-Minuten Obergrenze (`solver_cpsat.py`, `solver.py`, `quarters.py`, `MatrixView.tsx`):**
+  - Obergrenze auf standardmäßig 10 Minuten (600 Sek., konfigurierbar bis 20 Min.) erweitert, da Quartalsplanungen selten stattfinden und tiefere Suchläufe signifikante Fairnessgewinne erzielen.
+  - Plateau- & Stagnationserkennung (30 Sek.) im Progress-Callback bricht automatisch ab, sobald keine weiteren Verbesserungen mehr erzielt werden.
+  - Klappbare Einstellungen für Mindest-Blockabstand, Vorquartals-Einbeziehung und maximale Suchdauer.
+- **Dienstplan-Tabelle & Schichtanzeige (`MatrixView.tsx`):**
+  - Beseitigung der leeren Striche `—`: Dynamische Filterung nach Schichtpräfix (`N_`) und Wochenend-Schichttypen (`Sa_10-21`, `So_8-20` etc.).
+  - Echte Rufbereitschaftsbesetzung: Ersetzung des statischen Dummy-Texts `"Ruf aktiv"` durch die real eingeteilten Tierärzte (`Sa_10-22`, `So_10-22`, `So_8-20:30`).
+  - Unterstützung für geteilte Nachtdienste: Anzeige beider Diensthabenden mit TFA-Qualifikationsabzeichen.
+- **Personalansicht & Neuanlage-Workflow (`StaffView.tsx`, `Badge.tsx`, `colors.ts`):**
+  - 1-Klick 3-Stufen-Wahl für Nachtdienstfähigkeit: `Kein Nachtdienst`, `Zu zweit`, `Alleine` mit automatischem JArbSchG-Schutz für Minderjährige.
+  - Reduktion des Abteilungsfelds auf constraint-relevante Stationen (`Station`, `OP` oder `—`) zur Vermeidung von visueller Unruhe.
+  - 1-Klick Wochentagsmatrix zur intuitiven Auswahl verfügbarer Wochentage ohne verschachtelte Modi.
+  - Eigene Tabellenspalten für Volljährig, Nachtdienst und Anmeldung.
+- **Geburtstags-Hinweis (`Navbar.tsx`, `MatrixView.tsx`):**
+  - Dezente Geburtstagskachel im Leerraum der Navigationsleiste sowie im Header des Dienstplans.
+- **Bugfix Rollover Staff-ID Casing & Live-Berechnung (`rollover.py`, `models.py`):**
+  - Case-insensitive Zuordnung von `actual_staff_id` auf `staff.identifier` verhindert Null-Salden bei gemischter Groß-/Kleinschreibung.
+  - Vorquartals-Salden (z. B. AA: `+2.22`, Caroline B.: `+8.55`) und 21-Tage-Ruhezeiten greifen reproduzierbar im Produktivbetrieb.
+
 ## [1.6.0] - 2026-11-06
 
 ### Added: Web-Plattform (FastAPI + React), Firestore SSOT, 2027-Q1 Baseline & Feiertagsdienste
