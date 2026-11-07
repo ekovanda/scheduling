@@ -14,6 +14,7 @@ from app.api.dependencies import get_repository
 from app.exporters.excel import export_schedule_to_csv, export_schedule_to_excel
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
+    FeasibilityReportRecord,
     QuarterScheduleDocument,
     ScheduleState,
     ShiftAssignmentRecord,
@@ -25,6 +26,7 @@ from app.persistence.rollover import (
     get_previous_quarter_context,
     get_quarter_date_range,
 )
+from app.scheduler.feasibility import run_full_feasibility_check
 from app.scheduler.models import (
     Assignment,
     Beruf,
@@ -428,6 +430,62 @@ _active_jobs: dict[str, ActiveJobState] = {}
 _jobs_lock = threading.Lock()
 
 
+def _load_domain_data(
+    quarter_key: str,
+    repo: RepositoryProtocol,
+) -> tuple[int, int, date, date, list[Staff], list[Vacation], list[PreAssignedShift]]:
+    """Load and map staff, absences, and pre-assigned shifts for a quarter."""
+    year, quarter = _parse_quarter_key(quarter_key)
+    q_start, q_end = get_quarter_date_range(year, quarter)
+
+    active_members = repo.list_staff(active_only=True)
+    staff_list = [m.to_scheduler_staff() for m in active_members]
+    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+
+    raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
+    vacations = [
+        Vacation(
+            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+            start_date=a.start_date,
+            end_date=a.end_date,
+        )
+        for a in raw_absences
+    ]
+
+    raw_preassigned = repo.list_preassigned()
+    pa_shifts: list[PreAssignedShift] = []
+    for r in raw_preassigned:
+        if q_start <= r.shift_date <= q_end:
+            st = None
+            try:
+                st = ShiftType(r.shift_type)
+            except ValueError:
+                if "nacht" in r.shift_type.lower():
+                    from app.scheduler.file_loader import _WEEKDAY_TO_NIGHT
+
+                    st = ShiftType(_WEEKDAY_TO_NIGHT[r.shift_date.weekday()])
+            if st is not None:
+                is_paired = False
+                if st.value.startswith("N_"):
+                    same_date_nights = [
+                        x
+                        for x in raw_preassigned
+                        if x.shift_date == r.shift_date
+                        and (x.shift_type == st.value or "nacht" in x.shift_type.lower())
+                    ]
+                    is_paired = len(same_date_nights) > 1
+                pa_shifts.append(
+                    PreAssignedShift(
+                        shift_date=r.shift_date,
+                        shift_type=st,
+                        staff_identifier=r.staff_identifier,
+                        is_paired=is_paired,
+                    )
+                )
+
+    return year, quarter, q_start, q_end, staff_list, vacations, pa_shifts
+
+
 def _execute_solver_worker(
     quarter_key: str,
     job_id: str,
@@ -440,8 +498,6 @@ def _execute_solver_worker(
     stagnation_limit_seconds: float | None = 15.0,
 ) -> None:
     """Worker function executed inside background thread."""
-    year, quarter = _parse_quarter_key(quarter_key)
-    q_start, q_end = get_quarter_date_range(year, quarter)
     start_time = time.time()
 
     def on_progress(entry: dict[str, Any]) -> None:
@@ -457,54 +513,13 @@ def _execute_solver_worker(
         active_job.solver = solver
 
     try:
-        active_members = repo.list_staff(active_only=True)
-        staff_list = [m.to_scheduler_staff() for m in active_members]
-        staff_id_to_ident = {m.id: m.identifier for m in active_members}
-
-        raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
-        vacations = [
-            Vacation(
-                identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
-                start_date=a.start_date,
-                end_date=a.end_date,
-            )
-            for a in raw_absences
-        ]
+        year, quarter, q_start, q_end, staff_list, vacations, pa_shifts = _load_domain_data(
+            quarter_key, repo
+        )
 
         context = None
         if include_previous_context:
             context = get_previous_quarter_context(year, quarter, repo)
-
-        raw_preassigned = repo.list_preassigned()
-        pa_shifts: list[PreAssignedShift] = []
-        for r in raw_preassigned:
-            if q_start <= r.shift_date <= q_end:
-                st = None
-                try:
-                    st = ShiftType(r.shift_type)
-                except ValueError:
-                    if "nacht" in r.shift_type.lower():
-                        from app.scheduler.file_loader import _WEEKDAY_TO_NIGHT
-
-                        st = ShiftType(_WEEKDAY_TO_NIGHT[r.shift_date.weekday()])
-                if st is not None:
-                    is_paired = False
-                    if st.value.startswith("N_"):
-                        same_date_nights = [
-                            x
-                            for x in raw_preassigned
-                            if x.shift_date == r.shift_date
-                            and (x.shift_type == st.value or "nacht" in x.shift_type.lower())
-                        ]
-                        is_paired = len(same_date_nights) > 1
-                    pa_shifts.append(
-                        PreAssignedShift(
-                            shift_date=r.shift_date,
-                            shift_type=st,
-                            staff_identifier=r.staff_identifier,
-                            is_paired=is_paired,
-                        )
-                    )
 
         result = generate_schedule(
             staff_list=staff_list,
@@ -544,6 +559,7 @@ def _execute_solver_worker(
                 else "Kein machbarer Dienstplan gefunden."
             )
             job_rec.error = err_msg
+            job_rec.diagnostics = getattr(result, "diagnostics", [])
             repo.save_solver_job(job_rec)
             return
 
@@ -600,6 +616,38 @@ def _execute_solver_worker(
 
 
 @router.post(
+    "/{quarter_key}/validate-feasibility",
+    response_model=FeasibilityReportRecord,
+)
+def validate_quarter_feasibility(
+    quarter_key: str,
+    repo: RepoDep,
+) -> FeasibilityReportRecord:
+    """Pre-flight check: validate pre-assigned shifts and capacity feasibility without solving."""
+    _parse_quarter_key(quarter_key)
+    year, quarter, q_start, q_end, staff_list, vacations, pa_shifts = _load_domain_data(
+        quarter_key, repo
+    )
+    if not staff_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active staff members found in database. Onboard staff first.",
+        )
+
+    from app.scheduler.models import SchedulerConfig
+
+    return run_full_feasibility_check(
+        staff_list=staff_list,
+        vacations=vacations,
+        pre_assigned=pa_shifts,
+        quarter_start=q_start,
+        quarter_end=q_end,
+        config=SchedulerConfig(),
+        quarter_key=quarter_key,
+    )
+
+
+@router.post(
     "/{quarter_key}/generate",
     response_model=SolverJobRecord,
     status_code=status.HTTP_202_ACCEPTED,
@@ -615,12 +663,45 @@ def generate_quarter_schedule(
     solver_req = req or GenerateScheduleRequest()
     _parse_quarter_key(quarter_key)
 
-    active_members = repo.list_staff(active_only=True)
-    if not active_members:
+    year, quarter, q_start, q_end, staff_list, vacations, pa_shifts = _load_domain_data(
+        quarter_key, repo
+    )
+    if not staff_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No active staff members found in database. Onboard staff first.",
         )
+
+    # Deterministic Pre-Flight Consistency & Capacity Validation
+    from app.scheduler.models import SchedulerConfig
+
+    feasibility_report = run_full_feasibility_check(
+        staff_list=staff_list,
+        vacations=vacations,
+        pre_assigned=pa_shifts,
+        quarter_start=q_start,
+        quarter_end=q_end,
+        config=SchedulerConfig(),
+        quarter_key=quarter_key,
+    )
+    if feasibility_report.blocking_error_count > 0:
+        first_err = feasibility_report.diagnostics[0]
+        failed_record = SolverJobRecord(
+            job_id=f"job_{quarter_key}_{uuid4().hex[:8]}",
+            quarter_key=quarter_key,
+            status=SolverJobStatus.FAILED,
+            completed_at=datetime.now(UTC),
+            error=f"Vorprüfung fehlgeschlagen: {first_err.title} — {first_err.message}",
+            diagnostics=feasibility_report.diagnostics,
+        )
+        repo.save_solver_job(failed_record)
+        if sync:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=failed_record.error,
+            )
+        response.status_code = status.HTTP_202_ACCEPTED
+        return failed_record
 
     with _jobs_lock:
         if quarter_key in _active_jobs:

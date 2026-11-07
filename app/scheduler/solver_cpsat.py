@@ -31,7 +31,7 @@ from .models import (
     get_staff_unavailable_dates,
 )
 from .validator import validate_schedule
-from .feasibility import analyze_capacity
+from .feasibility import analyze_capacity, diagnose_structured_infeasibility
 
 
 class SolverResult:
@@ -44,12 +44,14 @@ class SolverResult:
         penalties: list[float],
         unsatisfiable_constraints: list[str],
         convergence_log: list[dict[str, float]] | None = None,
+        diagnostics: list[Any] | None = None,
     ) -> None:
         self.success = success
         self.schedules = schedules
         self.penalties = penalties
         self.unsatisfiable_constraints = unsatisfiable_constraints
         self.convergence_log: list[dict[str, float]] = convergence_log or []
+        self.diagnostics: list[Any] = diagnostics or []
 
     def get_best_schedule(self) -> Schedule | None:
         """Get the best schedule (lowest penalty)."""
@@ -1107,11 +1109,21 @@ def generate_schedule_cpsat(
             0,
             f"Solver-Status: {status_name} (Wall-Time: {solver.WallTime():.1f}s)",
         )
+        diag_records = diagnose_structured_infeasibility(
+            staff_list=staff_list,
+            vacations=vacations or [],
+            pre_assigned=pre_assigned or [],
+            quarter_start=quarter_start or date(2026, 1, 1),
+            quarter_end=quarter_end or date(2026, 3, 31),
+            config=config or SchedulerConfig(),
+            unsatisfiable_strings=unsatisfiable,
+        )
         return SolverResult(
             success=False,
             schedules=[],
             penalties=[],
             unsatisfiable_constraints=unsatisfiable,
+            diagnostics=diag_records,
         )
 
 

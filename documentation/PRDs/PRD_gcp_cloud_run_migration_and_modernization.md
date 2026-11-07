@@ -3,8 +3,8 @@
 ## Transforming the Dienstplan Generator into a Unified Single Source of Truth (SSOT)
 
 **Feature Name / Slug**: `gcp-cloud-run-migration-and-modernization`  
-**Document Version**: 1.3 (Updated: Cloud Firestore SSOT Persistence & Asynchronous Solver Architecture)  
-**Status**: Approved & In Progress (Phase 1 Deployed; Phase 2 Active Development)  
+**Document Version**: 1.4 (Updated: Solver Explainability & Pre-Flight Engine, Planning Staff Authentication, Production Cutover & Phased Swap Roadmap)  
+**Status**: Approved & In Progress (Phase 1 & 2 Complete; Phase 3 Active Development)  
 **Target Architecture**: GCP Cloud Run (Containerized Backend) + GCP Cloud Firestore (Serverless Document Database with Local JSON Fallback) + Modern React/Tailwind Frontend (Firebase Hosting)  
 **Author**: Antigravity / Senior Cloud & Full-Stack Architect  
 
@@ -94,40 +94,47 @@ flowchart TD
 
 ## 3. Phased Implementation Strategy
 
-To protect ongoing clinical operations and avoid disruption, the transition remains structured in three safe phases:
+To protect ongoing clinical operations and avoid disruption, the modernization roadmap is structured in four clear, safe phases:
 
 ```mermaid
-flowchart LR
-    subgraph Phase1["Phase 1: Lift & Shift (Complete / In Production)"]
+flowchart TD
+    subgraph Phase1["Phase 1: Lift & Shift (Complete)"]
         direction TB
         A1["Dockerize Streamlit App"] --> A2["Deploy to Private GCP Cloud Run"]
         A2 --> A3["Secure via Private Repo & Secrets Manager"]
-        A3 --> A4["Verified identical parity with Streamlit Cloud"]
+        A3 --> A4["Verified parity with Streamlit Cloud"]
     end
 
-    subgraph Phase2["Phase 2: Decoupled API & Cloud Firestore SSOT Backend (Active)"]
+    subgraph Phase2["Phase 2: Decoupled API & Cloud Firestore SSOT (Complete)"]
         direction TB
-        B1["Expose FastAPI REST Service on Cloud Run"] --> B2["Pure Python app/scheduler intact"]
-        B2 --> B3["Asynchronous Solver API (POST 202 + /solver-status)"]
-        B3 --> B4["Persist in Cloud Firestore (Local JSON Fallback)"]
-        B4 --> B5["Automated Roll-Over Engine (build_previous_context)"]
+        B1["FastAPI REST Backend"] --> B2["Asynchronous Solver Runner (POST 202)"]
+        B2 --> B3["Cloud Firestore Dual-Driver Persistence"]
+        B3 --> B4["Automated Roll-Over Engine & L1 Fairness"]
     end
 
-    subgraph Phase3["Phase 3: React SSOT Frontend"]
+    subgraph Phase3["Phase 3: React SSOT Delivery, Explainability & Cutover (Active)"]
         direction TB
-        C1["React 19 + Vite + Tailwind CSS"] --> C2["Deploy to Firebase Hosting / Cloud CDN"]
-        C2 --> C3["Staff Directory & Vacation Calendar Views"]
-        C3 --> C4["Interactive Schedule Matrix (Draft + Live Ist-Plan)"]
-        C4 --> C5["Shift Swap & Replacement Modal with Live Validation"]
+        C1["React 19 + Tailwind UI (Staff, Absences, Matrix, Fairness)"] --> C2["Phase 3A: Pre-Flight Consistency & Explainability Engine"]
+        C2 --> C3["Phase 3B: Authentication & Access Control for Planning Staff"]
+        C3 --> C4["Phase 3C: Production Deployment & Cutover Pipeline"]
     end
 
-    Phase1 --> Phase2 --> Phase3
+    subgraph Phase4["Phase 4: Dedicated Live Quarter Shift Swap & Ist-Tracking (Future)"]
+        direction TB
+        D1["Intelligent Candidate Recommendation Engine"] --> D2["Soll vs. Ist Realized Schedule Drawer"]
+        D2 --> D3["Audit Trail & Clinical Overrides Ledger"]
+    end
+
+    Phase1 --> Phase2 --> Phase3 --> Phase4
 ```
 
-- **Phase 1** has been successfully executed, deploying the existing Streamlit app to private Cloud Run with zero disruption to active scheduling.
-- **Phase 2** builds the headless FastAPI layer, persistence store, automated roll-over logic, and an asynchronous in-process solver runner. While maintaining "Flat & Simple" architecture (avoiding heavy external Redis/Celery brokers), Phase 2 addresses the operational reality that clinical optimization requires up to 600s (10-minute) "Gründlich" solves. Because Firebase Hosting enforces a hard 60s CDN connection timeout and Cloud Run defaults to 300s, Phase 2 implements a lightweight in-process background task with non-blocking status polling (`POST /generate` returns `202 Accepted` + `job_id`, `GET /solver-status`), backed by Cloud Run's `--no-cpu-throttling` flag.
-- **Phase 3** replaces Streamlit with the full single-source-of-truth React UI.
-- **Parallel Deployment Model**: All Phase 2 and Phase 3 deployments target a separate Cloud Run service (`dienstplan-dev`) configured with `min-instances=0` ($0 idle cost), ensuring production (`dienstplan-app`) remains completely insulated from downtime or breaking changes.
+- **Phase 1 (Complete)**: Containerized the existing Streamlit app and deployed it to private Cloud Run with zero disruption.
+- **Phase 2 (Complete)**: Built the headless FastAPI REST API, asynchronous background solver engine with live polling (`POST 202` + `/solver-status`), Google Cloud Firestore persistence with local JSON fallback, automated quarter roll-over, and $L_1$-penalized CP-SAT fairness optimization.
+- **Phase 3 (Active)**: Completes the transition to the React Single Source of Truth (SSOT) web application:
+  - **Phase 3A (Solver Explainability & Pre-Flight Engine)**: Pinpoints and explains infeasibility causes (conflicting pre-assignments, coverage deficits, qualification bottlenecks) *before* or *during* CP-SAT execution with clear clinical diagnostic guidance.
+  - **Phase 3B (Authentication & Planning Staff Logins)**: Multi-user login protecting administrative scheduling operations (staff edits, vacation approvals, solver execution) via role-based access control (`Planner` vs. `Viewer`).
+  - **Phase 3C (Production Deployment & Cutover Pipeline)**: Automated build and release pipeline targeting Firebase Hosting (Frontend) and Cloud Run Production (`dienstplan-app`).
+- **Phase 4 (Future Dedicated Feature)**: Moves live shift swaps and realized sickness tracking ("Soll vs. Ist") into a separate, dedicated milestone once the primary planning workflow is production-verified. Shift swap UI controls are intentionally removed from the initial release to maintain focus and quality.
 
 ---
 
@@ -557,9 +564,9 @@ flowchart TD
    - Immediate warning if an absence creates an impossible weekend or night coverage shortage.
 3. **Interactive Schedule Matrix & Operations (Hero View)**:
    - Header with quarter status banner (`DRAFT` / `PUBLISHED` / `LOCKED`), 1-click solve trigger with asynchronous live progress modal / background status polling, and Excel export.
-   - Matrix grid with colored badges for shift types (Night, Weekend, Day, On-Call).
-   - **Click-to-Swap Drawer**: Click any shift to view eligible replacements with instant live constraint check (rest gaps, max consecutive days) via `POST /quarters/{key}/shifts/swap`.
-   - Supports both Pre-Quarter Planning (Soll-Plan) and Live Realized Tracking (Ist-Plan) with full audit log.
+   - Clean Matrix grid with colored badges for shift types (Night, Weekend Day, On-Call, Pre-Assigned).
+   - Instant Feasibility & Infeasibility Diagnostics Modal: Displays clear clinical conflict diagnoses when CP-SAT fails or user inputs/pre-assignments clash.
+   - (Note: Live Shift Swap & Ist-Tracking UI is decoupled from this phase and scheduled for Phase 4).
 4. **Simplified Fairness & Health Scorecard**:
    - Redesigned for stakeholder clarity: replaces confusing variance and Gini indices with 3 actionable signals:
      1. *Target Adherence Score*: Visual progress bar per staff member (assigned nights vs. target).
@@ -583,43 +590,155 @@ flowchart TD
 
 ---
 
-## 7. Migration & Rollout Plan
+## 7. Phase 3A: Solver Explainability & Pre-Flight Feasibility Engine
 
-```mermaid
-gantt
-    title Phased Modernization & SSOT Roadmap
-    dateFormat  YYYY-MM-DD
-    section Phase 1: Lift & Shift (Complete)
-    Dockerfile Hardening & Cloud Run Config       :p1_1, 2026-11-02, 2d
-    Deploy Existing Streamlit to Private Cloud Run:p1_2, after p1_1, 2d
-    Verify Zero Disruption with Current Users     :p1_3, after p1_2, 3d
+### 7.1 Motivation & Clinical Problem Statement
+When CP-SAT encounters mathematically conflicting constraints (e.g., Easter 2027 pre-assignments violating `nd_max_consecutive`, locked days, or mutual qualifications), presolve concludes in milliseconds with `INFEASIBLE (Wall-Time: 0.0s)`.
+For clinical planners, this black-box failure produces confusion and frustration. The goal of Phase 3A is to provide **100% human-readable explainability** before and during solve jobs, turning abstract mathematical infeasibility into actionable clinical remediation.
 
-    section Phase 2: Decoupled API & SSOT Backend (Active)
-    FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 3d
-    Asynchronous Background Solver & Polling API  :p2_2, after p2_1, 3d
-    Data Persistence (Firestore & Local Repo)     :p2_3, after p2_2, 4d
-    Automated Roll-Over Engine Implementation     :p2_4, after p2_3, 3d
-    Parallel Dev Service Deployment (dienstplan-dev):p2_5, after p2_4, 2d
-    Comprehensive API Tests (Lifecycle & Solver)  :p2_6, after p2_5, 3d
+### 7.2 Pre-Flight Consistency Validator (`validate_pre_assigned_consistency`)
+Prior to handing shifts and pre-assignments to CP-SAT, a fast deterministic validator runs on the server and checks four key conflict categories:
+1. **Same-Day Shift Overlaps**: Flags if any employee is pre-assigned multiple conflicting shifts on the same calendar day (e.g., `N_Fr-Sa` + `So_10-22`).
+2. **Consecutive Streak Cap Overruns**: Verifies that pre-assigned night strings do not exceed the employee's `nd_max_consecutive` limit (e.g., 3 consecutive nights for an employee with max = 2).
+3. **Rest-Period Collisions**: Verifies minimum 11-hour rest periods between adjacent shifts and cross-quarter boundary transitions.
+4. **Availability & Exception Clashes**:
+   - Flags pre-assignments on weekdays blocked by `nd_exceptions`.
+   - Flags pre-assignments falling within active vacation/sick leave records in the `absences` ledger.
+   - Flags solo night assignments (`N_Mo-Di`, `N_Di-Mi`, `N_Mi-Do`, `N_Do-Fr`) given to employees with `nd_alone == False`.
+   - Flags paired weekend nights (`N_Fr-Sa`, `N_Sa-So`, `N_So-Mo`) assigned to non-solo employees without an eligible pairing partner.
 
-    section Phase 3: React SSOT Frontend
-    Vite + React + Tailwind Scaffold              :p3_1, after p2_6, 3d
-    Staff Management & Vacation Calendar Views    :p3_2, after p3_1, 5d
-    Interactive Matrix with Live Rule Validation  :p3_3, after p3_2, 6d
-    Live Quarter Shift Swap & Ist-Tracking Mode   :p3_4, after p3_3, 5d
-    Firebase Hosting Deployment & Decommissioning :p3_5, after p3_4, 3d
+### 7.3 Minimum Capacity & Structural Feasibility Checks
+Before model instantiation, the backend validates structural supply vs. demand:
+* **Night Shift Qualification Supply**: Checks that the pool of available night-eligible staff is $\ge 1$ for all required night dates.
+* **TFA Weekend Night Pairing Feasibility**: Checks that on every Friday, Saturday, and Sunday night, at least two night-capable employees are available (and not both blocked by absence or `nd_alone=False`).
+* **Vet Midweek Block Feasibility**: Verifies that sufficient veterinarians are available for Tuesday/Wednesday night blocks without violating the monthly adjacency rules.
+
+### 7.4 Explainability Data Contract & UI Feedback
+When infeasibility is detected, the API returns a structured diagnostic report:
+```python
+class InfeasibilityCategory(str, Enum):
+    PREASSIGNED_CONFLICT = "PREASSIGNED_CONFLICT"
+    ABSENCE_COVERAGE_DEFICIT = "ABSENCE_COVERAGE_DEFICIT"
+    QUALIFICATION_MISMATCH = "QUALIFICATION_MISMATCH"
+    REST_PERIOD_VIOLATION = "REST_PERIOD_VIOLATION"
+    CONSECUTIVE_LIMIT_EXCEEDED = "CONSECUTIVE_LIMIT_EXCEEDED"
+
+class InfeasibilityDiagnostic(BaseModel):
+    category: InfeasibilityCategory
+    title: str
+    message: str
+    affected_staff_ids: list[str]
+    affected_dates: list[date]
+    remediation_hint: str
+```
+The React UI displays an **Infeasibility Diagnostics Modal** containing clear clinical cards, e.g.:
+> ❌ **Vorbelegungskonflikt an Ostern**:  
+> Mitarbeiter **KS** (Azubi) ist am 26.03. für `N_Fr-Sa` und `So_10-22` gleichzeitig eingeteilt und überschreitet mit 3 Nächten in Folge das Maximum von 2 Nächten.  
+> 💡 *Empfohlene Lösung*: Vorbelegung für `KS` am 26.03. entfernen oder durch eine vollzeitige TFA ersetzen.
+
+---
+
+## 8. Phase 3B: Authentication & Access Control (User Logins for Planning Staff)
+
+### 8.1 Motivation & Compliance
+The Single Source of Truth holds sensitive clinical roster data, contract hours, and vacation plans. To prevent unauthorized alterations, multi-tenant planners require secure authentication and role-based permissions.
+
+### 8.2 Architecture & Identity Provider
+* **Provider**: Firebase Authentication (Email/Password & Google Identity) or Lightweight JWT Session Auth with Cloud Firestore user records.
+* **Zero Infrastructure Overhead**: Integrated with Firebase Hosting and validated via FastAPI `HTTPBearer` token verification.
+* **Roles**:
+  1. `PLANNER` (Head Veterinarians, Clinic Leadership, Practice Managers):
+     - Full read/write access to Staff Directory, Contract Hours, and Absences.
+     - Permission to initialize quarters, trigger CP-SAT solver, edit settings, and publish/lock schedules.
+  2. `VIEWER` (General Clinic Staff, TFA, Interns):
+     - Read-only access to published schedules, personal fairness scorecard, and holiday calendars.
+     - Cannot launch solver runs or modify employee master records.
+
+### 8.3 FastAPI Security Dependency
+```python
+async def get_current_user(token: HTTPAuthorizationCredentials = Depends(security)) -> UserClaims:
+    # Verifies Firebase ID Token or JWT signature
+    ...
+
+def require_planner(user: UserClaims = Depends(get_current_user)):
+    if user.role != Role.PLANNER:
+        raise HTTPException(status_code=403, detail="Aktion erfordert Planungsberechtigung")
 ```
 
 ---
 
-## 8. Summary of Added Requirements for SSOT
+## 9. Phase 3C: Production Deployment & Cutover Pipeline
+
+### 9.1 Objectives
+* Automate continuous deployment from GitHub to GCP Cloud Run and Firebase Hosting.
+* Transition the productive domain (`dienstplan-app`) from legacy Streamlit to the new React/FastAPI architecture with zero downtime.
+
+### 9.2 Infrastructure Configuration
+1. **Backend (GCP Cloud Run)**:
+   - Target Service: `dienstplan-app` (Production) and `dienstplan-dev` (Preview).
+   - Region: `europe-west3` (Frankfurt, strict GDPR & low latency).
+   - Resources: 2 vCPU, 4 GiB RAM, `--no-cpu-throttling`, `--timeout=900s`, `--min-instances=0` (or 1 during active planning cycles).
+   - Environment: `STORAGE_BACKEND=firestore`, `GCP_PROJECT_ID=tierklinik-dienstplan`.
+2. **Frontend (Firebase Hosting)**:
+   - Deploys static bundle (`dist/`) directly to Google Cloud Global CDN edge locations.
+   - SPA rewrites rule: routes all non-asset requests to `index.html`.
+   - API proxy rewrite rule: routes `/api/**` to Cloud Run service `dienstplan-app` with CORS configured.
+
+### 9.3 Cutover Strategy
+* **Readiness Gate**: All 160+ unit/integration tests passing; Q1 2027 schedule generation verified against historical baselines; planning staff login verified.
+* **Cutover**: Point production URL / DNS CNAME to Firebase Hosting CDN. Keep legacy Streamlit container dormant on Cloud Run as an immediate fallback for 30 days.
+
+---
+
+## 10. Phase 4: Dedicated Live Quarter Shift Swap & Soll-vs-Ist Tracking (Future Milestone)
+
+### 10.1 Decoupled Feature Scope
+Shift swapping during an active quarter involves live clinical adjustments (sick leaves, mutual swaps) that require dedicated modeling:
+* **Interactive Swap Drawer**: Click-to-swap interface suggesting eligible replacement candidates ranked by least impact on rest periods and contract fairness.
+* **Audit Trail & History**: Tracks who initiated the swap, timestamp, and reason (e.g. "Krankheitsvertretung", "Diensttausch").
+* **Continuous Ist-Plan Feed into Roll-Over**: Automatically feeds realized shifts worked into subsequent quarter boundaries.
+* **Status**: Decoupled from Phase 3 to ensure immediate delivery of the core solver, explainability, and authentication.
+
+---
+
+## 11. Migration & Rollout Plan
+
+```mermaid
+gantt
+    title Phased Modernization & SSOT Roadmap (v1.4)
+    dateFormat  YYYY-MM-DD
+    section Phase 1: Lift & Shift (Complete)
+    Dockerfile Hardening & Cloud Run Config       :p1_1, 2026-11-02, 2d
+    Deploy Streamlit to Private Cloud Run         :p1_2, after p1_1, 2d
+    Parity Verification                           :p1_3, after p1_2, 3d
+
+    section Phase 2: Decoupled API & SSOT (Complete)
+    FastAPI Core wrapping app/scheduler           :p2_1, after p1_3, 3d
+    Asynchronous Background Solver & Polling API  :p2_2, after p2_1, 3d
+    Cloud Firestore Dual-Driver Persistence       :p2_3, after p2_2, 4d
+    Automated Roll-Over & L1 Fairness Engine      :p2_4, after p2_3, 3d
+
+    section Phase 3: React SSOT Delivery (Active)
+    Phase 3A: Pre-Flight Consistency & Explainability :p3_1, 2026-11-07, 3d
+    Phase 3B: Authentication & Planner Logins     :p3_2, after p3_1, 3d
+    Phase 3C: Production Deployment & Cutover     :p3_3, after p3_2, 2d
+
+    section Phase 4: Dedicated Shift Swap (Future)
+    Guided Replacement Suggester & Live Validation:p4_1, after p3_3, 5d
+    Audit Trail & Soll vs. Ist Ledger Tracking    :p4_2, after p4_1, 4d
+```
+
+---
+
+## 12. Summary of Added Requirements for SSOT
 
 To achieve the single source of truth vision, the following items are now formally part of the PRD:
 1. **Persistent Staff Master**: Replaces per-session `staff.csv` uploads with persistent CRUD entities.
 2. **Continuous Absence Ledger**: Replaces quarterly `vacations.xlsx` uploads with an ongoing database ledger.
-3. **Soll- vs. Ist-Tracking**: Adds shift swap and replacement logging directly into active schedules.
-4. **Automated Roll-Over Engine**: Replaces manual `Arbeitseinsaetze.xlsx` context uploads with automated database queries feeding `build_previous_context(...)`.
-5. **Excel Role Shift**: Excel is relegated from an operational storage format to a 1-click presentation/export format.
-6. **Resilient Asynchronous Solver Execution**: Replaces fragile synchronous HTTP calls with an in-process background worker (`POST /generate` $\rightarrow$ `202 Accepted`, `GET /solver-status`) and Cloud Run `--no-cpu-throttling`, withstanding 10-minute "Gründlich" solves and bypassing CDN reverse-proxy timeouts.
-7. **Zero-Risk Parallel Cloud Run Deployments**: Development and preview iterations deploy to `dienstplan-dev` with `min-instances=0` ($0 idle cost), guaranteeing zero disruption to the production service (`dienstplan-app`).
+3. **Solver Explainability & Pre-Flight Validator**: Identifies and explains configuration errors and hard constraint conflicts prior to or during solver presolve.
+4. **Planning Staff Authentication**: Role-based access control protecting master data and schedule generation.
+5. **Automated Roll-Over Engine**: Replaces manual `Arbeitseinsaetze.xlsx` context uploads with automated database queries feeding `build_previous_context(...)`.
+6. **Excel Role Shift**: Excel is relegated from an operational storage format to a 1-click presentation/export format.
+7. **Resilient Asynchronous Solver Execution**: Replaces fragile synchronous HTTP calls with an in-process background worker (`POST /generate` $\rightarrow$ `202 Accepted`, `GET /solver-status`) and Cloud Run `--no-cpu-throttling`, withstanding 10-minute "Gründlich" solves and bypassing CDN reverse-proxy timeouts.
 8. **Cloud Firestore Multi-Planner Persistence (Dual-Driver Pattern)**: Replaces ephemeral container storage with Google Cloud Firestore (`europe-west3`) for concurrent, collision-free multi-user planning over weeks, preserving the local `FileJsonRepository` for fast, offline testing.
+9. **Dedicated Shift Swap Feature Decoupling**: Separates live operational shift swapping into Phase 4, keeping initial production release lean and rock-solid.

@@ -9,6 +9,29 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.10.0] - 2026-11-07
+
+### Added: Pre-Flight Machbarkeitsprüfung & Infeasibility Explainability (`feasibility.py`, `quarters.py`, `MatrixView.tsx`)
+
+- **Deterministische Vorprüfungs- & Diagnose-Engine (`app/scheduler/feasibility.py`):**
+  - `validate_pre_assigned_consistency`: Prüft vor dem Solverlauf deterministisch alle mathematisch unlösbaren Vorbelegungs-Konflikte:
+    - Doppelbelegungen am selben Kalendertag (`PREASSIGNED_SAME_DAY`).
+    - Überschreitung der konfigurierten Höchstgrenze aufeinanderfolgender Nächte `nd_max_consecutive` (`PREASSIGNED_CONSECUTIVE_CAP`).
+    - Verletzung der 11h-Ruhezeit bei Wochenenddiensten (`PREASSIGNED_WEEKEND_ISOLATION`).
+    - Kollisionen mit gesperrten Wochentagen `nd_exceptions` (`PREASSIGNED_BLOCKED_WEEKDAY`).
+    - Kollisionen mit genehmigtem Urlaub bzw. Abwesenheiten (`PREASSIGNED_VACATION_COLLISION`).
+    - Nachtdienst-Qualifikationen: Ungedeckte Schließnächte bei `nd_alone=False` (`NIGHT_SOLO_INCAPABLE`) und unzulässige Nachtpaarungen (`NIGHT_PAIRING_UNQUALIFIED`, z. B. zwei Azubis oder fehlende TFA).
+  - `diagnose_structured_infeasibility`: Erzeugt strukturierte Fehlerkarten mit konkreten Handlungsempfehlungen (`remediation_hint`) und betroffenen Mitarbeitern (`affected_staff_ids`), falls der CP-SAT Solver auf Grund komplexer Konstellationen infeasible meldet.
+  - Makro-Kapazitätsprüfungen (`validate_capacity_and_coverage`) als nicht-blockierende Warnungen klassifiziert.
+- **Backend API-Integration (`app/api/v1/quarters.py`, `app/persistence/models.py`):**
+  - Neuer Endpoint `POST /api/v1/quarters/{quarter_key}/validate-feasibility` liefert den vollständigen `FeasibilityReportRecord` in sub-5ms ohne Solver-Belastung.
+  - Fast-Fail-Schutz im Solver-Dispatch: Bei harten Vorbelegungs-Konflikten schlägt der Solver-Job sofort mit Status `FAILED` fehl und hängt die Diagnose-Karten direkt an den `SolverJobRecord` an.
+- **Frontend MatrixView Integration (`MatrixView.tsx`, `api.ts`, `types/api.ts`):**
+  - Neuer Button **"Machbarkeit prüfen"** in der Setup-Menüleiste mit modalem Diagnose-Report (`FeasibilityModal`).
+  - Solver-Fortschritts-Modal rendert bei Fehlschlag sofort interaktive Warn- und Fehlerkarten mit Ursache, betroffenen Mitarbeitern und Lösungsvorschlag.
+- **Vorbereitung Swap-Entkopplung (`MatrixView.tsx`):**
+  - Entfernung der temporären Tausch-Aktionen aus der MatrixView-Tabelle; dedizierter Backend- und UI-Workflow auf Phase 4 vertagt.
+
 ## [1.9.0] - 2026-11-07
 
 ### Added: Vorher-Nachher Ausgleichs-Pfeile & Fairness-Vektoren (`FairnessView.tsx`)

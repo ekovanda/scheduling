@@ -6,6 +6,7 @@ import type {
   ShiftAssignmentRecord,
   SolverJobRecord,
   QuarterFairnessOverviewResponse,
+  FeasibilityReportRecord,
 } from '../types/api';
 
 const API_BASE = '/api/v1';
@@ -165,6 +166,19 @@ export async function cancelSolverJob(quarterKey: string): Promise<{ message: st
   if (!res.ok) {
     const errData = await res.json().catch(() => null);
     throw new Error(errData?.detail || `Failed to cancel solver: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function validateQuarterFeasibility(
+  quarterKey: string
+): Promise<FeasibilityReportRecord> {
+  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/validate-feasibility`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.detail || `Fehler bei der Machbarkeitsprüfung: ${res.statusText}`);
   }
   return res.json();
 }

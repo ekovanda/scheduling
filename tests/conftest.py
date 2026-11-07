@@ -206,3 +206,19 @@ def _configure_test_solver(
         solver_facade.generate_schedule_cpsat = (  # type: ignore[attr-defined]
             original_facade_fn
         )
+
+
+@pytest.fixture
+def client(tmp_path: Any) -> Generator[Any, None, None]:
+    """Fixture providing a test client with an isolated temporary repository."""
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from app.api.main import app
+    from app.api.dependencies import get_repository
+    from app.persistence.repository import FileJsonRepository
+
+    test_repo = FileJsonRepository(base_dir=Path(tmp_path) / "api_test_db")
+    app.dependency_overrides[get_repository] = lambda: test_repo
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()

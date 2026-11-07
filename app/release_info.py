@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.9.0"
+CURRENT_VERSION = "1.10.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.10.0",
+        date="07. November 2026",
+        summary="Machbarkeits-Prüfung & Diagnose bei Planungs-Konflikten",
+        highlights=(
+            "1-Klick-Machbarkeitsprüfung erkennt Vorbelegungs- und Sperrkonflikte vor dem Solver-Start.",
+            "Verständliche Diagnosekarten mit konkreten Lösungsvorschlägen bei unlösbaren Konstellationen.",
+            "Vermeidet Fehlberechnungen bei Doppelbelegungen, Urlaubskollisionen und Mindest-Ruhezeiten.",
+        ),
+    ),
     Release(
         version="1.9.0",
         date="07. November 2026",

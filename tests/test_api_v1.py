@@ -15,16 +15,6 @@ from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
 from app.scheduler.solver_cpsat import SolverResult
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Generator[TestClient, None, None]:
-    """Fixture providing a test client with an isolated temporary repository."""
-    test_repo = FileJsonRepository(base_dir=tmp_path / "api_test_db")
-    app.dependency_overrides[get_repository] = lambda: test_repo
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-
-
 def test_api_health(client: TestClient) -> None:
     """Ensure /api/v1/health returns 200 with service metadata."""
     resp = client.get("/api/v1/health")

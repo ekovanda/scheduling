@@ -70,6 +70,42 @@ export interface QuarterScheduleDocument {
   updated_at?: string;
 }
 
+export type InfeasibilityCategory =
+  | 'PREASSIGNED_SAME_DAY'
+  | 'PREASSIGNED_CONSECUTIVE_CAP'
+  | 'PREASSIGNED_WEEKEND_ISOLATION'
+  | 'PREASSIGNED_BLOCKED_WEEKDAY'
+  | 'PREASSIGNED_ABSENCE_COLLISION'
+  | 'PREASSIGNED_QUALIFICATION_MISMATCH'
+  | 'PREASSIGNED_SOLO_UNQUALIFIED'
+  | 'PREASSIGNED_PAIRING_UNQUALIFIED'
+  | 'CAPACITY_TFA_OPEN_NIGHTS'
+  | 'CAPACITY_TOTAL_NIGHTS'
+  | 'CAPACITY_WEEKEND_ROLES'
+  | 'CAPACITY_VET_MIDWEEK'
+  | 'CAPACITY_NO_VIABLE_BLOCKS'
+  | 'SOLVER_UNSATISFIABLE';
+
+export type DiagnosticSeverity = 'ERROR' | 'WARNING';
+
+export interface InfeasibilityDiagnosticRecord {
+  category: InfeasibilityCategory;
+  severity: DiagnosticSeverity;
+  title: string;
+  message: string;
+  affected_staff_ids: string[];
+  affected_dates: string[];
+  remediation_hint: string;
+}
+
+export interface FeasibilityReportRecord {
+  is_feasible: boolean;
+  quarter_key: string;
+  diagnostics: InfeasibilityDiagnosticRecord[];
+  blocking_error_count: number;
+  warning_count: number;
+}
+
 export type SolverJobStatus = 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 export interface SolverJobRecord {
@@ -84,6 +120,7 @@ export interface SolverJobRecord {
   best_objective?: number | null;
   soft_penalty?: number | null;
   error?: string | null;
+  diagnostics?: InfeasibilityDiagnosticRecord[];
 }
 
 export type FairnessStatus = 'balanced' | 'slight_deviation' | 'warning';

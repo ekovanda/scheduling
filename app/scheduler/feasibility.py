@@ -6,20 +6,39 @@ causes (e.g. no viable 21-day blocks for a staff member) so the user
 can fix input data before waiting for a solver timeout.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
+
+from app.persistence.models import (
+    DiagnosticSeverity,
+    FeasibilityReportRecord,
+    InfeasibilityCategory,
+    InfeasibilityDiagnosticRecord,
+)
 
 from .models import (
     Beruf,
     PreAssignedShift,
     SchedulerConfig,
+    ShiftType,
     Staff,
     Vacation,
     generate_quarter_shifts,
     get_pre_assigned_holiday_dates,
     get_staff_unavailable_dates,
 )
+
+GERMAN_WEEKDAYS = {
+    1: "Montag",
+    2: "Dienstag",
+    3: "Mittwoch",
+    4: "Donnerstag",
+    5: "Freitag",
+    6: "Samstag",
+    7: "Sonntag",
+}
 
 
 @dataclass
@@ -161,7 +180,6 @@ def analyze_capacity(
     quarter_end = max(s.shift_date for s in shifts) if shifts else quarter_start
 
     night_shifts = [s for s in shifts if s.is_night_shift()]
-    total_nights = len(night_shifts)
 
     non_azubi_nd = [s for s in staff_list if s.nd_possible and s.beruf in (Beruf.TFA, Beruf.INTERN)]
     azubi_nd = [s for s in staff_list if s.nd_possible and s.beruf == Beruf.AZUBI]
@@ -186,7 +204,7 @@ def analyze_capacity(
     total_vet_nights = 0
     vet_details: list[str] = []
     if vet_nd:
-        months_in_quarter = sorted(list({(s.shift_date.year, s.shift_date.month) for s in night_shifts}))
+        months_in_quarter = sorted({(s.shift_date.year, s.shift_date.month) for s in night_shifts})
         for v in vet_nd:
             v_vacations = get_staff_unavailable_dates(vacations, v.identifier)
             avail_months = 0
@@ -392,3 +410,461 @@ def analyze_capacity(
         ))
 
     return CapacityReport(checks=checks)
+
+
+def validate_pre_assigned_consistency(
+    pre_assigned: list[PreAssignedShift],
+    staff_list: list[Staff],
+    vacations: list[Vacation],
+    quarter_start: date,
+    quarter_end: date,
+) -> list[InfeasibilityDiagnosticRecord]:
+    """Detect and explain hard constraint violations in pre-assigned shifts.
+
+    Checks:
+    1. Employee existence and basic role/qualification eligibility.
+    2. Overlap with registered absences/vacations.
+    3. Same-day double booking (more than 1 shift per day for same staff).
+    4. Streak caps (nd_max_consecutive overrun on night shifts).
+    5. Weekend shift isolation (<11h rest gap with adjacent shift).
+    6. Blocked weekday exceptions (nd_exceptions).
+    7. Solo night capability (nd_alone=False on closed nights).
+    8. Paired night qualification (open nights require at least 1 TFA, max 1 Azubi).
+    """
+    diagnostics: list[InfeasibilityDiagnosticRecord] = []
+    staff_by_id = {s.identifier: s for s in staff_list}
+
+    def to_st(val: ShiftType | str) -> ShiftType | None:
+        if isinstance(val, ShiftType):
+            return val
+        try:
+            return ShiftType(val)
+        except ValueError:
+            return None
+
+    by_staff: dict[str, list[PreAssignedShift]] = defaultdict(list)
+    for pa in pre_assigned:
+        if quarter_start <= pa.shift_date <= quarter_end:
+            by_staff[pa.staff_identifier].append(pa)
+
+    for ident, pa_list in by_staff.items():
+        staff = staff_by_id.get(ident)
+        if not staff:
+            diagnostics.append(
+                InfeasibilityDiagnosticRecord(
+                    category=InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
+                    severity=DiagnosticSeverity.ERROR,
+                    title="Mitarbeiter nicht im Personalstamm",
+                    message=f"Für das Kürzel '{ident}' existiert kein aktiver Mitarbeiter im Personalstamm.",
+                    affected_staff_ids=[ident],
+                    affected_dates=[pa.shift_date for pa in pa_list],
+                    remediation_hint=f"Legen Sie '{ident}' im Personal-Manager an oder korrigieren Sie das Kürzel in den Vorbelegungen.",
+                )
+            )
+            continue
+
+        blocked_dates = _get_blocked_dates(staff, vacations, quarter_start, quarter_end)
+
+        # 1. Check individual shift qualifications & absences & blocked weekdays
+        for pa in pa_list:
+            st = to_st(pa.shift_type)
+            if st is None:
+                continue
+
+            # Absence collision
+            if pa.shift_date in blocked_dates:
+                diagnostics.append(
+                    InfeasibilityDiagnosticRecord(
+                        category=InfeasibilityCategory.PREASSIGNED_ABSENCE_COLLISION,
+                        severity=DiagnosticSeverity.ERROR,
+                        title="Vorbelegung kollidiert mit Abwesenheit / Urlaub",
+                        message=(
+                            f"{staff.name} ({staff.identifier}) hat am {pa.shift_date.strftime('%d.%m.%Y')} "
+                            f"eine eingetragene Abwesenheit (Urlaub, Krankheit oder Geburtstag), "
+                            f"wurde aber für {st.value} vorbelegt."
+                        ),
+                        affected_staff_ids=[staff.identifier],
+                        affected_dates=[pa.shift_date],
+                        remediation_hint=(
+                            f"Löschen Sie die Vorbelegung von {staff.identifier} am {pa.shift_date.strftime('%d.%m.%Y')} "
+                            f"oder passen Sie den Abwesenheitseintrag im Abwesenheits-Manager an."
+                        ),
+                    )
+                )
+
+            # Blocked weekday (nd_exceptions)
+            if st.value.startswith("N_") and pa.shift_date.isoweekday() in staff.nd_exceptions:
+                weekday_name = GERMAN_WEEKDAYS.get(pa.shift_date.isoweekday(), str(pa.shift_date.isoweekday()))
+                diagnostics.append(
+                    InfeasibilityDiagnosticRecord(
+                        category=InfeasibilityCategory.PREASSIGNED_BLOCKED_WEEKDAY,
+                        severity=DiagnosticSeverity.ERROR,
+                        title="Vorbelegung an gesperrtem Wochentag",
+                        message=(
+                            f"{staff.name} ({staff.identifier}) ist am Wochentag {weekday_name} "
+                            f"für Nachtdienste gesperrt (nd_exceptions), wurde jedoch für {st.value} "
+                            f"am {pa.shift_date.strftime('%d.%m.%Y')} vorbelegt."
+                        ),
+                        affected_staff_ids=[staff.identifier],
+                        affected_dates=[pa.shift_date],
+                        remediation_hint="Entfernen Sie die Vorbelegung an diesem Tag oder passen Sie die gesperrten Wochentage in den Mitarbeiter-Stammdaten an.",
+                    )
+                )
+
+            # Basic qualification / role check
+            if not staff.can_work_shift(st, pa.shift_date):
+                if not (st.value.startswith("N_") and pa.shift_date.isoweekday() in staff.nd_exceptions):
+                    if not staff.adult and st.value.startswith("So_"):
+                        msg = f"{staff.name} ({staff.identifier}) ist minderjährig und darf laut JArbSchG sonntags nicht für {st.value} am {pa.shift_date.strftime('%d.%m.%Y')} eingeteilt werden."
+                        hint = "Weisen Sie den Sonntagsdienst einer volljährigen Fachkraft zu."
+                    elif staff.beruf == Beruf.VET:
+                        msg = f"Tierarzt {staff.name} ({staff.identifier}) kann nicht für {st.value} am {pa.shift_date.strftime('%d.%m.%Y')} eingeteilt werden (nur Di–Do Nächte zulässig)."
+                        hint = "Tierarzt-Nachtdienste sind auf Dienstag bis Donnerstag beschränkt."
+                    else:
+                        msg = f"{staff.name} ({staff.identifier}, {staff.beruf.value}) erfüllt nicht die erforderliche Qualifikation für {st.value} am {pa.shift_date.strftime('%d.%m.%Y')}."
+                        hint = "Prüfen Sie die Schichtanforderungen und weisen Sie eine passend qualifizierte Fachkraft zu."
+
+                    diagnostics.append(
+                        InfeasibilityDiagnosticRecord(
+                            category=InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
+                            severity=DiagnosticSeverity.ERROR,
+                            title=f"Qualifikations-Konflikt für {st.value}",
+                            message=msg,
+                            affected_staff_ids=[staff.identifier],
+                            affected_dates=[pa.shift_date],
+                            remediation_hint=hint,
+                        )
+                    )
+
+        # 2. Same-day double booking
+        shifts_by_date: dict[date, list[PreAssignedShift]] = defaultdict(list)
+        for pa in pa_list:
+            shifts_by_date[pa.shift_date].append(pa)
+
+        for d, d_shifts in shifts_by_date.items():
+            if len(d_shifts) > 1:
+                st_names = " und ".join(
+                    st.value if (st := to_st(s.shift_type)) is not None else str(s.shift_type)
+                    for s in d_shifts
+                )
+                diagnostics.append(
+                    InfeasibilityDiagnosticRecord(
+                        category=InfeasibilityCategory.PREASSIGNED_SAME_DAY,
+                        severity=DiagnosticSeverity.ERROR,
+                        title="Doppelbelegung am selben Kalendertag",
+                        message=(
+                            f"{staff.name} ({staff.identifier}) ist am {d.strftime('%d.%m.%Y')} "
+                            f"für mehrere Schichten gleichzeitig vorbelegt: {st_names}. "
+                            f"Pro Mitarbeiter ist maximal 1 Schicht pro Kalendertag erlaubt."
+                        ),
+                        affected_staff_ids=[staff.identifier],
+                        affected_dates=[d],
+                        remediation_hint="Entfernen Sie eine der Schichten am selben Tag oder teilen Sie den Dienst einer anderen Fachkraft zu.",
+                    )
+                )
+
+        # 3. Streak caps (nd_max_consecutive)
+        if staff.nd_max_consecutive is not None:
+            night_dates = sorted({
+                pa.shift_date for pa in pa_list
+                if (st := to_st(pa.shift_type)) is not None and st.value.startswith("N_")
+            })
+            if night_dates:
+                current_streak = [night_dates[0]]
+                for i in range(1, len(night_dates)):
+                    if night_dates[i] == current_streak[-1] + timedelta(days=1):
+                        current_streak.append(night_dates[i])
+                    else:
+                        if len(current_streak) > staff.nd_max_consecutive:
+                            diagnostics.append(
+                                InfeasibilityDiagnosticRecord(
+                                    category=InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
+                                    severity=DiagnosticSeverity.ERROR,
+                                    title="Höchstgrenze aufeinanderfolgender Nächte überschritten",
+                                    message=(
+                                        f"{staff.name} ({staff.identifier}) hat {len(current_streak)} Nächte in Folge "
+                                        f"({current_streak[0].strftime('%d.%m.')} bis {current_streak[-1].strftime('%d.%m.%Y')}) "
+                                        f"vorbelegt. Erlaubt sind maximal {staff.nd_max_consecutive} Nächte in Folge."
+                                    ),
+                                    affected_staff_ids=[staff.identifier],
+                                    affected_dates=list(current_streak),
+                                    remediation_hint=f"Kürzen Sie die Serie aufeinanderfolgender Nächte für {staff.name} auf maximal {staff.nd_max_consecutive} Nächte.",
+                                )
+                            )
+                        current_streak = [night_dates[i]]
+                if len(current_streak) > staff.nd_max_consecutive:
+                    diagnostics.append(
+                        InfeasibilityDiagnosticRecord(
+                            category=InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
+                            severity=DiagnosticSeverity.ERROR,
+                            title="Höchstgrenze aufeinanderfolgender Nächte überschritten",
+                            message=(
+                                f"{staff.name} ({staff.identifier}) hat {len(current_streak)} Nächte in Folge "
+                                f"({current_streak[0].strftime('%d.%m.')} bis {current_streak[-1].strftime('%d.%m.%Y')}) "
+                                f"vorbelegt. Erlaubt sind maximal {staff.nd_max_consecutive} Nächte in Folge."
+                            ),
+                            affected_staff_ids=[staff.identifier],
+                            affected_dates=list(current_streak),
+                            remediation_hint=f"Kürzen Sie die Serie aufeinanderfolgender Nächte für {staff.name} auf maximal {staff.nd_max_consecutive} Nächte.",
+                        )
+                    )
+
+        # 4. Weekend Shift Isolation (<11h rest gap with adjacent shift)
+        we_shifts = [
+            pa for pa in pa_list
+            if (st := to_st(pa.shift_type)) is not None and st.value.startswith(("Sa_", "So_"))
+        ]
+        all_shift_dates = {pa.shift_date: pa for pa in pa_list}
+        for we in we_shifts:
+            we_st = to_st(we.shift_type)
+            for adj_date in [we.shift_date - timedelta(days=1), we.shift_date + timedelta(days=1)]:
+                if adj_date in all_shift_dates:
+                    other = all_shift_dates[adj_date]
+                    other_st = to_st(other.shift_type)
+                    is_intern_pair = (
+                        we_st == ShiftType.SATURDAY_INTERN
+                        and other_st == ShiftType.SUNDAY_INTERN
+                        and other.shift_date == we.shift_date + timedelta(days=1)
+                    ) or (
+                        we_st == ShiftType.SUNDAY_INTERN
+                        and other_st == ShiftType.SATURDAY_INTERN
+                        and other.shift_date == we.shift_date - timedelta(days=1)
+                    )
+                    if not is_intern_pair:
+                        diagnostics.append(
+                            InfeasibilityDiagnosticRecord(
+                                category=InfeasibilityCategory.PREASSIGNED_WEEKEND_ISOLATION,
+                                severity=DiagnosticSeverity.ERROR,
+                                title="Verletzung der Wochenend-Isolation / 11h-Ruhezeit",
+                                message=(
+                                    f"{staff.name} ({staff.identifier}) ist für {we_st.value if we_st else we.shift_type} "
+                                    f"am {we.shift_date.strftime('%d.%m.%Y')} und eine direkt angrenzende Schicht "
+                                    f"{other_st.value if other_st else other.shift_type} am {other.shift_date.strftime('%d.%m.%Y')} "
+                                    f"eingeteilt. Dies verletzt die gesetzliche Ruhezeit von 11 Stunden."
+                                ),
+                                affected_staff_ids=[staff.identifier],
+                                affected_dates=[we.shift_date, other.shift_date],
+                                remediation_hint="Legen Sie mindestens einen freien Tag zwischen Wochenenddienst und Nachtdienst.",
+                            )
+                        )
+
+    # 5. Night Pairings & Solo Qualifications
+    night_shifts_by_date: dict[date, list[PreAssignedShift]] = defaultdict(list)
+    for pa in pre_assigned:
+        if quarter_start <= pa.shift_date <= quarter_end:
+            st = to_st(pa.shift_type)
+            if st and st.value.startswith("N_"):
+                night_shifts_by_date[pa.shift_date].append(pa)
+
+    for d, d_nights in night_shifts_by_date.items():
+        first_st = to_st(d_nights[0].shift_type)
+        if not first_st:
+            continue
+
+        if first_st in (ShiftType.NIGHT_FRI_SAT, ShiftType.NIGHT_SAT_SUN, ShiftType.NIGHT_SUN_MON):
+            if len(d_nights) == 2:
+                s1 = staff_by_id.get(d_nights[0].staff_identifier)
+                s2 = staff_by_id.get(d_nights[1].staff_identifier)
+                if s1 and s2:
+                    if s1.beruf != Beruf.TFA and s2.beruf != Beruf.TFA:
+                        diagnostics.append(
+                            InfeasibilityDiagnosticRecord(
+                                category=InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
+                                severity=DiagnosticSeverity.ERROR,
+                                title="Fehlende TFA bei offener Wochenend-Nacht",
+                                message=(
+                                    f"Am {d.strftime('%d.%m.%Y')} (offene Nacht) sind {s1.name} ({s1.beruf.value}) "
+                                    f"und {s2.name} ({s2.beruf.value}) eingeteilt. Offene Nächte erfordern zwingend "
+                                    f"mindestens eine voll qualifizierte TFA."
+                                ),
+                                affected_staff_ids=[s1.identifier, s2.identifier],
+                                affected_dates=[d],
+                                remediation_hint="Ersetzen Sie eine der beiden Personen durch eine TFA.",
+                            )
+                        )
+                    if s1.beruf == Beruf.AZUBI and s2.beruf == Beruf.AZUBI:
+                        diagnostics.append(
+                            InfeasibilityDiagnosticRecord(
+                                category=InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
+                                severity=DiagnosticSeverity.ERROR,
+                                title="Unzulässiges Azubi-Doppel im Nachtdienst",
+                                message=(
+                                    f"Am {d.strftime('%d.%m.%Y')} sind zwei Auszubildende ({s1.name} und {s2.name}) "
+                                    f"eingeteilt. Maximal ein Azubi darf pro Nacht Dienst haben."
+                                ),
+                                affected_staff_ids=[s1.identifier, s2.identifier],
+                                affected_dates=[d],
+                                remediation_hint="Teilen Sie mindestens eine erfahrene Fachkraft ein.",
+                            )
+                        )
+        else:
+            if len(d_nights) == 1:
+                s = staff_by_id.get(d_nights[0].staff_identifier)
+                if s and not s.nd_alone:
+                    diagnostics.append(
+                        InfeasibilityDiagnosticRecord(
+                            category=InfeasibilityCategory.PREASSIGNED_SOLO_UNQUALIFIED,
+                            severity=DiagnosticSeverity.ERROR,
+                            title="Alleindienst ohne Berechtigung (nd_alone=False)",
+                            message=(
+                                f"{s.name} ({s.identifier}) ist am {d.strftime('%d.%m.%Y')} allein für "
+                                f"{first_st.value} vorbelegt, besitzt jedoch keine Alleindienst-Berechtigung."
+                            ),
+                            affected_staff_ids=[s.identifier],
+                            affected_dates=[d],
+                            remediation_hint=f"Weisen Sie {s.name} eine begleitende Fachkraft zu oder besetzen Sie die Nacht mit einer alleindienstfähigen Fachkraft.",
+                        )
+                    )
+
+    return diagnostics
+
+
+def validate_capacity_and_coverage(
+    staff_list: list[Staff],
+    vacations: list[Vacation],
+    pre_assigned: list[PreAssignedShift],
+    quarter_start: date,
+    quarter_end: date,
+    config: SchedulerConfig,
+) -> list[InfeasibilityDiagnosticRecord]:
+    """Check macro-level team capacity against required shift volume."""
+    report = analyze_capacity(
+        staff_list=staff_list,
+        vacations=vacations,
+        pre_assigned=pre_assigned,
+        quarter_start=quarter_start,
+        config=config,
+    )
+    diagnostics: list[InfeasibilityDiagnosticRecord] = []
+
+    for check in report.checks:
+        if check.status == "ok":
+            continue
+
+        sev = DiagnosticSeverity.WARNING
+
+        if check.name == "Non-Azubi Nacht-Kapazität":
+            category = InfeasibilityCategory.CAPACITY_TFA_OPEN_NIGHTS
+            title = "TFA-Kapazität unzureichend für offene Nächte"
+            hint = "Erhöhen Sie die TFA-Verfügbarkeit oder prüfen Sie Urlaubseinträge der TFA-Mitarbeiter."
+        elif check.name == "Wochenend-Abdeckung":
+            category = InfeasibilityCategory.CAPACITY_WEEKEND_ROLES
+            title = "Fehlende Qualifikationen für Wochenendschichten"
+            hint = "Aktivieren Sie im Mitarbeiterstamm die benötigten Qualifikationen (z.B. Azubi für Sa_10-19, Anmeldung für Sa_10-21)."
+        elif check.name == "Mitarbeiter ohne gültige Blöcke":
+            category = InfeasibilityCategory.CAPACITY_NO_VIABLE_BLOCKS
+            title = "Mitarbeiter ohne zusammenhängenden Nachtblock"
+            hint = "Prüfen Sie urlaubsbedingte Unterbrechungen oder reduzieren Sie nd_min_consecutive."
+        elif check.name == "Azubi Pairing-Kapazität":
+            category = InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED
+            title = "Azubi-Begleitung im Nachtdienst knapp"
+            hint = "Stellen Sie sicher, dass genügend erfahrene TFAs für Nachtbegleitungen zur Verfügung stehen."
+        else:
+            category = InfeasibilityCategory.CAPACITY_TOTAL_NIGHTS
+            title = check.name
+            hint = "Überprüfen Sie Urlaube und Mitarbeiterverfügbarkeiten."
+
+        detail_text = f" Details: {'; '.join(check.details)}" if check.details else ""
+        diagnostics.append(
+            InfeasibilityDiagnosticRecord(
+                category=category,
+                severity=sev,
+                title=title,
+                message=f"{check.message}{detail_text}",
+                remediation_hint=hint,
+            )
+        )
+
+    return diagnostics
+
+
+def run_full_feasibility_check(
+    staff_list: list[Staff],
+    vacations: list[Vacation],
+    pre_assigned: list[PreAssignedShift],
+    quarter_start: date,
+    quarter_end: date,
+    config: SchedulerConfig,
+    quarter_key: str = "",
+) -> FeasibilityReportRecord:
+    """Run both deterministic pre-flight checks and capacity analyses."""
+    diagnostics: list[InfeasibilityDiagnosticRecord] = []
+
+    # 1. Micro-level pre-assigned hard constraint consistency
+    diagnostics.extend(
+        validate_pre_assigned_consistency(
+            pre_assigned=pre_assigned,
+            staff_list=staff_list,
+            vacations=vacations,
+            quarter_start=quarter_start,
+            quarter_end=quarter_end,
+        )
+    )
+
+    # 2. Macro-level structural capacity and role coverage
+    diagnostics.extend(
+        validate_capacity_and_coverage(
+            staff_list=staff_list,
+            vacations=vacations,
+            pre_assigned=pre_assigned,
+            quarter_start=quarter_start,
+            quarter_end=quarter_end,
+            config=config,
+        )
+    )
+
+    blocking = [d for d in diagnostics if d.severity == DiagnosticSeverity.ERROR]
+    warnings = [d for d in diagnostics if d.severity == DiagnosticSeverity.WARNING]
+
+    return FeasibilityReportRecord(
+        is_feasible=len(blocking) == 0,
+        quarter_key=quarter_key,
+        diagnostics=diagnostics,
+        blocking_error_count=len(blocking),
+        warning_count=len(warnings),
+    )
+
+
+def diagnose_structured_infeasibility(
+    staff_list: list[Staff],
+    vacations: list[Vacation],
+    pre_assigned: list[PreAssignedShift],
+    quarter_start: date,
+    quarter_end: date,
+    config: SchedulerConfig,
+    unsatisfiable_strings: list[str] | None = None,
+) -> list[InfeasibilityDiagnosticRecord]:
+    """Produce rich diagnostic records after an INFEASIBLE CP-SAT solver run."""
+    report = run_full_feasibility_check(
+        staff_list=staff_list,
+        vacations=vacations,
+        pre_assigned=pre_assigned,
+        quarter_start=quarter_start,
+        quarter_end=quarter_end,
+        config=config,
+    )
+    diagnostics = list(report.diagnostics)
+
+    if not diagnostics:
+        raw_msg = (
+            "; ".join(unsatisfiable_strings)
+            if unsatisfiable_strings
+            else "Das CP-SAT-Modell ist mit den gewählten Randbedingungen unlösbar."
+        )
+        diagnostics.append(
+            InfeasibilityDiagnosticRecord(
+                category=InfeasibilityCategory.SOLVER_UNSATISFIABLE,
+                severity=DiagnosticSeverity.ERROR,
+                title="Komplexe Randbedingungs-Kollision (CP-SAT Unlösbar)",
+                message=(
+                    f"Der mathematische Solver konnte keine Belegung finden, die gleichzeitig alle "
+                    f"Ruhezeiten (11h), Höchstnächte, Wochenend-Entkopplungen und Urlaubszeiten erfüllt. ({raw_msg})"
+                ),
+                remediation_hint=(
+                    "Lockern Sie Urlaubszeiten, vergrößern Sie den Mitarbeiterpool, "
+                    "oder prüfen Sie, ob feste Vorbelegungen an Feiertagen das Restproblem überbeschränken."
+                ),
+            )
+        )
+
+    return diagnostics

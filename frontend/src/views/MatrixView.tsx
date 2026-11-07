@@ -15,14 +15,16 @@ import {
   AlertCircle,
   StopCircle,
   Sparkles,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   QuarterScheduleDocument,
-  ShiftAssignmentRecord,
   StaffMember,
   PreAssignedShift,
   AbsenceRecord,
   SolverJobRecord,
+  FeasibilityReportRecord,
 } from '../types/api';
 import {
   fetchSchedule,
@@ -33,7 +35,7 @@ import {
   startSolverJob,
   fetchSolverStatus,
   cancelSolverJob,
-  swapShift,
+  validateQuarterFeasibility,
   type RolloverContextData,
 } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -97,15 +99,15 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     }
   }, [propCurrentQuarter]);
 
-  // Swap modal state
-  const [swapModalOpen, setSwapModalOpen] = useState(false);
-  const [selectedShift, setSelectedShift] = useState<ShiftAssignmentRecord | null>(null);
-  const [newStaffId, setNewStaffId] = useState<string>('');
-
   // Asynchronous Solver state
   const [activeJob, setActiveJob] = useState<SolverJobRecord | null>(null);
   const [solverModalOpen, setSolverModalOpen] = useState(false);
   const [solverError, setSolverError] = useState<string | null>(null);
+
+  // Feasibility & Diagnostics state
+  const [feasibilityReport, setFeasibilityReport] = useState<FeasibilityReportRecord | null>(null);
+  const [checkingFeasibility, setCheckingFeasibility] = useState(false);
+  const [feasibilityModalOpen, setFeasibilityModalOpen] = useState(false);
 
   const currentQuarterKey = `${setupYear}-${setupQuarter}`;
 
@@ -198,6 +200,21 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Check Feasibility (Deterministic Pre-Flight Engine)
+  const handleCheckFeasibility = async () => {
+    setCheckingFeasibility(true);
+    try {
+      const report = await validateQuarterFeasibility(currentQuarterKey);
+      setFeasibilityReport(report);
+      setFeasibilityModalOpen(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Feasibility check failed:', msg);
+    } finally {
+      setCheckingFeasibility(false);
+    }
+  };
+
   // Run Solver (Async Background Runner with Smart Auto-Stop)
   const handleRunSolver = async () => {
     setSolving(true);
@@ -210,6 +227,10 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         include_previous_context: includePreviousQuarter,
       });
       setActiveJob(job);
+      if (job.status === 'FAILED') {
+        setSolving(false);
+        setSolverError(job.error || 'Vorprüfung fehlgeschlagen.');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setSolverError(msg);
@@ -225,41 +246,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     } catch (err) {
       console.warn('Cancel error:', err);
     }
-  };
-
-  // Execute Swap
-  const handleExecuteSwap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedShift || !newStaffId || !schedule) return;
-
-    try {
-      const updated = await swapShift(currentQuarterKey, {
-        shift_date: selectedShift.shift_date,
-        shift_type: selectedShift.shift_type,
-        old_staff_id: selectedShift.actual_staff_id,
-        new_staff_id: newStaffId,
-        reason: 'Manuelle Schichtübernahme',
-        force: true,
-      });
-      setSchedule(updated);
-    } catch {
-      const updatedAssignments = schedule.assignments.map((a) => {
-        if (
-          a.shift_date === selectedShift.shift_date &&
-          a.shift_type === selectedShift.shift_type
-        ) {
-          return {
-            ...a,
-            actual_staff_id: newStaffId,
-            is_override: true,
-            override_reason: 'Manuelle Schichtübernahme',
-          };
-        }
-        return a;
-      });
-      setSchedule({ ...schedule, assignments: updatedAssignments });
-    }
-    setSwapModalOpen(false);
   };
 
   // Group assignments by unique date
@@ -563,14 +549,35 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
             </div>
           </div>
 
-          {/* Big Action Button */}
-          <div className="pt-2">
+          {/* Action Buttons */}
+          <div className="pt-2 flex flex-col sm:flex-row gap-3">
             <Button
+              type="button"
+              onClick={handleCheckFeasibility}
+              disabled={checkingFeasibility || solving}
+              variant="outline"
+              size="lg"
+              className="py-3 text-sm font-semibold sm:w-1/3 border-stone-300 hover:bg-stone-50"
+            >
+              {checkingFeasibility ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin text-teal-700" />
+                  Prüfe Daten...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-4 w-4 mr-2 text-teal-700" />
+                  Machbarkeit prüfen
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
               onClick={handleRunSolver}
               disabled={solving}
               variant="primary"
               size="lg"
-              className="w-full py-3 text-sm font-bold shadow-md"
+              className="py-3 text-sm font-bold shadow-md sm:w-2/3"
             >
               {solving ? (
                 <>
@@ -949,9 +956,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                   <span className="h-3 w-3 rounded bg-[#b2dfdb] border border-teal-300 inline-block" />
                   <span>📌 Fest vorbelegt</span>
                 </span>
-                <span className="flex items-center gap-1">
-                  <span>⚠️ Schichttausch</span>
-                </span>
               </div>
 
               {/* The Streamlit-Style Calendar Matrix Table */}
@@ -970,19 +974,18 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                         <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#fff8e7]">
                           ☀️ Rufbereitschaft
                         </th>
-                        <th className="py-2.5 px-3 text-right">Aktion</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200 font-mono">
                       {loading ? (
                         <tr>
-                          <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
+                          <td colSpan={4} className="py-12 text-center text-stone-500 font-sans">
                             Lade Dienstplan...
                           </td>
                         </tr>
                       ) : filteredDates.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="py-12 text-center text-stone-500 font-sans">
+                          <td colSpan={4} className="py-12 text-center text-stone-500 font-sans">
                             Keine Schichten vorhanden.
                           </td>
                         </tr>
@@ -1049,18 +1052,9 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                         (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
                                       );
                                       return (
-                                        <button
+                                        <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          onClick={() => {
-                                            setSelectedShift(shift);
-                                            const c = staffList.filter(
-                                              (s) => s.id !== shift.actual_staff_id
-                                            );
-                                            if (c.length > 0) setNewStaffId(c[0].id);
-                                            setSwapModalOpen(true);
-                                          }}
-                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-semibold"
-                                          title="Klicken für Diensttausch"
+                                          className="flex items-center gap-1.5 text-left font-semibold"
                                         >
                                           {isPre && (
                                             <Pin className="h-3 w-3 text-teal-800 shrink-0" />
@@ -1078,7 +1072,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                               ⚠️
                                             </span>
                                           )}
-                                        </button>
+                                        </div>
                                       );
                                     })}
                                   </div>
@@ -1105,18 +1099,9 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                         (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
                                       );
                                       return (
-                                        <button
+                                        <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          onClick={() => {
-                                            setSelectedShift(shift);
-                                            const c = staffList.filter(
-                                              (s) => s.id !== shift.actual_staff_id
-                                            );
-                                            if (c.length > 0) setNewStaffId(c[0].id);
-                                            setSwapModalOpen(true);
-                                          }}
-                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-semibold text-amber-950"
-                                          title="Klicken für Diensttausch"
+                                          className="flex items-center gap-1.5 text-left font-semibold text-amber-950"
                                         >
                                           {isPre && (
                                             <Pin className="h-3 w-3 text-teal-800 shrink-0" />
@@ -1130,7 +1115,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                             </span>
                                           )}
                                           {shift.is_override && <span>⚠️</span>}
-                                        </button>
+                                        </div>
                                       );
                                     })}
                                   </div>
@@ -1153,18 +1138,9 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                         (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
                                       );
                                       return (
-                                        <button
+                                        <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          onClick={() => {
-                                            setSelectedShift(shift);
-                                            const c = staffList.filter(
-                                              (s) => s.id !== shift.actual_staff_id
-                                            );
-                                            if (c.length > 0) setNewStaffId(c[0].id);
-                                            setSwapModalOpen(true);
-                                          }}
-                                          className="flex items-center gap-1.5 hover:underline cursor-pointer text-left font-medium text-stone-800"
-                                          title="Klicken für Diensttausch"
+                                          className="flex items-center gap-1.5 text-left font-medium text-stone-800"
                                         >
                                           {isPre && (
                                             <Pin className="h-3 w-3 text-teal-800 shrink-0" />
@@ -1178,31 +1154,12 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                             </span>
                                           )}
                                           {shift.is_override && <span>⚠️</span>}
-                                        </button>
+                                        </div>
                                       );
                                     })}
                                   </div>
                                 ) : (
                                   <span className="text-stone-300 font-normal">—</span>
-                                )}
-                              </td>
-
-                              {/* Quick Swap Action */}
-                              <td className="py-2 px-3 text-right font-sans">
-                                {dayShifts.length > 0 && (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedShift(dayShifts[0]);
-                                      const c = staffList.filter(
-                                        (s) => s.id !== dayShifts[0].actual_staff_id
-                                      );
-                                      if (c.length > 0) setNewStaffId(c[0].id);
-                                      setSwapModalOpen(true);
-                                    }}
-                                    className="text-[11px] text-stone-500 hover:text-[#324b9b] font-medium cursor-pointer"
-                                  >
-                                    Tauschen
-                                  </button>
                                 )}
                               </td>
                             </tr>
@@ -1252,72 +1209,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
           )}
         </div>
       )}
-
-      {/* SHIFT SWAP MODAL */}
-      <Modal
-        isOpen={swapModalOpen}
-        onClose={() => setSwapModalOpen(false)}
-        title="Dienst tauschen / Vertretung"
-      >
-        {selectedShift && (
-          <form onSubmit={handleExecuteSwap} className="space-y-4">
-            <div className="bg-stone-50 p-3 rounded-lg border border-stone-200/80 text-xs space-y-1.5">
-              <div className="flex justify-between">
-                <span className="text-stone-500">Datum & Schicht:</span>
-                <span className="font-bold text-stone-900">
-                  {selectedShift.shift_date} &middot;{' '}
-                  {selectedShift.shift_type === 'Nachtdienst' ? 'Nachtdienst' : 'Wochenenddienst'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-stone-500">Aktuell eingeteilt:</span>
-                <span className="font-semibold text-stone-900">
-                  {getStaff(selectedShift.actual_staff_id)?.name} (
-                  {getStaff(selectedShift.actual_staff_id)?.identifier})
-                </span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Ersatz-Mitarbeiter auswählen
-              </label>
-              <select
-                required
-                value={newStaffId}
-                onChange={(e) => setNewStaffId(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
-              >
-                {staffList
-                  .filter((s) => s.id !== selectedShift.actual_staff_id)
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.identifier} &middot; {s.beruf})
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-              <span>Regelprüfung: Keine Ruhezeit- oder Urlaubskonflikte erkannt.</span>
-            </div>
-
-            <div className="pt-3 flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSwapModalOpen(false)}
-              >
-                Abbrechen
-              </Button>
-              <Button type="submit" variant="primary">
-                Tausch speichern
-              </Button>
-            </div>
-          </form>
-        )}
-      </Modal>
 
       {/* Asynchronous Solver Progress Modal */}
       <Modal
@@ -1390,6 +1281,79 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
             </div>
           </div>
 
+          {/* Diagnostic Infeasibility Explanations */}
+          {activeJob?.diagnostics && activeJob.diagnostics.length > 0 && (
+            <div className="space-y-3 pt-2 border-t border-stone-200">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <AlertCircle className="h-4 w-4 text-red-600" />
+                  Erkannte Regel- und Vorbelegungskonflikte ({activeJob.diagnostics.length})
+                </span>
+                <span className="text-[11px] text-stone-500">
+                  Präzise Vorprüfung vor CP-SAT-Lauf
+                </span>
+              </div>
+              <div className="max-h-72 overflow-y-auto space-y-2.5 pr-1">
+                {activeJob.diagnostics.map((diag, idx) => {
+                  const isErr = diag.severity === 'ERROR';
+                  return (
+                    <div
+                      key={idx}
+                      className={cn(
+                        'p-3.5 rounded-xl border text-xs space-y-2 transition-all',
+                        isErr
+                          ? 'bg-red-50/70 border-red-200 text-red-950'
+                          : 'bg-amber-50/70 border-amber-200 text-amber-950'
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {isErr ? (
+                            <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                          )}
+                          <span
+                            className={cn(
+                              'text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider',
+                              isErr
+                                ? 'bg-red-200/80 text-red-900'
+                                : 'bg-amber-200/80 text-amber-900'
+                            )}
+                          >
+                            {isErr ? 'Blockierend' : 'Warnung'}
+                          </span>
+                          <span className="font-bold text-stone-900">{diag.title}</span>
+                        </div>
+                        {diag.affected_staff_ids.length > 0 && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            {diag.affected_staff_ids.map((id) => (
+                              <span
+                                key={id}
+                                className="font-mono font-bold bg-white/90 border border-stone-200 px-1.5 py-0.5 rounded text-[10px] text-stone-800"
+                              >
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="text-stone-700 leading-relaxed font-sans">{diag.message}</p>
+
+                      {diag.remediation_hint && (
+                        <div className="bg-white/80 rounded-lg p-2.5 border border-stone-200/60 flex items-start gap-2 text-stone-800 text-[11px]">
+                          <span className="text-amber-600 shrink-0 font-bold">💡 Lösung:</span>
+                          <span>{diag.remediation_hint}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Modal Actions */}
           <div className="pt-2 flex items-center justify-between gap-3 border-t border-stone-100">
             {activeJob?.status === 'RUNNING' ? (
@@ -1436,6 +1400,112 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 Schließen
               </Button>
             )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* Pre-Flight Feasibility Check Modal */}
+      <Modal
+        isOpen={feasibilityModalOpen}
+        onClose={() => setFeasibilityModalOpen(false)}
+        title={`Machbarkeitsprüfung: ${currentQuarterKey}`}
+      >
+        <div className="space-y-4">
+          {feasibilityReport?.is_feasible ? (
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-2">
+              <div className="flex items-center gap-2.5 text-emerald-800 font-bold text-sm">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                <span>Alle Vorbelegungen und Kapazitäten konsistent!</span>
+              </div>
+              <p className="text-xs text-emerald-800/90 leading-relaxed">
+                Es wurden keine mathematischen Widersprüche (wie Doppelbelegungen, Wochentags-Sperren oder Ruhezeitverletzungen) erkannt. Das Quartal kann mit CP-SAT berechnet werden.
+              </p>
+            </div>
+          ) : (
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-950 space-y-2">
+              <div className="flex items-center gap-2.5 text-red-800 font-bold text-sm">
+                <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+                <span>
+                  {feasibilityReport?.blocking_error_count} blockierende(r) Konflikt(e) erkannt!
+                </span>
+              </div>
+              <p className="text-xs text-red-800/90 leading-relaxed">
+                Der mathematische Solver würde mit diesen Vorbelegungen sofort scheitern (Status: INFEASIBLE). Bitte beheben Sie die folgenden Punkte:
+              </p>
+            </div>
+          )}
+
+          {/* Diagnostic Cards List */}
+          {feasibilityReport && feasibilityReport.diagnostics.length > 0 && (
+            <div className="max-h-80 overflow-y-auto space-y-2.5 pr-1">
+              {feasibilityReport.diagnostics.map((diag, idx) => {
+                const isErr = diag.severity === 'ERROR';
+                return (
+                  <div
+                    key={idx}
+                    className={cn(
+                      'p-3.5 rounded-xl border text-xs space-y-2 transition-all',
+                      isErr
+                        ? 'bg-red-50/70 border-red-200 text-red-950'
+                        : 'bg-amber-50/70 border-amber-200 text-amber-950'
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isErr ? (
+                          <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                        )}
+                        <span
+                          className={cn(
+                            'text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider',
+                            isErr
+                              ? 'bg-red-200/80 text-red-900'
+                              : 'bg-amber-200/80 text-amber-900'
+                          )}
+                        >
+                          {isErr ? 'Blockierend' : 'Warnung'}
+                        </span>
+                        <span className="font-bold text-stone-900">{diag.title}</span>
+                      </div>
+                      {diag.affected_staff_ids.length > 0 && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          {diag.affected_staff_ids.map((id) => (
+                            <span
+                              key={id}
+                              className="font-mono font-bold bg-white/90 border border-stone-200 px-1.5 py-0.5 rounded text-[10px] text-stone-800"
+                            >
+                              {id}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-stone-700 leading-relaxed font-sans">{diag.message}</p>
+
+                    {diag.remediation_hint && (
+                      <div className="bg-white/80 rounded-lg p-2.5 border border-stone-200/60 flex items-start gap-2 text-stone-800 text-[11px]">
+                        <span className="text-amber-600 shrink-0 font-bold">💡 Lösung:</span>
+                        <span>{diag.remediation_hint}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="pt-2 flex items-center justify-end border-t border-stone-100">
+            <Button
+              type="button"
+              variant="outline"
+              size="md"
+              onClick={() => setFeasibilityModalOpen(false)}
+            >
+              Schließen
+            </Button>
           </div>
         </div>
       </Modal>
