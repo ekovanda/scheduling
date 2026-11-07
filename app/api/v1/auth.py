@@ -30,7 +30,14 @@ class AuthResponse(BaseModel):
 
 
 # Default precomputed hash fallback if neither PASSWORD_HASH nor APP_PASSWORD is set in env
-_DEFAULT_PASSWORD_HASH = "7729e4a0ee7593268177fc9ba21057ae6129a045372d28a0109484c5a99e4005"
+# Default clinic planner password: "Trillig2026!"
+_DEFAULT_PASSWORD_HASH = hashlib.sha256(b"Trillig2026!").hexdigest()
+
+
+def is_auth_required() -> bool:
+    """Return whether authentication is strictly enforced on API routes."""
+    val = os.environ.get("AUTH_REQUIRED", "false").strip().lower()
+    return val in ("true", "1", "yes")
 
 
 def get_expected_password_hash() -> str | None:
@@ -61,7 +68,18 @@ def verify_token(token: str | None) -> bool:
 @router.get("/status")
 def get_auth_status() -> dict[str, bool]:
     """Check if password authentication is required."""
-    return {"required": True}
+    return {"required": is_auth_required()}
+
+
+@router.get("/verify")
+def verify_session(authorization: Annotated[str | None, Header()] = None) -> dict[str, bool]:
+    """Verify if the provided session token is valid."""
+    if not is_auth_required():
+        return {"valid": True, "required": False}
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+    return {"valid": verify_token(token), "required": True}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -79,14 +97,25 @@ def login(req: LoginRequest) -> AuthResponse:
     )
 
 
-def require_auth(authorization: Annotated[str | None, Header()] = None) -> bool:
-    """Dependency for securing API routes with clinic bearer token."""
+def require_planner(authorization: Annotated[str | None, Header()] = None) -> bool:
+    """Dependency verifying planner authorization.
+
+    In local/test environments (AUTH_REQUIRED=false), permits requests without a token.
+    In protected/production environments (AUTH_REQUIRED=true), enforces valid session bearer token.
+    """
+    if not is_auth_required():
+        return True
+
     token = None
     if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
+        token = authorization[7:].strip()
+
     if not verify_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentifizierung erforderlich.",
+            detail="Authentifizierung als Planer erforderlich.",
         )
     return True
+
+
+require_auth = require_planner

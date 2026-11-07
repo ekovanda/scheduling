@@ -9,14 +9,10 @@ can fix input data before waiting for a solver timeout.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from enum import Enum
 from typing import Literal
 
-from app.persistence.models import (
-    DiagnosticSeverity,
-    FeasibilityReportRecord,
-    InfeasibilityCategory,
-    InfeasibilityDiagnosticRecord,
-)
+from pydantic import BaseModel, Field
 
 from .models import (
     Beruf,
@@ -29,6 +25,57 @@ from .models import (
     get_pre_assigned_holiday_dates,
     get_staff_unavailable_dates,
 )
+
+
+class InfeasibilityCategory(str, Enum):
+    """Categorization of scheduling infeasibility or configuration conflicts."""
+
+    # Pre-assignment conflicts
+    PREASSIGNED_SAME_DAY = "PREASSIGNED_SAME_DAY"
+    PREASSIGNED_CONSECUTIVE_CAP = "PREASSIGNED_CONSECUTIVE_CAP"
+    PREASSIGNED_WEEKEND_ISOLATION = "PREASSIGNED_WEEKEND_ISOLATION"
+    PREASSIGNED_BLOCKED_WEEKDAY = "PREASSIGNED_BLOCKED_WEEKDAY"
+    PREASSIGNED_ABSENCE_COLLISION = "PREASSIGNED_ABSENCE_COLLISION"
+    PREASSIGNED_QUALIFICATION_MISMATCH = "PREASSIGNED_QUALIFICATION_MISMATCH"
+    PREASSIGNED_SOLO_UNQUALIFIED = "PREASSIGNED_SOLO_UNQUALIFIED"
+    PREASSIGNED_PAIRING_UNQUALIFIED = "PREASSIGNED_PAIRING_UNQUALIFIED"
+
+    # Capacity & Structural conflicts
+    CAPACITY_TFA_OPEN_NIGHTS = "CAPACITY_TFA_OPEN_NIGHTS"
+    CAPACITY_TOTAL_NIGHTS = "CAPACITY_TOTAL_NIGHTS"
+    CAPACITY_WEEKEND_ROLES = "CAPACITY_WEEKEND_ROLES"
+    CAPACITY_VET_MIDWEEK = "CAPACITY_VET_MIDWEEK"
+    CAPACITY_NO_VIABLE_BLOCKS = "CAPACITY_NO_VIABLE_BLOCKS"
+    SOLVER_UNSATISFIABLE = "SOLVER_UNSATISFIABLE"
+
+
+class DiagnosticSeverity(str, Enum):
+    """Severity of a detected conflict or capacity issue."""
+
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+
+
+class InfeasibilityDiagnosticRecord(BaseModel):
+    """Structured clinical diagnostic explaining an infeasibility or configuration clash."""
+
+    category: InfeasibilityCategory
+    severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
+    title: str
+    message: str
+    affected_staff_ids: list[str] = Field(default_factory=list)
+    affected_dates: list[date] = Field(default_factory=list)
+    remediation_hint: str
+
+
+class FeasibilityReportRecord(BaseModel):
+    """Aggregated report of pre-flight checks and feasibility analysis."""
+
+    is_feasible: bool
+    quarter_key: str
+    diagnostics: list[InfeasibilityDiagnosticRecord] = Field(default_factory=list)
+    blocking_error_count: int = 0
+    warning_count: int = 0
 
 GERMAN_WEEKDAYS = {
     1: "Montag",

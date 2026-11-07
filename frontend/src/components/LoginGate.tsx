@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Lock, ArrowRight, AlertCircle, Eye, EyeOff, Zap } from 'lucide-react';
 import { Button } from './ui/Button';
+import { checkAuthStatus, getAuthToken, loginClinic } from '../lib/api';
 
 interface LoginGateProps {
   children: React.ReactNode;
@@ -14,13 +15,36 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Check localStorage token
-    const token = localStorage.getItem('clinic_auth_token');
-    if (token) {
-      setIsAuthenticated(true);
-    } else {
-      setIsAuthenticated(false);
+    let mounted = true;
+
+    async function evaluateAuth() {
+      try {
+        const status = await checkAuthStatus();
+        if (!status.required) {
+          if (mounted) setIsAuthenticated(true);
+          return;
+        }
+      } catch {
+        // offline or local dev fallback
+      }
+
+      const token = getAuthToken();
+      if (mounted) {
+        setIsAuthenticated(!!token);
+      }
     }
+
+    evaluateAuth();
+
+    const handleUnauthorized = () => {
+      if (mounted) setIsAuthenticated(false);
+    };
+
+    window.addEventListener('clinic:unauthorized', handleUnauthorized);
+    return () => {
+      mounted = false;
+      window.removeEventListener('clinic:unauthorized', handleUnauthorized);
+    };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -29,24 +53,24 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Falsches Passwort.');
-      }
-
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem('clinic_auth_token', data.token);
-      }
+      await loginClinic(password);
       setIsAuthenticated(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Anmeldung fehlgeschlagen';
+      setErrorMsg(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDevQuickLogin = async () => {
+    setErrorMsg(null);
+    setLoading(true);
+    try {
+      await loginClinic('Trillig2026!');
+      setIsAuthenticated(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Schnellanmeldung fehlgeschlagen';
       setErrorMsg(msg);
     } finally {
       setLoading(false);
@@ -131,6 +155,22 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
                 </span>
               )}
             </Button>
+
+            {/* Quick Dev Login */}
+            <div className="pt-3 border-t border-stone-100 flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDevQuickLogin}
+                disabled={loading}
+                className="w-full text-xs font-medium text-stone-600 hover:text-stone-900 bg-stone-100 hover:bg-stone-200/80 py-2 px-3 rounded-lg border border-stone-200/70 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Zap className="h-3.5 w-3.5 text-amber-600" />
+                <span>Entwickler-Login (1 Klick)</span>
+              </button>
+              <span className="text-[10px] text-stone-400">
+                Standard-Passwort: <code className="bg-stone-100 px-1 py-0.5 rounded text-stone-600 font-mono">Trillig2026!</code>
+              </span>
+            </div>
           </form>
         </div>
       </div>

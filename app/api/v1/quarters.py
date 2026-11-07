@@ -11,6 +11,7 @@ from ortools.sat.python import cp_model
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_repository
+from app.api.v1.auth import require_planner
 from app.exporters.excel import export_schedule_to_csv, export_schedule_to_excel
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
@@ -44,6 +45,7 @@ from app.scheduler.validator import validate_schedule
 router = APIRouter(prefix="/quarters", tags=["Quarters"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
+PlannerDep = Annotated[bool, Depends(require_planner)]
 
 
 class GenerateScheduleRequest(BaseModel):
@@ -387,6 +389,7 @@ def get_quarter_fairness_overview(
 def init_quarter(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> QuarterScheduleDocument:
     """Initialize a new quarterly planning draft."""
     existing = repo.get_schedule(quarter_key)
@@ -622,6 +625,7 @@ def _execute_solver_worker(
 def validate_quarter_feasibility(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> FeasibilityReportRecord:
     """Pre-flight check: validate pre-assigned shifts and capacity feasibility without solving."""
     _parse_quarter_key(quarter_key)
@@ -658,6 +662,7 @@ def generate_quarter_schedule(
     response: Response,
     req: GenerateScheduleRequest | None = None,
     sync: bool = Query(default=False, description="Wait synchronously until solve finishes"),
+    _planner: PlannerDep = True,
 ) -> SolverJobRecord:
     """Launch asynchronous CP-SAT solve (returns 202 Accepted + job_id)."""
     solver_req = req or GenerateScheduleRequest()
@@ -799,6 +804,7 @@ def get_solver_status(
 def cancel_solver_job(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> dict[str, str]:
     """Gracefully cancel an active background CP-SAT solve."""
     _parse_quarter_key(quarter_key)
@@ -824,6 +830,7 @@ def swap_shift(
     quarter_key: str,
     swap_req: ShiftSwapRequest,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> QuarterScheduleDocument:
     """Swap or reassign a shift with live constraint validation."""
     doc = repo.get_schedule(quarter_key)
@@ -948,6 +955,7 @@ def validate_quarter_plan(
 def publish_quarter(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> QuarterScheduleDocument:
     """Publish a draft schedule as the official schedule (Soll-Plan)."""
     doc = repo.get_schedule(quarter_key)
@@ -971,6 +979,7 @@ def publish_quarter(
 def lock_quarter(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> QuarterScheduleDocument:
     """Lock quarter into CLOSED state for historical continuity."""
     doc = repo.get_schedule(quarter_key)
@@ -989,6 +998,7 @@ def lock_quarter(
 def delete_schedule(
     quarter_key: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> None:
     """Delete a draft schedule document."""
     doc = repo.get_schedule(quarter_key)

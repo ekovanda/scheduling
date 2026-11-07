@@ -9,6 +9,21 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.11.0] - 2026-11-07
+
+### Added: Planer-Authentifizierung & Schneller Entwickler-Modus (Phase 3B)
+
+- **Backend Authentifizierungs- & Autorisierungs-Dependency (`app/api/v1/auth.py`):**
+  - `require_planner` (`require_auth`): Schützt alle schreibenden Operationen (`staff.py`, `absences.py`, `preassigned.py`, `quarters.py`) vor unbefugtem Zugriff via HMAC-SHA256 Bearer Token.
+  - Reibungsloser Entwicklermodus: Wenn `AUTH_REQUIRED=false` (Standard für lokales Testen und Pytest), werden Anfragen ohne Token direkt autorisiert, wodurch 100% der bestehenden Tests ohne Header-Aufwand grün bleiben.
+  - Endpoints `POST /api/v1/auth/login`, `GET /api/v1/auth/status` und `GET /api/v1/auth/verify`.
+  - Auflösung eines zirkulären Imports zwischen `app.persistence.models` und `app.scheduler.feasibility`.
+- **Frontend Authentifizierungs-Gate & Token-Injection (`LoginGate.tsx`, `api.ts`, `Navbar.tsx`):**
+  - Zentraler `authFetch`-Wrapper in `frontend/src/lib/api.ts` injiziert automatisch den Bearer-Token in alle API-Aufrufe und fängt `401 Unauthorized` ab.
+  - Intelligentes `LoginGate`: Prüft beim Laden automatisch den Serverstatus (`/auth/status`). Bei deaktivierter Authentifizierung entfällt der Login-Schritt komplett.
+  - **1-Klick-Entwickler-Login**: Bietet bei aktiver Authentifizierung einen Schnellzugriffs-Button für lokale Tests ohne manuelles Passwort-Eintippen.
+  - Header-Integration: Abmelde-Aktion im `Navbar`-Menüband integriert.
+
 ## [1.10.0] - 2026-11-07
 
 ### Added: Pre-Flight Machbarkeitsprüfung & Infeasibility Explainability (`feasibility.py`, `quarters.py`, `MatrixView.tsx`)

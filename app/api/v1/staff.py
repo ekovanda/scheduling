@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_repository
+from app.api.v1.auth import require_planner
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import StaffMember
 from app.persistence.repository import RepositoryProtocol
@@ -13,6 +14,7 @@ from app.persistence.repository import RepositoryProtocol
 router = APIRouter(prefix="/staff", tags=["Staff"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
+PlannerDep = Annotated[bool, Depends(require_planner)]
 
 
 @router.get("", response_model=list[StaffMember])
@@ -28,6 +30,7 @@ def list_staff(
 def create_staff(
     member: StaffMember,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> StaffMember:
     """Create a new staff member."""
     existing = repo.get_staff(member.id)
@@ -68,6 +71,7 @@ def update_staff(
     staff_id: str,
     updated_data: StaffMember,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> StaffMember:
     """Update an existing staff member."""
     existing = repo.get_staff(staff_id)
@@ -87,6 +91,7 @@ def delete_staff(
     staff_id: str,
     repo: RepoDep,
     hard_delete: bool = False,
+    _planner: PlannerDep = True,
 ) -> None:
     """Deactivate (default) or hard-delete a staff member."""
     existing = repo.get_staff(staff_id)
@@ -113,6 +118,7 @@ def delete_staff(
 def bulk_import_staff(
     members: list[StaffMember],
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> dict[str, int]:
     """Bulk import or upsert staff records."""
     count = 0

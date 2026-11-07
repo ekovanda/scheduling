@@ -55,6 +55,7 @@ export function App() {
           onTabChange={setActiveTab}
           currentQuarter={currentQuarter}
           onQuarterChange={setCurrentQuarter}
+          onLogout={handleLogout}
         />
 
         {/* Main Content Area */}

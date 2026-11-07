@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_repository
+from app.api.v1.auth import require_planner
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import PreAssignedShiftRecord
 from app.persistence.repository import RepositoryProtocol
@@ -12,6 +13,7 @@ from app.persistence.repository import RepositoryProtocol
 router = APIRouter(prefix="/preassigned", tags=["PreAssigned"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
+PlannerDep = Annotated[bool, Depends(require_planner)]
 
 
 @router.get("", response_model=list[PreAssignedShiftRecord])
@@ -26,6 +28,7 @@ def list_preassigned(
 def create_preassigned(
     record: PreAssignedShiftRecord,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> PreAssignedShiftRecord:
     """Create or overwrite a pre-assigned shift."""
     repo.save_preassigned(record)
@@ -36,6 +39,7 @@ def create_preassigned(
 def delete_preassigned(
     preassigned_id: str,
     repo: RepoDep,
+    _planner: PlannerDep = True,
 ) -> None:
     """Delete a pre-assigned shift record by ID."""
     try:

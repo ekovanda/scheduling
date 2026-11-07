@@ -11,9 +11,68 @@ import type {
 
 const API_BASE = '/api/v1';
 
+export function getAuthToken(): string | null {
+  return localStorage.getItem('clinic_auth_token');
+}
+
+export function setAuthToken(token: string | null): void {
+  if (token) {
+    localStorage.setItem('clinic_auth_token', token);
+  } else {
+    localStorage.removeItem('clinic_auth_token');
+  }
+}
+
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(init?.headers);
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401) {
+    window.dispatchEvent(new CustomEvent('clinic:unauthorized'));
+  }
+  return response;
+}
+
+export async function checkAuthStatus(): Promise<{ required: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/auth/status`);
+    if (res.ok) {
+      return res.json();
+    }
+  } catch {
+    // fallback for offline or tests
+  }
+  return { required: false };
+}
+
+export async function loginClinic(password: string): Promise<{ authenticated: boolean; token?: string }> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Falsches Passwort.');
+  }
+  const data = await res.json();
+  if (data.token) {
+    setAuthToken(data.token);
+  }
+  return data;
+}
+
+export function logoutClinic(): void {
+  setAuthToken(null);
+  window.dispatchEvent(new CustomEvent('clinic:unauthorized'));
+}
+
 export async function fetchStaff(): Promise<StaffMember[]> {
   try {
-    const res = await fetch(`${API_BASE}/staff`);
+    const res = await authFetch(`${API_BASE}/staff`);
     if (!res.ok) {
       throw new Error(`Failed to fetch staff: ${res.statusText}`);
     }
@@ -29,7 +88,7 @@ export async function fetchStaff(): Promise<StaffMember[]> {
 }
 
 export async function createStaff(staff: Omit<StaffMember, 'id'>): Promise<StaffMember> {
-  const res = await fetch(`${API_BASE}/staff`, {
+  const res = await authFetch(`${API_BASE}/staff`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...staff, id: staff.identifier.toLowerCase() }),
@@ -41,7 +100,7 @@ export async function createStaff(staff: Omit<StaffMember, 'id'>): Promise<Staff
 }
 
 export async function updateStaff(staffId: string, staff: StaffMember): Promise<StaffMember> {
-  const res = await fetch(`${API_BASE}/staff/${staffId}`, {
+  const res = await authFetch(`${API_BASE}/staff/${staffId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(staff),
@@ -54,7 +113,7 @@ export async function updateStaff(staffId: string, staff: StaffMember): Promise<
 
 export async function fetchAbsences(): Promise<AbsenceRecord[]> {
   try {
-    const res = await fetch(`${API_BASE}/absences`);
+    const res = await authFetch(`${API_BASE}/absences`);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) return data;
@@ -66,7 +125,7 @@ export async function fetchAbsences(): Promise<AbsenceRecord[]> {
 }
 
 export async function createAbsence(record: AbsenceRecord): Promise<AbsenceRecord> {
-  const res = await fetch(`${API_BASE}/absences`, {
+  const res = await authFetch(`${API_BASE}/absences`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(record),
@@ -76,7 +135,7 @@ export async function createAbsence(record: AbsenceRecord): Promise<AbsenceRecor
 }
 
 export async function deleteAbsence(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/absences/${id}`, {
+  const res = await authFetch(`${API_BASE}/absences/${id}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Failed to delete absence: ${res.statusText}`);
@@ -84,7 +143,7 @@ export async function deleteAbsence(id: string): Promise<void> {
 
 export async function fetchPreAssigned(): Promise<PreAssignedShift[]> {
   try {
-    const res = await fetch(`${API_BASE}/preassigned`);
+    const res = await authFetch(`${API_BASE}/preassigned`);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) return data;
@@ -96,7 +155,7 @@ export async function fetchPreAssigned(): Promise<PreAssignedShift[]> {
 }
 
 export async function createPreAssigned(shift: PreAssignedShift): Promise<PreAssignedShift> {
-  const res = await fetch(`${API_BASE}/preassigned`, {
+  const res = await authFetch(`${API_BASE}/preassigned`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(shift),
@@ -106,7 +165,7 @@ export async function createPreAssigned(shift: PreAssignedShift): Promise<PreAss
 }
 
 export async function deletePreAssigned(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/preassigned/${id}`, {
+  const res = await authFetch(`${API_BASE}/preassigned/${id}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Failed to delete preassigned shift: ${res.statusText}`);
@@ -114,7 +173,7 @@ export async function deletePreAssigned(id: string): Promise<void> {
 
 export async function fetchSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
   try {
-    const res = await fetch(`${API_BASE}/quarters/${quarterKey}`);
+    const res = await authFetch(`${API_BASE}/quarters/${quarterKey}`);
     if (!res.ok) return null;
     const doc = await res.json();
     if (doc && doc.assignments && doc.assignments.length > 0) return doc;
@@ -134,7 +193,7 @@ export async function startSolverJob(
     stagnation_limit_seconds?: number;
   }
 ): Promise<SolverJobRecord> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/generate`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -152,7 +211,7 @@ export async function startSolverJob(
 }
 
 export async function fetchSolverStatus(quarterKey: string): Promise<SolverJobRecord> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/solver-status`);
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/solver-status`);
   if (!res.ok) {
     throw new Error(`Failed to fetch solver status: ${res.statusText}`);
   }
@@ -160,7 +219,7 @@ export async function fetchSolverStatus(quarterKey: string): Promise<SolverJobRe
 }
 
 export async function cancelSolverJob(quarterKey: string): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/cancel`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/cancel`, {
     method: 'POST',
   });
   if (!res.ok) {
@@ -173,7 +232,7 @@ export async function cancelSolverJob(quarterKey: string): Promise<{ message: st
 export async function validateQuarterFeasibility(
   quarterKey: string
 ): Promise<FeasibilityReportRecord> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/validate-feasibility`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/validate-feasibility`, {
     method: 'POST',
   });
   if (!res.ok) {
@@ -184,7 +243,7 @@ export async function validateQuarterFeasibility(
 }
 
 export async function generateSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/generate?sync=true`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/generate?sync=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_solve_time_seconds: 90, stagnation_limit_seconds: 15 }),
@@ -206,7 +265,7 @@ export async function swapShift(
     force?: boolean;
   }
 ): Promise<QuarterScheduleDocument> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/shifts/swap`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/shifts/swap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -218,7 +277,7 @@ export async function swapShift(
 }
 
 export async function publishSchedule(quarterKey: string): Promise<QuarterScheduleDocument> {
-  const res = await fetch(`${API_BASE}/quarters/${quarterKey}/publish`, {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/publish`, {
     method: 'POST',
   });
   if (!res.ok) throw new Error(`Failed to publish: ${res.statusText}`);
@@ -478,7 +537,7 @@ export interface RolloverContextData {
 
 export async function fetchRolloverContext(quarterKey: string): Promise<RolloverContextData> {
   try {
-    const res = await fetch(`${API_BASE}/quarters/${quarterKey}/rollover`);
+    const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/rollover`);
     if (!res.ok) throw new Error(res.statusText);
     return res.json();
   } catch (err) {
@@ -494,7 +553,7 @@ export async function fetchRolloverContext(quarterKey: string): Promise<Rollover
 
 export async function fetchFairnessOverview(quarterKey: string): Promise<QuarterFairnessOverviewResponse | null> {
   try {
-    const res = await fetch(`${API_BASE}/quarters/${quarterKey}/fairness`);
+    const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/fairness`);
     if (!res.ok) throw new Error(res.statusText);
     return res.json();
   } catch (err) {

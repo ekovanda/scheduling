@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown, Pin } from 'lucide-react';
+import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown, Pin, LogOut } from 'lucide-react';
 import { cn, isBirthdayToday } from '../lib/utils';
 import { fetchStaff } from '../lib/api';
 
@@ -10,6 +10,7 @@ interface NavbarProps {
   onTabChange: (tab: NavTab) => void;
   currentQuarter: string;
   onQuarterChange: (q: string) => void;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -17,6 +18,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onTabChange,
   currentQuarter,
   onQuarterChange,
+  onLogout,
 }) => {
   const [todaysBirthdays, setTodaysBirthdays] = React.useState<string[]>([]);
 
@@ -107,6 +109,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             );
           })}
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              title="Abmelden"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-stone-400 hover:text-stone-700 hover:bg-stone-100/80 rounded-lg transition-all cursor-pointer border-l border-stone-200/80 pl-3 ml-1"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">Abmelden</span>
+            </button>
+          )}
         </nav>
       </div>
     </header>

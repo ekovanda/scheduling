@@ -6,6 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.scheduler.feasibility import (
+    DiagnosticSeverity,
+    FeasibilityReportRecord,
+    InfeasibilityCategory,
+    InfeasibilityDiagnosticRecord,
+)
 from app.scheduler.models import Abteilung, Beruf, ShiftType, Staff
 
 
@@ -164,57 +170,6 @@ class SolverJobStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class InfeasibilityCategory(str, Enum):
-    """Categorization of scheduling conflict and infeasibility causes."""
-
-    # Pre-assignment conflicts
-    PREASSIGNED_SAME_DAY = "PREASSIGNED_SAME_DAY"
-    PREASSIGNED_CONSECUTIVE_CAP = "PREASSIGNED_CONSECUTIVE_CAP"
-    PREASSIGNED_WEEKEND_ISOLATION = "PREASSIGNED_WEEKEND_ISOLATION"
-    PREASSIGNED_BLOCKED_WEEKDAY = "PREASSIGNED_BLOCKED_WEEKDAY"
-    PREASSIGNED_ABSENCE_COLLISION = "PREASSIGNED_ABSENCE_COLLISION"
-    PREASSIGNED_QUALIFICATION_MISMATCH = "PREASSIGNED_QUALIFICATION_MISMATCH"
-    PREASSIGNED_SOLO_UNQUALIFIED = "PREASSIGNED_SOLO_UNQUALIFIED"
-    PREASSIGNED_PAIRING_UNQUALIFIED = "PREASSIGNED_PAIRING_UNQUALIFIED"
-
-    # Capacity & Structural conflicts
-    CAPACITY_TFA_OPEN_NIGHTS = "CAPACITY_TFA_OPEN_NIGHTS"
-    CAPACITY_TOTAL_NIGHTS = "CAPACITY_TOTAL_NIGHTS"
-    CAPACITY_WEEKEND_ROLES = "CAPACITY_WEEKEND_ROLES"
-    CAPACITY_VET_MIDWEEK = "CAPACITY_VET_MIDWEEK"
-    CAPACITY_NO_VIABLE_BLOCKS = "CAPACITY_NO_VIABLE_BLOCKS"
-    SOLVER_UNSATISFIABLE = "SOLVER_UNSATISFIABLE"
-
-
-class DiagnosticSeverity(str, Enum):
-    """Severity of a detected conflict or capacity issue."""
-
-    ERROR = "ERROR"
-    WARNING = "WARNING"
-
-
-class InfeasibilityDiagnosticRecord(BaseModel):
-    """Structured clinical diagnostic explaining an infeasibility or configuration clash."""
-
-    category: InfeasibilityCategory
-    severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
-    title: str
-    message: str
-    affected_staff_ids: list[str] = Field(default_factory=list)
-    affected_dates: list[date] = Field(default_factory=list)
-    remediation_hint: str
-
-
-class FeasibilityReportRecord(BaseModel):
-    """Aggregated report of pre-flight checks and feasibility analysis."""
-
-    is_feasible: bool
-    quarter_key: str
-    diagnostics: list[InfeasibilityDiagnosticRecord] = Field(default_factory=list)
-    blocking_error_count: int = 0
-    warning_count: int = 0
-
-
 class SolverJobRecord(BaseModel):
     """Persistent execution record and live metrics for a background solve."""
 
@@ -243,5 +198,22 @@ class PreAssignedShiftRecord(BaseModel):
     is_holiday: bool = True
     note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+__all__ = [
+    "AbsenceRecord",
+    "AbsenceType",
+    "DiagnosticSeverity",
+    "FeasibilityReportRecord",
+    "InfeasibilityCategory",
+    "InfeasibilityDiagnosticRecord",
+    "PreAssignedShiftRecord",
+    "QuarterScheduleDocument",
+    "ScheduleState",
+    "ShiftAssignmentRecord",
+    "SolverJobRecord",
+    "SolverJobStatus",
+    "StaffMember",
+]
 
 
