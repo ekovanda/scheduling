@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.13.0"
+CURRENT_VERSION = "1.13.1"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.13.1",
+        date="08. November 2026",
+        summary="Vorbelegungs-Kacheln & Wochentagsanzeige",
+        highlights=(
+            "Interaktive Schicht-Kacheln zur direkten Auswahl tagesabhängiger Dienste statt Dropdown.",
+            "Neue Tabellenspalte für Wochentage zur schnellen Prüfung des Dienstkontexts.",
+            "Leeres Datumsfeld mit automatischer Kalenderöffnung im Planungsjahr 2027.",
+        ),
+    ),
     Release(
         version="1.13.0",
         date="08. November 2026",

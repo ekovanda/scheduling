@@ -9,6 +9,19 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.13.1] - 2026-11-08
+
+### UI & Workflow: Klickbare Schicht-Kacheln & Wochentagsanzeige in Vorbelegungen
+
+- **Klickbare Schicht-Kacheln (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/types/api.ts`):**
+  - Dropdown im Dialog „Dienst vorab zuweisen“ durch dynamische, interaktive Kacheln mit Piktogrammen, Schichtzeiten und Tooltips ersetzt.
+  - Tagesabhängige Schichtfilterung (`getShiftOptionsForDate`): Zeigt für Samstage, Sonntage oder Feiertage/Werktage nur die jeweils an diesem Tag relevanten Schichten an (z. B. `Sa_10-21`, `So_8-20`, `So_10-22`, `So_8-20:30`, `Sa_Intern`, `So_Intern`, `N_*`).
+  - Strikte Übergabe der tatsächlichen CP-SAT-Schicht-Identifier anstelle ungenauer Sammelbegriffe.
+- **Wochentagsanzeige in Vorbelegungen (`frontend/src/views/PreAssignedView.tsx`):**
+  - Neue Tabellenspalte „Wochentag“ mit farbcodierten Wochentags-Badges (Amber für Sa/So, Purple für Fr, Stone für Mo–Do) zur schnellen Nachvollziehbarkeit.
+- **Datumsfeld-Initialisierung & Fokus (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/views/AbsencesView.tsx`):**
+  - Formulare starten mit unbefülltem Datumsfeld; beim Anklicken des Kalenders öffnet sich der Datepicker direkt zum Start des Planungsjahres (01.01.2027) via `min="2027-01-01"` und automatischem Fokus/`.showPicker()`.
+
 ## [1.13.0] - 2026-11-08
 
 ### UI & Workflow: Fokussierte Ansichten, Sofortsuche & Dienstplan-Neugestaltung
