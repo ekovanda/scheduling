@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement a quarterly Streamlit scheduling app that produces **fair, rules-compliant** Notdienst (weekend + night shift) schedules for a veterinary clinic with ~24 TFAs, ~11 Azubis, and 4 Interns.
+Implement a quarterly scheduling platform that produces **fair, rules-compliant** Notdienst (weekend + night shift) schedules for a veterinary clinic with ~24 TFAs, ~11 Azubis, and 4 Interns.
 
 ## Business Context
 
@@ -108,7 +108,7 @@ Staff:
 
 ## Acceptance Criteria
 
-1. ✅ `streamlit run app/streamlit_app.py` launches app
+1. ✅ Web server launches application on port 8080
 2. ✅ Can generate Q2/2026 schedule from staff_sample.csv
 3. ✅ Lists hard constraint violations when unsatisfiable
 4. ✅ Shows fairness metrics and penalty breakdown
@@ -117,7 +117,7 @@ Staff:
 
 ## Dependencies
 
-**Runtime**: `streamlit`, `pandas`, `openpyxl`, `pydantic`, `python-dateutil`, `xlsxwriter`, `ortools`
+**Runtime**: `fastapi`, `uvicorn`, `google-cloud-firestore`, `pandas`, `openpyxl`, `pydantic`, `python-dateutil`, `xlsxwriter`, `ortools`
 
 **Development**: `pytest`, `ruff`, `pylint`, `mypy`
 

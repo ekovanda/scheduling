@@ -182,7 +182,6 @@ Developer-facing implementation reference for released changes. This document co
 
 - **Cloud Run Deployment Cutover (`scripts/deploy_cloud_run.sh`, `scripts/deploy_cloud_run.ps1`):**
   - Standard-Target für `dienstplan-app` (Produktion) auf `fastapi` umgestellt, womit der FastAPI-Server sowohl die API-Endpunkte unter `/api/v1` als auch die kompilierte React-SPA unter `/` ausliefert.
-  - Optionale Rollback-Möglichkeit auf die alte Streamlit-Oberfläche via `--legacy-streamlit` bzw. `-LegacyStreamlit` erhalten.
   - Automatische Übermittlung von `AUTH_REQUIRED=true` im Produktionsbetrieb und `AUTH_REQUIRED=false` für `dienstplan-dev`.
 - **Firebase Hosting CDN Routing (`firebase.json`):**
   - Konfiguration von `public: frontend/dist` mit globalem CDN Edge-Caching für statische Assets.
@@ -192,6 +191,17 @@ Developer-facing implementation reference for released changes. This document co
   - Vollständige Verzeichnis-Initialisierung für alle Datastore-Entitäten (`staff`, `absences`, `schedules`, `jobs`, `preassigned`) für den Non-Root-Container-User `appuser` (UID 10001).
 - **Automatisierte Frontend-Deploy-Pipeline (`scripts/deploy_firebase.sh`):**
   - Neues Skript zur 1-Klick-Erstellung des optimierten Vite-Produktionsbundles und Bereitstellung auf Firebase Hosting (`dienstplan-tierklinik-trillig`).
+
+### Removed: Legacy Streamlit Decommissioning
+
+- **Streamlit Codebase Removal (`app/streamlit_app.py`):**
+  - Vollständige Löschung des veralteten Streamlit-Frontends (`app/streamlit_app.py`) nach erfolgreichem Cutover auf die FastAPI- und React-Architektur.
+- **Dependency & Lockfile Pruning (`pyproject.toml`, `uv.lock`):**
+  - Entfernung von `streamlit>=1.57.0` und `matplotlib>=3.8.0` sowie 28 transitiven Paketen (Tornado, Altair, pydeck, blinker, kiwisolver, pillow etc.), wodurch das Docker-Image und die Installationszeiten signifikant verkleinert werden.
+- **Container & Deployment Simplification (`Dockerfile`, `entrypoint.sh`, `deploy_cloud_run.sh`, `deploy_cloud_run.ps1`, `run.bat`):**
+  - Bereinigung des Container-Healthchecks auf direkten Probe von `/api/v1/health` (Entfernung des Streamlit-Fallbacks).
+  - Entfernung der `--legacy-streamlit` und `-LegacyStreamlit` CLI-Schalter in den Deployment-Skripten.
+  - Umstellung des lokalen Windows-Launchers (`run.bat`) auf Uvicorn (`app.api.main:app`).
 
 ## [1.11.0] - 2026-11-07
 

@@ -65,7 +65,7 @@
 - **Filename & Lines**: `path/to/file.py` (Lines `X–Y`)
 - **Issue Description**:
   - *Context*: [Plain-language explanation of when and how often this runs.]
-  - *Details*: [Solver complexity growth, redundant Streamlit rerun work, or resource bound issue.]
+  - *Details*: [Solver complexity growth, redundant API calculation, or resource bound issue.]
 - **Impact Assessment**: **[Critical | High | Medium | Low]** — [User-perceived latency, solver timeout risk, or memory growth.]
 - **Remediation Approach**: [Concrete optimization or bound to introduce.]
 - **Remediation Complexity**: **[Low | Medium | High]** — [1-sentence rationale.]

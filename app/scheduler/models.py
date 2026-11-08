@@ -1052,7 +1052,7 @@ def build_previous_context_from_xlsx(
     quarter naturally rebalances workload over the year.
 
     Args:
-        source: Path or file-like object for the xlsx (e.g. Streamlit UploadedFile).
+        source: Path or file-like object for the xlsx (e.g. io.BytesIO or UploadFile.file).
         staff_list: Staff for the *new* quarter — used for beruf/hours normalisation.
         trailing_days: Number of days at the end of the previous quarter whose
             assignments are forwarded as boundary constraints (default 21).

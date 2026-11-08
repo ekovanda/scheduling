@@ -699,7 +699,7 @@ def require_planner(user: UserClaims = Depends(get_current_user)):
 
 ### 9.3 Cutover Strategy
 * **Readiness Gate**: All 160+ unit/integration tests passing; Q1 2027 schedule generation verified against historical baselines; planning staff login verified.
-* **Cutover**: Point production URL / DNS CNAME to Firebase Hosting CDN. Keep legacy Streamlit container dormant on Cloud Run as an immediate fallback for 30 days.
+* **Cutover**: Point production URL / DNS CNAME to Firebase Hosting CDN. Legacy Streamlit container and codebase decommissioned following verified production stability.
 
 ---
 

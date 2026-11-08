@@ -61,7 +61,7 @@ USER appuser
 # Expose default port
 EXPOSE 8080
 
-# Dual healthcheck: probes FastAPI health endpoint first, falls back to Streamlit using Python stdlib (E4)
+# Healthcheck: probes FastAPI health endpoint using Python stdlib (Finding E4)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python3 /app/scripts/healthcheck.py
 

@@ -8,7 +8,7 @@ Quarterly Notdienst (weekend + night shift) scheduling app for veterinary clinic
 - **Open & Closed Nights**: Dedicated staffing rules for open nights (headcount 2, mandatory TFA) and closed nights
 - **Intern Weekend Rotation**: Coupled weekend shifts (`Sa_Intern` + `So_Intern`) with two-track fairness and 10-day spacing
 - **Tierarzt Midweek Relief**: Auxiliary physicians (`Beruf.VET`) unburden TFAs on Tue-Thu closed nights in exact 2-night solo blocks
-- **German UI**: 7-page Streamlit interface with calendar views, fairness statistics, and validation diagnostics
+- **German UI**: Modern React Single-Page Application (SPA) with calendar views, fairness statistics, and pre-flight validation diagnostics
 - **Fair Distribution**: FTE-normalized workload balancing within role groups with cross-quarter carry-forward
 - **Effective Nights**: Differentiated weighting for open vs closed nights (TFA paired 0.5×, Intern/Azubi 1.0×)
 - **Full Validation**: Automated post-solve validator checking all hospital and statutory labor constraints
@@ -22,20 +22,19 @@ cd C:\Users\Elliot\Desktop\Coding\scheduling
 # Activate virtual environment
 .\.venv\Scripts\Activate.ps1
 
-# Run app
-streamlit run app/streamlit_app.py
+# Run FastAPI backend + SPA
+uv run uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
-Open `http://localhost:8501` in your browser.
+Open `http://localhost:8080` in your browser.
 
 ## Usage
 
-1. **Laden / CSV**: Upload staff data (use `data/staff_sample.csv`)
-2. **Personal**: View and filter staff
-3. **Regeln**: Review constraint rules
-4. **Plan erstellen**: Select quarter, choose CP-SAT solver, generate
-5. **Plan anzeigen**: View calendar, fairness stats, validation
-6. **Export**: Download CSV or Excel
+1. **Personal**: Manage staff, FTE hours, qualifications, and role constraints
+2. **Abwesenheiten**: Manage vacations and absences
+3. **Planung**: Pre-flight feasibility check, CP-SAT generation, and live progress
+4. **Dienstplan**: View calendar matrix, fairness analytics, and validation diagnostics
+5. **Export**: 1-click Excel export with formatting
 
 ## Documentation
 
@@ -62,11 +61,15 @@ uv run pytest --full-solve
 ## Project Structure
 
 ```
-├── app/streamlit_app.py       # Streamlit UI
-├── app/scheduler/             # Core logic (models, solver, validator)
+├── app/
+│   ├── api/                   # FastAPI backend REST API routes & dependencies
+│   ├── scheduler/             # Core scheduling logic (models, solver, validator)
+│   ├── persistence/           # Datastore abstraction (Firestore + local JSON)
+│   └── exporters/             # Excel report generator
+├── frontend/                  # React 19 + Tailwind CSS SPA
 ├── data/staff_sample.csv      # Sample data (39 employees)
-├── documentation/             # All documentation
-└── tests/                     # Unit tests
+├── documentation/             # Project documentation & architecture specs
+└── tests/                     # Unit and integration tests
 ```
 
 ## Solver

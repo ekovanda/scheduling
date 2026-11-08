@@ -2,7 +2,6 @@
 param (
     [switch]$Dev,
     [switch]$Prod,
-    [switch]$LegacyStreamlit,
     [string]$ProjectId = "tierklinik-trillig",
     [string]$Region = "europe-west3",
     [string]$Repository = "dienstplan-repo",
@@ -11,8 +10,6 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
-
-$AppTarget = if ($LegacyStreamlit) { "streamlit" } else { "fastapi" }
 
 if ($Dev) {
     $Target = "dev"
@@ -32,7 +29,7 @@ $ImageName = "${Region}-docker.pkg.dev/${ProjectId}/${Repository}/${ServiceName}
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " Deploying Dienstplan App to GCP Cloud Run" -ForegroundColor Cyan
-Write-Host " Target Mode:   $Target (APP_TARGET=$AppTarget)"
+Write-Host " Target Mode:   $Target"
 Write-Host " Auth Enforced: $AuthRequired"
 Write-Host " Storage Mode:  $DefaultStorage"
 Write-Host " Project:       $ProjectId"
@@ -43,7 +40,6 @@ Write-Host "==========================================================" -Foregro
 
 $StorageBackend = if ($env:STORAGE_BACKEND) { $env:STORAGE_BACKEND } else { $DefaultStorage }
 $EnvVars = @(
-    "APP_TARGET=$AppTarget",
     "STORAGE_BACKEND=$StorageBackend",
     "AUTH_REQUIRED=$AuthRequired",
     "GOOGLE_CLOUD_PROJECT=$ProjectId",

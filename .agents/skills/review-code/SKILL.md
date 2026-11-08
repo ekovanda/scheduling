@@ -50,7 +50,7 @@ Use the highest severity level that the **demonstrated impact** warrants. Do not
 | :--- | :--- | :--- |
 | **Critical** | **P0 — Blocker** | Credible security, privacy, safety, or schedule/data-integrity exposure; secret leakage; remotely exploitable vulnerability; authorization bypass; or a broken hard scheduling constraint that can produce an unsafe/invalid roster without warning. |
 | **High** | **P1 — High** | Incorrect implementation of an explicit PRD requirement, business invariant, or supported workflow with material user impact (e.g., wrong carry-forward accounting, solver/validator disagreement, silent ignoring of valid input). |
-| **Medium** | **P2 — Medium** | Foreseeable robustness, performance, scalability, operability, or UX failure that degrades normal use (e.g., unbounded file/solver workload, fragile parser edge case, expensive operation on every Streamlit rerun). |
+| **Medium** | **P2 — Medium** | Foreseeable robustness, performance, scalability, operability, or UX failure that degrades normal use (e.g., unbounded file/solver workload, fragile parser edge case, redundant API or database queries). |
 | **Low** | **P3 — Low** | Maintainability, simplicity, readability, testability, or documentation drift with no immediate user-facing failure (e.g., dead code, duplicated logic, stale docs, missing edge-case test). |
 
 If a note has no concrete defect or impact, record it under **Observations & Residual Risk**, not as a numbered finding.
@@ -71,12 +71,12 @@ Organize findings into six mandatory sections. Each finding gets a short section
 - **PRD Conformance**: Every requirement and acceptance criterion in the target `documentation/PRD_*.md` is implemented and behaves as specified.
 - **Core Scheduling Invariants**: Shift coverage, eligibility, availability, pre-assignments, open/closed night rules, carry-forward accounting, and fairness metrics.
 - **Cross-Layer Parity (`feasibility.py` ↔ `solver_cpsat.py` ↔ `validator.py` ↔ Export/UI)**:
-  - Verify that any rule added or changed in the CP-SAT solver (`app/scheduler/solver_cpsat.py`) is identically enforced in pre-solve feasibility checks (`app/scheduler/feasibility.py`), post-solve/manual-edit validation (`app/scheduler/validator.py`), and reflected accurately in the Streamlit UI and Excel export.
+  - Verify that any rule added or changed in the CP-SAT solver (`app/scheduler/solver_cpsat.py`) is identically enforced in pre-solve feasibility checks (`app/scheduler/feasibility.py`), post-solve/manual-edit validation (`app/scheduler/validator.py`), and reflected accurately in the React UI and Excel export.
 - **Edge Cases & Error Handling**: Quarter/year boundaries, leap years, empty/duplicate inputs, partial failures, and custom exceptions (`exceptions.py` instead of bare `except:`).
 
 ### C. Scalability & Efficiency (`C1`, `C2`, …)
 - CP-SAT model growth (variable/constraint explosion), missing solver timeouts, or unguided search parameters.
-- Redundant work on every Streamlit UI rerun (missing caching, repeated file parsing or DataFrame copies).
+- Redundant work on API endpoints or frontend renders (missing caching, repeated file parsing or unnecessary copies).
 - Quadratic/cubic loops over staff × days × shifts, or unbounded memory/log growth.
 
 ### D. Simplicity (`D1`, `D2`, …)
@@ -120,7 +120,7 @@ Every finding (`A1`, `B1`, etc.) must include:
 ## 5. Execution Procedure
 
 1. **Confirm Metadata & PRD**: Check model name and target PRD; ask the user if either is missing/ambiguous.
-2. **Trace & Inspect**: Map data flow from `file_loader.py` → `models.py` → `feasibility.py` → `solver_cpsat.py` → `validator.py` → `streamlit_app.py`.
+2. **Trace & Inspect**: Map data flow from `file_loader.py` → `models.py` → `feasibility.py` → `solver_cpsat.py` → `validator.py` → `app/api/` → frontend.
 3. **Run Proportionate Automated Checks**: Run relevant `uv run pytest`, `uv run ruff check`, and `uv run mypy` checks when the environment permits. Never claim a check passed unless it was actually executed.
 4. **Write the Untracked Report**: Use [resources/review-template.md](./resources/review-template.md) to write `documentation/code_reviews/REVIEW_<YYYY-MM-DD>-<short-commit-hash>-<feature-slug>.md`.
 5. **Verify Untracked Status & Summarize**: Confirm via `git status --short` that the new review file is ignored by git, then provide a concise summary table and clickable link in chat.

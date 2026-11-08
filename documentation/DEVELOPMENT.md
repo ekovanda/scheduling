@@ -21,8 +21,8 @@ python -m venv .venv
 # Install dependencies
 pip install -e .
 
-# Run app
-streamlit run app/streamlit_app.py
+# Run backend API
+uv run uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 ## Using uv (Recommended)
@@ -32,10 +32,10 @@ streamlit run app/streamlit_app.py
 # See: https://github.com/astral-sh/uv
 
 # Sync dependencies from pyproject.toml
-uv sync
+uv sync --extra dev
 
-# Run with uv
-uv run streamlit run app/streamlit_app.py
+# Run server with uv
+uv run uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 ## Dependencies
@@ -43,7 +43,9 @@ uv run streamlit run app/streamlit_app.py
 ### Runtime
 | Package | Purpose |
 |---------|---------|
-| streamlit | Web UI framework |
+| fastapi | REST API backend framework |
+| uvicorn | ASGI web server |
+| google-cloud-firestore | Cloud database client |
 | pandas | Data manipulation |
 | pydantic | Data validation |
 | python-dateutil | Date parsing |
@@ -62,17 +64,14 @@ uv run streamlit run app/streamlit_app.py
 ## Running the App
 
 ```powershell
-# Standard
-streamlit run app/streamlit_app.py
-
-# With specific port
-streamlit run app/streamlit_app.py --server.port 8502
+# Standard FastAPI development server
+uv run uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
 
 # Using batch file (Windows)
 .\run.bat
 ```
 
-App opens at `http://localhost:8501`
+App and API docs open at `http://localhost:8080` (docs at `http://localhost:8080/docs`).
 
 ## Running Tests
 
@@ -116,9 +115,9 @@ mypy app/ --strict
 docker build -t dienstplan:latest .
 
 # Run container
-docker run -p 8501:8501 dienstplan:latest
+docker run -p 8080:8080 dienstplan:latest
 
-# Access at http://localhost:8501
+# Access at http://localhost:8080
 ```
 
 ## Project Structure
@@ -126,12 +125,11 @@ docker run -p 8501:8501 dienstplan:latest
 ```
 scheduling/
 ├── app/
-│   ├── streamlit_app.py      # Main UI
-│   └── scheduler/
-│       ├── models.py          # Data models
-│       ├── validator.py       # Constraint validation
-│       ├── solver.py          # Solver facade
-│       └── solver_cpsat.py    # CP-SAT implementation
+│   ├── api/                   # FastAPI backend REST API routes & dependencies
+│   ├── scheduler/             # Core logic (models, solver, validator)
+│   ├── persistence/           # Datastore abstraction (Firestore + local JSON)
+│   └── exporters/             # Excel export engine
+├── frontend/                  # React SPA
 ├── data/
 │   └── staff_sample.csv       # Sample data (39 employees)
 ├── documentation/
@@ -196,5 +194,4 @@ pip install -e .
 pip install ortools
 ```
 
-### Streamlit Warnings
-Deprecation warnings about `use_container_width` are non-breaking and can be ignored.
+

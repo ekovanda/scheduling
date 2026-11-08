@@ -8,13 +8,17 @@ The Dienstplan Generator uses a **constraint programming** approach (OR-Tools CP
 
 ```
 app/
-├── streamlit_app.py          # Streamlit UI (7 pages, German)
-└── scheduler/
-    ├── __init__.py           # Public exports
-    ├── models.py             # Pydantic data models
-    ├── validator.py          # Constraint validation engine
-    ├── solver.py             # Solver facade (delegates to solver_cpsat)
-    └── solver_cpsat.py       # OR-Tools CP-SAT implementation
+├── api/                      # FastAPI REST API (v1 routers, auth, health)
+│   ├── v1/                   # Endpoints: /staff, /absences, /quarters, /auth
+│   └── dependencies.py       # Datastore injection & auth gates
+├── scheduler/                # Core CP-SAT scheduling engine
+│   ├── models.py             # Pydantic data models
+│   ├── validator.py          # Constraint validation engine
+│   ├── solver.py             # Solver facade (delegates to solver_cpsat)
+│   ├── solver_cpsat.py       # OR-Tools CP-SAT implementation
+│   └── feasibility.py        # Pre-flight conflict & capacity analyzer
+├── persistence/              # Persistence abstraction (Firestore + local JSON)
+└── exporters/                # Production Excel export engine
 ```
 
 ## Core Components
@@ -170,16 +174,12 @@ CSV/XLSX Upload → Staff List + Vacations + Pre-assigned Shifts
                       Schedule → Validator → UI Display
 ```
 
-## Session State (Streamlit)
+## State & Data Persistence Architecture
 
-```python
-st.session_state.staff_list: list[Staff] | None
-st.session_state.vacations: list[Vacation] | None
-st.session_state.pre_assigned: list[PreAssignedShift] | None
-st.session_state.previous_context: PreviousPlanContext | None
-st.session_state.schedule: Schedule | None
-st.session_state.validation_result: ValidationResult | None
-```
+The application uses a decoupled client-server architecture:
+- **Backend (FastAPI)**: Stateless REST endpoints backed by the Repository layer (`app/persistence/`). Supports Google Cloud Firestore in production and local JSON files (`data/db/`) in development.
+- **Frontend (React)**: Client-side single source of truth (SSOT) via React state and custom hooks, consuming `/api/v1` with Bearer token authentication.
+- **Background Jobs**: Asynchronous solver execution runs via in-process background worker threads (`POST /quarters/{q}/generate` returns `202 Accepted` with a job ID, polled via `GET /quarters/{q}/solver-status/{job_id}`).
 
 ## Testing Strategy
 

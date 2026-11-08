@@ -45,7 +45,6 @@ htmlcov/
 frontend/node_modules/
 frontend/dist/
 node_modules/
-.streamlit/
 
 # OS
 .DS_Store
