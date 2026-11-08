@@ -1,5 +1,6 @@
 """Quarter schedule management, solver generation, and lifecycle endpoints."""
 
+import logging
 import threading
 import time
 from datetime import UTC, date, datetime
@@ -26,6 +27,7 @@ from app.persistence.rollover import (
     get_previous_quarter_context,
     get_quarter_date_range,
 )
+from app.scheduler.exceptions import SchedulingError
 from app.scheduler.feasibility import run_full_feasibility_check
 from app.scheduler.models import (
     Assignment,
@@ -42,6 +44,7 @@ from app.scheduler.solver import generate_schedule
 from app.scheduler.validator import validate_schedule
 
 router = APIRouter(prefix="/quarters", tags=["Quarters"])
+logger = logging.getLogger(__name__)
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 
@@ -637,12 +640,23 @@ def _execute_solver_worker(
         repo.save_solver_job(job_rec)
 
     except Exception as exc:  # pylint: disable=broad-except
+        error_id = uuid4().hex[:8]
+        logger.exception(
+            "Solver execution failed unexpectedly for quarter %s [error_id=%s]",
+            quarter_key,
+            error_id,
+        )
         err_job = repo.get_solver_job(quarter_key)
         if err_job:
             err_job.status = SolverJobStatus.FAILED
             err_job.completed_at = datetime.now(UTC)
             err_job.elapsed_seconds = round(time.time() - start_time, 1)
-            err_job.error = str(exc)
+            if isinstance(exc, (SchedulingError, ValueError)):
+                err_job.error = f"{exc} (Fehler-ID: {error_id})"
+            else:
+                err_job.error = (
+                    f"Ein interner Berechnungsfehler ist aufgetreten (Fehler-ID: {error_id})."
+                )
             repo.save_solver_job(err_job)
     finally:
         with _jobs_lock:
@@ -872,8 +886,12 @@ def cancel_solver_job(
         if active.solver:
             try:
                 active.solver.stop_search()
-            except Exception:
-                pass
+            except (RuntimeError, ValueError) as exc:
+                logger.warning(
+                    "Failed to cancel solver search for %s: %s",
+                    quarter_key,
+                    exc,
+                )
 
     return {"message": f"Abbruch für Quartal '{quarter_key}' angefordert."}
 

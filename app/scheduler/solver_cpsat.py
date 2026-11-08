@@ -4,6 +4,7 @@ This module provides an alternative solver using constraint programming
 for guaranteed optimal fairness within hard constraint satisfaction.
 """
 
+import logging
 import os
 import threading
 import time
@@ -13,6 +14,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from ortools.sat.python import cp_model
+
+logger = logging.getLogger(__name__)
 
 from .feasibility import analyze_capacity, diagnose_structured_infeasibility
 from .models import (
@@ -129,8 +132,8 @@ class _SchedulingProgressCallback(cp_model.CpSolverSolutionCallback):
         if self.on_progress:
             try:
                 self.on_progress(entry)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Progress callback raised an exception: %s", exc)
 
 
 def generate_schedule_cpsat(
@@ -1081,8 +1084,8 @@ def generate_schedule_cpsat(
                     progress.stopped_due_to_stagnation = True
                     try:
                         solver.stop_search()
-                    except Exception:
-                        pass
+                    except (RuntimeError, ValueError) as exc:
+                        logger.warning("Failed to stop search on stagnation: %s", exc)
                     break
 
         wt = threading.Thread(target=_stagnation_watchdog, daemon=True)
@@ -1109,11 +1112,11 @@ def generate_schedule_cpsat(
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         try:
             obj_val: float | None = float(solver.ObjectiveValue())
-        except Exception:
+        except (RuntimeError, ValueError):
             obj_val = None
         try:
             bound_val: float | None = float(solver.BestObjectiveBound())
-        except Exception:
+        except (RuntimeError, ValueError):
             bound_val = None
 
         # Extract solution

@@ -11,8 +11,8 @@ RUN npm run build
 # Stage 2: Python Backend & Runtime Container
 FROM python:3.12-slim
 
-# Copy uv binary from official Astral uv image
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Copy uv binary from official Astral uv image (pinned release tag for reproducible builds, E4)
+COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /uvx /bin/
 
 # Environment settings:
 # - PYTHONUNBUFFERED: Stream logs immediately to stdout/stderr for Cloud Run & Docker
@@ -32,18 +32,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install minimal OS utilities needed for container healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Python dependencies strictly locked from uv.lock
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Add virtual environment and app directories to PATH and PYTHONPATH
+# Add virtual environment to PATH and set canonical PYTHONPATH root (E4)
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app:/app/app"
+    PYTHONPATH="/app"
 
 # Copy application code, scripts, and non-sensitive sample data (A7)
 COPY app/ ./app/
@@ -66,9 +61,9 @@ USER appuser
 # Expose default port
 EXPOSE 8080
 
-# Dual healthcheck: probes FastAPI health endpoint first, falls back to Streamlit
+# Dual healthcheck: probes FastAPI health endpoint first, falls back to Streamlit using Python stdlib (E4)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:${PORT}/api/v1/health || curl --fail http://localhost:${PORT}/_stcore/health || exit 1
+    CMD python3 /app/scripts/healthcheck.py
 
 # Launch container via entrypoint script for clean PID 1 signal propagation
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
