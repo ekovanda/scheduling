@@ -33,11 +33,14 @@ class ScheduleState(str, Enum):
     CLOSED = "CLOSED"
 
 
+ENTITY_ID_PATTERN = r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$"
+
+
 class StaffMember(BaseModel):
     """Master staff record in persistent datastore."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
-    identifier: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    id: str = Field(pattern=ENTITY_ID_PATTERN)
+    identifier: str = Field(pattern=ENTITY_ID_PATTERN)
     name: str = Field(min_length=1, max_length=128)
     beruf: Beruf = Beruf.TFA
     abteilung: Abteilung = Abteilung.OTHER
@@ -142,8 +145,8 @@ class StaffMember(BaseModel):
 class AbsenceRecord(BaseModel):
     """Continuous absence ledger entry for vacations, sick leave, or training."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
-    staff_id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    id: str = Field(pattern=ENTITY_ID_PATTERN)
+    staff_id: str = Field(pattern=ENTITY_ID_PATTERN)
     absence_type: AbsenceType = AbsenceType.VACATION
     start_date: date
     end_date: date
@@ -232,8 +235,8 @@ class SolverJobRecord(BaseModel):
 class PreAssignedShiftRecord(BaseModel):
     """Pre-assigned (holiday or locked) shift record in persistent datastore."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
-    staff_id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    id: str = Field(pattern=ENTITY_ID_PATTERN)
+    staff_id: str = Field(pattern=ENTITY_ID_PATTERN)
     staff_identifier: str
     shift_date: date
     shift_type: str
@@ -257,6 +260,7 @@ class PreAssignedShiftRecord(BaseModel):
 
 
 __all__ = [
+    "ENTITY_ID_PATTERN",
     "AbsenceRecord",
     "AbsenceType",
     "DiagnosticSeverity",

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.0.0"
+CURRENT_VERSION = "2.0.1"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.0.1",
+        date="08. November 2026",
+        summary="Korrektur Excel-Export, Umlaut-Kürzel & Fairness-Soll",
+        highlights=(
+            "Zuverlässiger Excel-Export des Dienstplans auch bei aktivem Passwortschutz.",
+            "Keine falschen Musterdaten mehr bei leeren Listen sowie Unterstützung für Umlaute in Kürzeln.",
+            "Inaktive Mitarbeitende ohne Schichten verfälschen nicht mehr den Gruppendurchschnitt der Fairness.",
+        ),
+    ),
     Release(
         version="2.0.0",
         date="08. November 2026",

@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
-from app.persistence.models import StaffMember
+from app.persistence.models import ENTITY_ID_PATTERN, StaffMember
 from app.persistence.repository import RepositoryProtocol
 
 router = APIRouter(prefix="/staff", tags=["Staff"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
-StaffIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="Staff identifier")]
+StaffIdPath = Annotated[str, Path(pattern=ENTITY_ID_PATTERN, description="Staff identifier")]
 
 
 def check_identifier_unique(

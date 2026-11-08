@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import (
+    ENTITY_ID_PATTERN,
     AbsenceRecord,
     PreAssignedShiftRecord,
     QuarterScheduleDocument,
@@ -124,7 +125,7 @@ def _json_serial(obj: Any) -> Any:
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
-ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+ID_PATTERN = re.compile(ENTITY_ID_PATTERN)
 
 
 def _safe_path(base_dir: Path, record_id: str) -> Path:

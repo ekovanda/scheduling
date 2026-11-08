@@ -217,7 +217,14 @@ def get_quarter_fairness_overview(
     has_schedule = doc is not None and bool(doc.assignments)
     total_shifts = len(doc.assignments) if (doc and doc.assignments) else 0
 
-    active_members = repo.list_staff(active_only=False)
+    assigned_idents = (
+        {a.actual_staff_id for a in doc.assignments} if (doc and doc.assignments) else set()
+    )
+    active_members = [
+        m
+        for m in repo.list_staff(active_only=False)
+        if m.is_active or m.identifier in assigned_idents
+    ]
     all_staff = [m.to_scheduler_staff() for m in active_members]
     staff_id_to_ident = {m.id: m.identifier for m in active_members}
 

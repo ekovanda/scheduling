@@ -35,6 +35,7 @@ import {
   fetchSolverStatus,
   cancelSolverJob,
   validateQuarterFeasibility,
+  exportQuarterSchedule,
   type RolloverContextData,
 } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -760,14 +761,20 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </button>
               </div>
 
-              <a
-                href={`/api/v1/quarters/${currentQuarterKey}/export?format=xlsx`}
-                download
-                className="inline-flex items-center justify-center font-medium rounded-lg text-xs px-3 py-1.5 border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs transition-all"
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await exportQuarterSchedule(currentQuarterKey, 'xlsx');
+                  } catch (err) {
+                    console.error('Excel export failed:', err);
+                  }
+                }}
+                className="inline-flex items-center justify-center font-medium rounded-lg text-xs px-3 py-1.5 border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs transition-all cursor-pointer"
               >
                 <Download className="h-3.5 w-3.5 mr-1.5 text-stone-500" />
                 Excel Export
-              </a>
+              </button>
 
               <Button
                 onClick={() => setPageMode('setup')}

@@ -9,6 +9,21 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.0.1] - 2026-11-08
+
+### Fixed: Authenticated Excel Export, Mock Data Removal, Umlaut Entity IDs & Active-Staff Fairness
+
+- **Authentifizierter Excel-Export (`frontend/src/lib/api.ts`, `frontend/src/views/MatrixView.tsx`):**
+  - Neuer `exportQuarterSchedule()`-Client nutzt `authFetch` mit `Authorization: Bearer`-Token, lädt den Response-Stream als `Blob` und stößt den Datei-Download über eine temporäre Object-URL an (behebt Review-Finding `B1`).
+- **Entfernung stiller Mock-Daten-Fallbacks (`frontend/src/lib/api.ts`):**
+  - `MOCK_STAFF`, `MOCK_ABSENCES`, `MOCK_PREASSIGNED` und `getMockSchedule` entfernt; `fetchStaff()`, `fetchAbsences()` und `fetchPreAssigned()` liefern bei leeren Sammlungen ein echtes `[]` zurück statt synthetische 2026-Testdaten einzublenden (behebt Review-Finding `B2`).
+- **Einheitliche Umlaut-Validierung in Pfaden und Dateispeicher (`app/persistence/models.py`, `app/persistence/repository.py`, `app/api/v1/staff.py`, `app/api/v1/absences.py`, `app/api/v1/preassigned.py`):**
+  - Zentrales `ENTITY_ID_PATTERN = r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$"` für Pydantic-Modelle, `FileJsonRepository.ID_PATTERN` sowie FastAPI-Pfadparameter (`StaffIdPath`, `AbsenceIdPath`, `PreassignedIdPath`) vereinheitlicht (behebt Review-Finding `B5`).
+- **Fairness-Gruppenmittelwert ohne deaktivierte Mitarbeitende (`app/api/v1/quarters.py`):**
+  - `get_quarter_fairness_overview` berücksichtigt nur noch aktive Mitarbeitende (`m.is_active`) oder Personen mit tatsächlichen Schichtzuweisungen im betrachteten Quartal (`m.identifier in assigned_idents`), sodass ausgeschiedene Mitarbeitende mit 0 Diensten den Gruppenschnitt nicht verzerren (behebt Review-Finding `B6`).
+- **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
+  - Neue Integrationstests `test_umlaut_entity_ids_crud` und `test_fairness_overview_excludes_deactivated_staff_without_shifts`.
+
 ## [2.0.0] - 2026-11-08
 
 ### Full Architecture Modernization: React SPA, GCP Cloud Run & Streamlit Retirement

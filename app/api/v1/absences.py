@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
-from app.persistence.models import AbsenceRecord
+from app.persistence.models import ENTITY_ID_PATTERN, AbsenceRecord
 from app.persistence.repository import RepositoryProtocol
 
 router = APIRouter(prefix="/absences", tags=["Absences"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 AbsenceIdPath = Annotated[
-    str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="Absence identifier")
+    str, Path(pattern=ENTITY_ID_PATTERN, description="Absence identifier")
 ]
 StaffIdQuery = Annotated[
     str | None, Query(description="Filter absences for a specific staff member")

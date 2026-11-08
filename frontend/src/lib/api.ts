@@ -3,7 +3,6 @@ import type {
   AbsenceRecord,
   PreAssignedShift,
   QuarterScheduleDocument,
-  ShiftAssignmentRecord,
   SolverJobRecord,
   QuarterFairnessOverviewResponse,
   FeasibilityReportRecord,
@@ -77,13 +76,10 @@ export async function fetchStaff(): Promise<StaffMember[]> {
       throw new Error(`Failed to fetch staff: ${res.statusText}`);
     }
     const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) {
-      return data;
-    }
-    return MOCK_STAFF;
+    return Array.isArray(data) ? data : [];
   } catch (err) {
-    console.warn('Backend not reachable or empty, using sample clinic staff:', err);
-    return MOCK_STAFF;
+    console.error('Failed to fetch staff from backend:', err);
+    return [];
   }
 }
 
@@ -116,11 +112,10 @@ export async function fetchAbsences(): Promise<AbsenceRecord[]> {
     const res = await authFetch(`${API_BASE}/absences`);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) return data;
-    return MOCK_ABSENCES;
+    return Array.isArray(data) ? data : [];
   } catch (err) {
-    console.warn('Backend not reachable or empty, using sample absences:', err);
-    return MOCK_ABSENCES;
+    console.error('Failed to fetch absences from backend:', err);
+    return [];
   }
 }
 
@@ -156,11 +151,10 @@ export async function fetchPreAssigned(): Promise<PreAssignedShift[]> {
     const res = await authFetch(`${API_BASE}/preassigned`);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) return data;
-    return MOCK_PREASSIGNED;
+    return Array.isArray(data) ? data : [];
   } catch (err) {
-    console.warn('Backend preassigned not reachable or empty, using sample:', err);
-    return MOCK_PREASSIGNED;
+    console.error('Failed to fetch preassigned shifts from backend:', err);
+    return [];
   }
 }
 
@@ -304,230 +298,25 @@ export async function publishSchedule(quarterKey: string): Promise<QuarterSchedu
   return res.json();
 }
 
-export const MOCK_STAFF: StaffMember[] = [
-  {
-    id: 'mueller',
-    identifier: 'MUE',
-    name: 'Dr. Julia Müller',
-    beruf: 'Vet',
-    abteilung: 'Station',
-    hours: 0,
-    adult: true,
-    reception: false,
-    nd_possible: true,
-    nd_alone: true,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 4,
-    is_active: true,
-  },
-  {
-    id: 'schmidt',
-    identifier: 'SCH',
-    name: 'Dr. Thomas Schmidt',
-    beruf: 'Vet',
-    abteilung: 'OP',
-    hours: 0,
-    adult: true,
-    reception: false,
-    nd_possible: true,
-    nd_alone: true,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 4,
-    is_active: true,
-  },
-  {
-    id: 'weber',
-    identifier: 'WEB',
-    name: 'Katharina Weber',
-    beruf: 'TFA',
-    abteilung: 'Station',
-    hours: 40,
-    adult: true,
-    reception: false,
-    nd_possible: true,
-    nd_alone: true,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 5,
-    is_active: true,
-  },
-  {
-    id: 'koch',
-    identifier: 'KOC',
-    name: 'Lena Koch',
-    beruf: 'TFA',
-    abteilung: 'Sprechstunde',
-    hours: 30,
-    adult: true,
-    reception: true,
-    nd_possible: true,
-    nd_alone: false,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 4,
-    is_active: true,
-  },
-  {
-    id: 'bauer',
-    identifier: 'BAU',
-    name: 'Felix Bauer',
-    beruf: 'Azubi',
-    abteilung: 'Station',
-    hours: 38,
-    adult: false,
-    reception: false,
-    nd_possible: false,
-    nd_alone: false,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 3,
-    is_active: true,
-  },
-  {
-    id: 'wagner',
-    identifier: 'WAG',
-    name: 'Dr. Sarah Wagner',
-    beruf: 'Intern',
-    abteilung: 'OP',
-    hours: 40,
-    adult: true,
-    reception: false,
-    nd_possible: true,
-    nd_alone: false,
-    nd_min_consecutive: 2,
-    nd_max_consecutive: 3,
-    is_active: true,
-  },
-];
-
-export const MOCK_ABSENCES: AbsenceRecord[] = [
-  // Dr. Julia Müller (MUE)
-  { id: 'abs-1', staff_id: 'mueller', absence_type: 'Vacation', start_date: '2026-04-10', end_date: '2026-04-17' },
-  { id: 'abs-2', staff_id: 'mueller', absence_type: 'Vacation', start_date: '2026-05-22', end_date: '2026-05-25' },
-  { id: 'abs-3', staff_id: 'mueller', absence_type: 'Vacation', start_date: '2026-06-15', end_date: '2026-06-21' },
-
-  // Dr. Thomas Schmidt (SCH)
-  { id: 'abs-4', staff_id: 'schmidt', absence_type: 'Vacation', start_date: '2026-04-03', end_date: '2026-04-06' },
-  { id: 'abs-5', staff_id: 'schmidt', absence_type: 'Vacation', start_date: '2026-05-04', end_date: '2026-05-10' },
-  { id: 'abs-6', staff_id: 'schmidt', absence_type: 'Vacation', start_date: '2026-06-01', end_date: '2026-06-03' },
-
-  // Katharina Weber (WEB)
-  { id: 'abs-7', staff_id: 'weber', absence_type: 'Vacation', start_date: '2026-04-14', end_date: '2026-04-20' },
-  { id: 'abs-8', staff_id: 'weber', absence_type: 'Vacation', start_date: '2026-05-15', end_date: '2026-05-24' },
-
-  // Lena Koch (KOC)
-  { id: 'abs-9', staff_id: 'koch', absence_type: 'Vacation', start_date: '2026-04-27', end_date: '2026-05-03' },
-  { id: 'abs-10', staff_id: 'koch', absence_type: 'Vacation', start_date: '2026-06-08', end_date: '2026-06-14' },
-
-  // Felix Bauer (BAU)
-  { id: 'abs-11', staff_id: 'bauer', absence_type: 'Vacation', start_date: '2026-04-01', end_date: '2026-04-05' },
-  { id: 'abs-12', staff_id: 'bauer', absence_type: 'Vacation', start_date: '2026-05-18', end_date: '2026-05-22' },
-  { id: 'abs-13', staff_id: 'bauer', absence_type: 'Vacation', start_date: '2026-06-22', end_date: '2026-06-26' },
-
-  // Dr. Sarah Wagner (WAG)
-  { id: 'abs-14', staff_id: 'wagner', absence_type: 'Vacation', start_date: '2026-04-18', end_date: '2026-04-24' },
-  { id: 'abs-15', staff_id: 'wagner', absence_type: 'Vacation', start_date: '2026-05-29', end_date: '2026-06-02' },
-];
-
-export const MOCK_PREASSIGNED: PreAssignedShift[] = [
-  {
-    id: 'pa-1',
-    staff_id: 'schmidt',
-    staff_identifier: 'SCH',
-    shift_date: '2026-04-12',
-    shift_type: 'Nachtdienst',
-    is_holiday: true,
-    note: 'Ostersonntag (Fest zugesagt)',
-  },
-  {
-    id: 'pa-2',
-    staff_id: 'weber',
-    staff_identifier: 'WEB',
-    shift_date: '2026-04-13',
-    shift_type: 'Wochenenddienst',
-    is_holiday: true,
-    note: 'Ostermontag Tagdienst',
-  },
-  {
-    id: 'pa-3',
-    staff_id: 'wagner',
-    staff_identifier: 'WAG',
-    shift_date: '2026-05-01',
-    shift_type: 'Nachtdienst',
-    is_holiday: true,
-    note: 'Tag der Arbeit',
-  },
-  {
-    id: 'pa-4',
-    staff_id: 'mueller',
-    staff_identifier: 'MUE',
-    shift_date: '2026-05-14',
-    shift_type: 'Nachtdienst',
-    is_holiday: true,
-    note: 'Christi Himmelfahrt',
-  },
-];
-
-
-export function getMockSchedule(quarterKey: string): QuarterScheduleDocument {
-  const assignments: ShiftAssignmentRecord[] = [];
-  const vets = ['mueller', 'schmidt', 'wagner'];
-  const tfas = ['weber', 'koch', 'bauer'];
-
-  // Generate 91 days for Q2 (Apr 1 to Jun 30, 2026)
-  const startDate = new Date(2026, 3, 1); // 2026-04-01
-  for (let i = 0; i < 91; i++) {
-    const cur = new Date(startDate);
-    cur.setDate(startDate.getDate() + i);
-    const yyyy = cur.getFullYear();
-    const mm = String(cur.getMonth() + 1).padStart(2, '0');
-    const dd = String(cur.getDate()).padStart(2, '0');
-    const dateStr = `${yyyy}-${mm}-${dd}`;
-    const dayOfWeek = cur.getDay(); // 0 = Sun, 6 = Sat
-
-    // Night shift (assigned to vets in blocks of 2-3)
-    const vetIdx = Math.floor(i / 3) % vets.length;
-    const vetId = vets[vetIdx];
-
-    // Example shift swap on April 15
-    const isSwapDay = dateStr === '2026-04-15';
-
-    assignments.push({
-      shift_date: dateStr,
-      shift_type: 'Nachtdienst',
-      planned_staff_id: vetId,
-      actual_staff_id: isSwapDay ? 'wagner' : vetId,
-      is_paired: i % 4 === 0, // Some nights have paired TFA
-      is_override: isSwapDay,
-      override_reason: isSwapDay ? 'Tausch wegen Fortbildung' : undefined,
-    });
-
-    // Weekend day shift (Sat & Sun)
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      const tfaIdx = i % tfas.length;
-      assignments.push({
-        shift_date: dateStr,
-        shift_type: 'Wochenende_Tag',
-        planned_staff_id: tfas[tfaIdx],
-        actual_staff_id: tfas[tfaIdx],
-        is_paired: false,
-        is_override: false,
-      });
-    }
+export async function exportQuarterSchedule(
+  quarterKey: string,
+  format: 'xlsx' | 'csv' = 'xlsx'
+): Promise<void> {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/export?format=${format}`);
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.detail || `Export fehlgeschlagen: ${res.statusText}`);
   }
-
-  return {
-    quarter_key: quarterKey,
-    year: 2026,
-    quarter: 2,
-    state: 'DRAFT',
-    assignments,
-    solver_metrics: {
-      solve_time_seconds: 14.2,
-      num_shifts: assignments.length,
-      fairness_score: 96.5,
-      violations: 0,
-    },
-  };
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Dienstplan_${quarterKey}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
-
 
 export interface RolloverContextData {
   has_context: boolean;

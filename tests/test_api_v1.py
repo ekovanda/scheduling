@@ -1,16 +1,11 @@
 """Integration tests for FastAPI v1 REST endpoints."""
 
-from collections.abc import Generator
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_repository
-from app.api.main import app
-from app.persistence.repository import FileJsonRepository
 from app.scheduler.models import Assignment, Schedule, Shift, ShiftType
 from app.scheduler.solver_cpsat import SolverResult
 
@@ -415,3 +410,88 @@ def test_quarter_fairness_overview_endpoint(client: TestClient) -> None:
     assert "TFA" in data["groups"]
     assert "records" in data
     assert any(r["identifier"] == "T1" for r in data["records"])
+
+
+def test_umlaut_entity_ids_crud(client: TestClient) -> None:
+    """Ensure staff, absences, and preassigned shifts support German umlauts in IDs (B5)."""
+    staff_payload = {
+        "id": "mül",
+        "identifier": "MÜL",
+        "name": "Dr. Julia Müller",
+        "beruf": "TFA",
+        "hours": 40,
+        "nd_possible": True,
+    }
+    create_resp = client.post("/api/v1/staff", json=staff_payload)
+    assert create_resp.status_code == 201
+
+    get_resp = client.get("/api/v1/staff/mül")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["identifier"] == "MÜL"
+
+    staff_payload["name"] = "Dr. Julia Müller-Weiß"
+    put_resp = client.put("/api/v1/staff/mül", json=staff_payload)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["name"] == "Dr. Julia Müller-Weiß"
+
+    abs_payload = {
+        "id": "abs_mül_1",
+        "staff_id": "mül",
+        "absence_type": "Vacation",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-05",
+    }
+    assert client.post("/api/v1/absences", json=abs_payload).status_code == 201
+    assert client.put("/api/v1/absences/abs_mül_1", json=abs_payload).status_code == 200
+    assert client.delete("/api/v1/absences/abs_mül_1").status_code == 204
+
+    pa_payload = {
+        "id": "pa_mül_1",
+        "staff_id": "mül",
+        "staff_identifier": "MÜL",
+        "shift_date": "2026-05-14",
+        "shift_type": "N_Do-Fr",
+        "is_holiday": True,
+    }
+    assert client.post("/api/v1/preassigned", json=pa_payload).status_code == 201
+    assert client.put("/api/v1/preassigned/pa_mül_1", json=pa_payload).status_code == 200
+    assert client.delete("/api/v1/preassigned/pa_mül_1").status_code == 204
+
+    assert client.delete("/api/v1/staff/mül").status_code == 204
+
+
+def test_fairness_overview_excludes_deactivated_staff_without_shifts(
+    client: TestClient,
+) -> None:
+    """Ensure deactivated staff without shifts do not distort role-group means (B6)."""
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "tfa_active",
+            "identifier": "T_ACT",
+            "name": "Active TFA",
+            "beruf": "TFA",
+            "hours": 40,
+            "is_active": True,
+        },
+    )
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "tfa_inactive",
+            "identifier": "T_INACT",
+            "name": "Inactive TFA",
+            "beruf": "TFA",
+            "hours": 40,
+            "is_active": False,
+        },
+    )
+
+    resp = client.get("/api/v1/quarters/2026-Q4/fairness")
+    assert resp.status_code == 200
+    data = resp.json()
+    identifiers = [r["identifier"] for r in data["records"]]
+    assert "T_ACT" in identifiers
+    assert "T_INACT" not in identifiers
+    assert data["groups"]["TFA"]["total_staff"] == 1
+
