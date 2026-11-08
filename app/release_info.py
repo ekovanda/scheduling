@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.13.2"
+CURRENT_VERSION = "1.13.3"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.13.3",
+        date="08. November 2026",
+        summary="Bearbeitung für Abwesenheiten & Vorbelegungen",
+        highlights=(
+            "Neuer Bearbeiten-Button (Stift-Symbol) für bestehende Einträge in beiden Ansichten.",
+            "Formulardialoge öffnen mit vorhandenen Daten zur schnellen Anpassung.",
+            "Direkte Aktualisierung im Frontend und REST-API-Abgleich via PUT-Endpunkten.",
+        ),
+    ),
     Release(
         version="1.13.2",
         date="08. November 2026",

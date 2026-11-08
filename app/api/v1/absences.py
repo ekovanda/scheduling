@@ -86,6 +86,34 @@ def get_absence_by_id(
     return absence
 
 
+@router.put("/{absence_id}", response_model=AbsenceRecord)
+def update_absence(
+    absence_id: AbsenceIdPath,
+    absence: AbsenceRecord,
+    repo: RepoDep,
+) -> AbsenceRecord:
+    """Update an existing absence entry in the ledger."""
+    if absence.id != absence_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path ID '{absence_id}' does not match payload ID '{absence.id}'.",
+        )
+    staff = repo.get_staff(absence.staff_id)
+    if not staff:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Staff member with id '{absence.staff_id}' does not exist.",
+        )
+    existing = repo.get_absence(absence_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Absence record with id '{absence_id}' not found.",
+        )
+    repo.save_absence(absence)
+    return absence
+
+
 @router.delete("/{absence_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_absence(
     absence_id: AbsenceIdPath,

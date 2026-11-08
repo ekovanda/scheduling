@@ -3,13 +3,14 @@ import {
   CalendarDays,
   Plus,
   Trash2,
+  Pencil,
   Calendar as CalendarIcon,
   User,
   Search,
   X,
 } from 'lucide-react';
 import type { AbsenceRecord, StaffMember } from '../types/api';
-import { fetchAbsences, fetchStaff, createAbsence, deleteAbsence } from '../lib/api';
+import { fetchAbsences, fetchStaff, createAbsence, updateAbsence, deleteAbsence } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { SearchableSelect } from '../components/ui/SearchableSelect';
@@ -24,6 +25,7 @@ export const AbsencesView: React.FC = () => {
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingAbsenceId, setEditingAbsenceId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     staff_id: '',
     start_date: '',
@@ -56,6 +58,7 @@ export const AbsencesView: React.FC = () => {
   };
 
   const handleOpenAddModal = () => {
+    setEditingAbsenceId(null);
     setFormData({
       staff_id: '',
       start_date: '',
@@ -64,30 +67,65 @@ export const AbsencesView: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  const handleOpenEditModal = (rec: AbsenceRecord) => {
+    setEditingAbsenceId(rec.id);
+    setFormData({
+      staff_id: rec.staff_id,
+      start_date: rec.start_date,
+      end_date: rec.end_date,
+    });
+    setIsModalOpen(true);
+  };
+
   const handleSaveAbsence = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.staff_id || !formData.start_date || !formData.end_date) return;
 
-    const newRecord: AbsenceRecord = {
-      id: `abs-${Date.now()}`,
-      staff_id: formData.staff_id,
-      absence_type: 'Vacation',
-      start_date: formData.start_date,
-      end_date: formData.end_date,
-    };
+    if (editingAbsenceId) {
+      const updatedRecord: AbsenceRecord = {
+        id: editingAbsenceId,
+        staff_id: formData.staff_id,
+        absence_type: 'Vacation',
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+      };
 
-    setAbsences((prev) => [newRecord, ...prev]);
-    setFormData({
-      staff_id: '',
-      start_date: '',
-      end_date: '',
-    });
-    setIsModalOpen(false);
+      setAbsences((prev) => prev.map((a) => (a.id === editingAbsenceId ? updatedRecord : a)));
+      setFormData({
+        staff_id: '',
+        start_date: '',
+        end_date: '',
+      });
+      setIsModalOpen(false);
+      setEditingAbsenceId(null);
 
-    try {
-      await createAbsence(newRecord);
-    } catch (err) {
-      console.warn('Backend sync failed, saved locally:', err);
+      try {
+        await updateAbsence(editingAbsenceId, updatedRecord);
+      } catch (err) {
+        console.warn('Backend update failed, saved locally:', err);
+      }
+    } else {
+      const newRecord: AbsenceRecord = {
+        id: `abs-${Date.now()}`,
+        staff_id: formData.staff_id,
+        absence_type: 'Vacation',
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+      };
+
+      setAbsences((prev) => [newRecord, ...prev]);
+      setFormData({
+        staff_id: '',
+        start_date: '',
+        end_date: '',
+      });
+      setIsModalOpen(false);
+
+      try {
+        await createAbsence(newRecord);
+      } catch (err) {
+        console.warn('Backend sync failed, saved locally:', err);
+      }
     }
   };
 
@@ -292,13 +330,22 @@ export const AbsencesView: React.FC = () => {
                           </span>
                         </div>
 
-                        <button
-                          onClick={() => handleDeleteAbsence(rec.id)}
-                          className="text-stone-400 hover:text-rose-600 p-1 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                          title="Löschen"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditModal(rec)}
+                            className="text-stone-400 hover:text-[#324b9b] p-1 hover:bg-[#324b9b]/10 rounded transition-colors cursor-pointer"
+                            title="Bearbeiten"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAbsence(rec.id)}
+                            className="text-stone-400 hover:text-rose-600 p-1 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                            title="Löschen"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -309,11 +356,14 @@ export const AbsencesView: React.FC = () => {
         </div>
       )}
 
-      {/* Add Absence Modal */}
+      {/* Add / Edit Absence Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Abwesenheit eintragen"
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingAbsenceId(null);
+        }}
+        title={editingAbsenceId ? 'Abwesenheit bearbeiten' : 'Abwesenheit eintragen'}
       >
         <form onSubmit={handleSaveAbsence} className="space-y-4">
           <div>
@@ -379,12 +429,15 @@ export const AbsencesView: React.FC = () => {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingAbsenceId(null);
+              }}
             >
               Abbrechen
             </Button>
             <Button type="submit" variant="primary">
-              Eintragen
+              {editingAbsenceId ? 'Speichern' : 'Eintragen'}
             </Button>
           </div>
         </form>

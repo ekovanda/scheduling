@@ -388,6 +388,7 @@ def test_b9_validator_allows_same_person_across_boundary() -> None:
     assert len(abteilung_violations) == 0
 
 
+@pytest.mark.slow
 def test_b9_solver_forbids_different_abteilung_staff_on_night_1() -> None:
     """Solver respects cross-quarter abteilung boundary constraint."""
     from app.scheduler.models import load_staff_from_csv

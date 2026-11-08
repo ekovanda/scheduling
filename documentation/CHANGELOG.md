@@ -9,6 +9,24 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.13.3] - 2026-11-08
+
+### UI & API: Bearbeitungsfunktion für Abwesenheiten und Vorbelegungen
+
+- **Bearbeiten-Schaltfläche in Abwesenheiten (`frontend/src/views/AbsencesView.tsx`, `frontend/src/lib/api.ts`):**
+  - Neuer `Pencil`-Aktionsbutton neben dem Lösch-Icon für jeden Abwesenheitseintrag.
+  - Öffnet den Modal-Dialog vorausgefüllt mit Mitarbeiter und Datumsintervall (`handleOpenEditModal`).
+  - Reaktive Aktualisierung des lokalen Komponenten-Zustands und Persistenz via `updateAbsence`.
+- **Bearbeiten-Schaltfläche in Vorbelegungen (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/lib/api.ts`):**
+  - Neuer `Pencil`-Aktionsbutton in der Tabelle der Vorbelegungen (`handleOpenEditModal`).
+  - Vorbelegung mit Mitarbeiter, Datum, Schichtkachel, Feiertags-Status und Notiz wird im Dialog editierbar gemacht.
+  - Lokale Zustandsaktualisierung und synchrone Persistenz via `updatePreAssigned`.
+- **REST-API Erweiterungen (`app/api/v1/absences.py`, `app/api/v1/preassigned.py`):**
+  - Neuer Endpunkt `PUT /api/v1/absences/{absence_id}` zur Aktualisierung bestehender Abwesenheiten.
+  - Neuer Endpunkt `PUT /api/v1/preassigned/{preassigned_id}` zur Aktualisierung bestehender Vorbelegungen.
+  - Vollständige Validierung von Pfad- und Payload-IDs, Existenzprüfungen sowie Absicherung durch `require_planner`.
+  - Erweiterung der API-Integrationstests in `tests/test_api_v1.py`.
+
 ## [1.13.2] - 2026-11-08
 
 ### UI: Kompakte Schichtnummerierung, angepinnte Legende & Intern-Bereinigung im Dienstplan

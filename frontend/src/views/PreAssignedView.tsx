@@ -3,6 +3,7 @@ import {
   Pin,
   Plus,
   Trash2,
+  Pencil,
   Calendar as CalendarIcon,
   Sparkles,
   Moon,
@@ -10,7 +11,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import type { PreAssignedShift, StaffMember, PreAssignedShiftType } from '../types/api';
-import { fetchPreAssigned, fetchStaff, createPreAssigned, deletePreAssigned } from '../lib/api';
+import { fetchPreAssigned, fetchStaff, createPreAssigned, updatePreAssigned, deletePreAssigned } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { SearchableSelect } from '../components/ui/SearchableSelect';
@@ -276,6 +277,7 @@ export const PreAssignedView: React.FC = () => {
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     staff_id: '',
     shift_date: '',
@@ -311,6 +313,7 @@ export const PreAssignedView: React.FC = () => {
   };
 
   const handleOpenAddModal = () => {
+    setEditingShiftId(null);
     setFormData({
       staff_id: '',
       shift_date: '',
@@ -321,35 +324,77 @@ export const PreAssignedView: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  const handleOpenEditModal = (rec: PreAssignedShift) => {
+    setEditingShiftId(rec.id);
+    setFormData({
+      staff_id: rec.staff_id,
+      shift_date: rec.shift_date,
+      shift_type: rec.shift_type as PreAssignedShiftType,
+      is_holiday: !!rec.is_holiday,
+      note: rec.note || '',
+    });
+    setIsModalOpen(true);
+  };
+
   const handleSavePreAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.staff_id || !formData.shift_date) return;
 
     const stf = getStaff(formData.staff_id);
-    const newRecord: PreAssignedShift = {
-      id: `pa-${Date.now()}`,
-      staff_id: formData.staff_id,
-      staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
-      shift_date: formData.shift_date,
-      shift_type: formData.shift_type,
-      is_holiday: formData.is_holiday,
-      note: formData.note.trim() || undefined,
-    };
 
-    setShifts((prev) => [newRecord, ...prev]);
-    setFormData({
-      staff_id: '',
-      shift_date: '',
-      shift_type: 'Nachtdienst',
-      is_holiday: true,
-      note: '',
-    });
-    setIsModalOpen(false);
+    if (editingShiftId) {
+      const updatedRecord: PreAssignedShift = {
+        id: editingShiftId,
+        staff_id: formData.staff_id,
+        staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
+        shift_date: formData.shift_date,
+        shift_type: formData.shift_type,
+        is_holiday: formData.is_holiday,
+        note: formData.note.trim() || undefined,
+      };
 
-    try {
-      await createPreAssigned(newRecord);
-    } catch (err) {
-      console.warn('Backend sync failed, saved locally:', err);
+      setShifts((prev) => prev.map((s) => (s.id === editingShiftId ? updatedRecord : s)));
+      setFormData({
+        staff_id: '',
+        shift_date: '',
+        shift_type: 'Nachtdienst',
+        is_holiday: true,
+        note: '',
+      });
+      setIsModalOpen(false);
+      setEditingShiftId(null);
+
+      try {
+        await updatePreAssigned(editingShiftId, updatedRecord);
+      } catch (err) {
+        console.warn('Backend update failed, saved locally:', err);
+      }
+    } else {
+      const newRecord: PreAssignedShift = {
+        id: `pa-${Date.now()}`,
+        staff_id: formData.staff_id,
+        staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
+        shift_date: formData.shift_date,
+        shift_type: formData.shift_type,
+        is_holiday: formData.is_holiday,
+        note: formData.note.trim() || undefined,
+      };
+
+      setShifts((prev) => [newRecord, ...prev]);
+      setFormData({
+        staff_id: '',
+        shift_date: '',
+        shift_type: 'Nachtdienst',
+        is_holiday: true,
+        note: '',
+      });
+      setIsModalOpen(false);
+
+      try {
+        await createPreAssigned(newRecord);
+      } catch (err) {
+        console.warn('Backend sync failed, saved locally:', err);
+      }
     }
   };
 
@@ -540,13 +585,22 @@ export const PreAssignedView: React.FC = () => {
                       </td>
 
                       <td className="py-3.5 pl-3 pr-6 text-right">
-                        <button
-                          onClick={() => handleDelete(rec.id)}
-                          className="inline-flex items-center p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                          title="Löschen"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => handleOpenEditModal(rec)}
+                            className="inline-flex items-center p-1 text-stone-400 hover:text-[#324b9b] hover:bg-[#324b9b]/10 rounded transition-colors cursor-pointer"
+                            title="Bearbeiten"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(rec.id)}
+                            className="inline-flex items-center p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                            title="Löschen"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -557,11 +611,14 @@ export const PreAssignedView: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Modal */}
+      {/* Add / Edit Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Dienst vorab zuweisen"
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingShiftId(null);
+        }}
+        title={editingShiftId ? 'Vorbelegung bearbeiten' : 'Dienst vorab zuweisen'}
       >
         <form onSubmit={handleSavePreAssignment} className="space-y-4">
           <div>
@@ -708,12 +765,15 @@ export const PreAssignedView: React.FC = () => {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingShiftId(null);
+              }}
             >
               Abbrechen
             </Button>
             <Button type="submit" variant="primary">
-              Vorbelegung speichern
+              {editingShiftId ? 'Änderungen speichern' : 'Vorbelegung speichern'}
             </Button>
           </div>
         </form>
