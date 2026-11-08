@@ -243,7 +243,7 @@ export const FairnessView: React.FC<FairnessViewProps> = ({
             { id: 'TFA', label: 'TFA', roleType: 'tfa' },
             { id: 'Azubi', label: 'Azubis', roleType: 'azubi' },
             { id: 'Intern', label: 'Interns', roleType: 'intern' },
-            { id: 'Vet', label: 'Tierärzte (Vet)', roleType: 'vet' },
+            { id: 'Vet', label: 'Vet', roleType: 'vet' },
           ].map((tab) => {
             const count = (data?.records || []).filter(
               (r) => r.beruf.toLowerCase() === tab.id.toLowerCase()
@@ -410,7 +410,7 @@ export const FairnessView: React.FC<FairnessViewProps> = ({
                       : 'text-stone-600 hover:text-stone-900'
                   )}
                 >
-                  Einzel-Vektoren (pro Mitarbeiter)
+                  Mitarbeiter-Ansicht
                 </button>
                 <button
                   onClick={() => setArrowSubMode('funnel')}
@@ -421,7 +421,7 @@ export const FairnessView: React.FC<FairnessViewProps> = ({
                       : 'text-stone-600 hover:text-stone-900'
                   )}
                 >
-                  Konvergenz-Trichter (Vertikal)
+                  Team-Übersicht
                 </button>
               </div>
 
@@ -501,7 +501,7 @@ export const FairnessView: React.FC<FairnessViewProps> = ({
 
             {/* D. SUB-MODE 1: DUMBBELL LIST (Per Person Vectors) */}
             {arrowSubMode === 'dumbbell' && (
-              <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
+              <div className="space-y-1.5">
                 {sortedList.length === 0 ? (
                   <div className="py-12 text-center text-stone-400 text-xs">
                     Keine Personen entsprechen dem ausgewählten Filter.

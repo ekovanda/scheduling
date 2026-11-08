@@ -378,7 +378,7 @@ export const StaffView: React.FC = () => {
                   : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
                 }`}
             >
-              {role === 'ALL' ? 'Alle Rollen' : role === 'Vet' ? 'Tierärzte (Vet)' : role}
+              {role === 'ALL' ? 'Alle Rollen' : role === 'Vet' ? 'Vet' : role}
             </button>
           ))}
         </div>
@@ -614,7 +614,7 @@ export const StaffView: React.FC = () => {
                 }}
                 className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
               >
-                <option value="Vet">Tierarzt (Vet)</option>
+                <option value="Vet">Vet</option>
                 <option value="TFA">TFA</option>
                 <option value="Azubi">Azubi</option>
                 <option value="Intern">Intern</option>

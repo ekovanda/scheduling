@@ -20,11 +20,11 @@ RELEASES: tuple[Release, ...] = (
     Release(
         version="2.1.0",
         date="08. November 2026",
-        summary="Kompakte Fairness-Ansicht & flexibler Zielkorridor",
+        summary="Kompakte Fairness-Ansicht & optimierter Dienstplan",
         highlights=(
-            "Fokus auf Ausgleichs-Pfeile mit Einzel-Vektoren und vertikalem Konvergenz-Trichter.",
-            "Praxisnaher Zielkorridor von ±1 Dienst als ausgeglichen und ±2 als leichte Abweichung.",
-            "Aufgeräumte Ansicht ohne redundante Tabellen und mit reduzierter Textlast.",
+            "Fokus auf Ausgleichs-Pfeile mit natürlichem Scrollen und kliniknahen Begriffen.",
+            "Übersichtlicher Dienstplan mit linksbündigen Schichtnummern und einheitlichen 'Vet'-Badges.",
+            "Dezente, neutrale Wochentage und Schichtbezeichnungen in den Vorbelegungen.",
         ),
     ),
     Release(

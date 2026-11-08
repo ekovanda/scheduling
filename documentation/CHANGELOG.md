@@ -11,12 +11,12 @@ Developer-facing implementation reference for released changes. This document co
 
 ## [2.1.0] - 2026-11-08
 
-### Changed: Simplified Fairness View with 90° Rotated Funnel & Relaxed ±1.0/±2.0 Deviation Thresholds
+### Changed: Simplified Fairness View with 90° Rotated Funnel, Relaxed Deviation & Calendar/Pre-Assignment Polish
 
-- **Fokussierte Ausgleichs-Pfeile & 90°-gedrehter Konvergenz-Trichter (`frontend/src/views/FairnessView.tsx`):**
+- **Fokussierte Ausgleichs-Pfeile & 90°-gedrehter Verlauf (`frontend/src/views/FairnessView.tsx`):**
   - Redundante Visualisierungsmodi (*Balance-Balken*, *2D-Scatterplot*, *Dichte-Streifen*) sowie die untere Mitarbeiter-Tabelle und der 3-Karten-Erklärungsblock vollständig entfernt.
-  - Ansicht fokussiert sich rein auf die *Ausgleichs-Pfeile* mit zwei wählbaren Submodi: *Einzel-Vektoren* (Dumbbell-Vektoren pro Person inkl. Such- und Sortierleiste) und *Konvergenz-Trichter*.
-  - Der Konvergenz-Trichter wurde um 90 Grad gedreht: Die horizontale Achse nutzt die Bildschirmbreite optimal für den Wertebereich (links Entlastung, rechts Mehrarbeit, Mitte 0.0), während der Zeitverlauf vertikal von oben (*Vorher / Vorquartal*) nach unten (*Nachher / Plan*) verläuft. Dadurch entfällt das vertikale Überlappen der Kurven.
+  - Ansicht fokussiert sich rein auf die *Ausgleichs-Pfeile* mit zwei wählbaren Submodi mit kliniknahen Begriffen: *Mitarbeiter-Ansicht* (Dumbbell-Vektoren ohne innere Scroll-Box direkt im Hauptfenster scrollbar) und *Team-Übersicht*.
+  - Der Trichter wurde um 90 Grad gedreht: Die horizontale Achse nutzt die Bildschirmbreite optimal für den Wertebereich (links Entlastung, rechts Mehrarbeit, Mitte 0.0), während der Zeitverlauf vertikal von oben (*Vorher / Vorquartal*) nach unten (*Nachher / Plan*) verläuft.
   - Kompakter Detail-Inspektor öffnet sich bedarfsgerecht bei Klick auf eine Person in beiden Modi.
 - **Aktualisierte Toleranz-Schwellenwerte für Fairness-Bewertung (`app/api/v1/quarters.py`, `frontend/src/views/FairnessView.tsx`):**
   - Schwellenwerte für die Netto-Abweichung an die betriebliche Vorgabe angepasst:
@@ -24,6 +24,13 @@ Developer-facing implementation reference for released changes. This document co
     - $1.0 < | \text{net\_delta} | \le 2.0$: *Leichte Abweichung* (`slight_deviation`, gelb).
     - $| \text{net\_delta} | > 2.0$: *Ausreißer* (`warning`, rot).
   - Zielkorridor in den Vektorspuren und im Trichter auf $\pm 1.0$ Dienste angepasst.
+- **Kompakterer Dienstplan & linksbündige Schichtnummern (`frontend/src/views/MatrixView.tsx`):**
+  - Spaltenbreiten gestrafft und Tabelle auf eine lesbare Maximalbreite begrenzt.
+  - Schichtnummern (1–4) in der Wochenendspalte stehen nun linksbündig vor den Mitarbeiternamen, um die Lesbarkeit beim Zeilenscannen zu erhöhen.
+  - Stethoskop-Emoji `🩺` bei Tierärzten entfernt; einheitliche, kompakte Badges mit der Beschriftung `Vet` statt `Tierarzt (Vet)` eingeführt (`Badge.tsx`, `colors.ts`, `StaffView.tsx`, `MatrixView.tsx`).
+- **Dezentere Vorbelegungs-Tabelle (`frontend/src/views/PreAssignedView.tsx`):**
+  - Wochentage neutral und dezent gestylt (ohne auffällige Orange-/Lila-Färbung).
+  - Schichtbezeichnungen als dezente, neutrale Badges ohne überladene Emojis formatiert.
 - **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
   - Test `test_fairness_overview_threshold_tiering` verifiziert die aktualisierte Status-Klassifizierung.
 

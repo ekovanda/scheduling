@@ -37,16 +37,16 @@ const getWeekdayGerman = (dateStr: string): string => {
 
 const formatShiftLabel = (shiftType: string): string => {
   if (!shiftType) return '—';
-  if (shiftType === 'Sa_10-21') return '☀️ Frühdienst 10–21 (Sa)';
-  if (shiftType === 'Sa_10-19') return '☀️ Spätdienst 10–19 (Azubi)';
-  if (shiftType === 'Sa_10-22') return '📞 Rufbereitschaft 10–22 (Sa)';
-  if (shiftType === 'Sa_Intern') return '🎓 Intern Tagdienst (08:30–20:30)';
-  if (shiftType === 'So_8-20') return '☀️ Frühdienst 8–20 (So/FT)';
-  if (shiftType === 'So_10-22') return '📞 Rufbereitschaft 10–22 (So/FT)';
-  if (shiftType === 'So_8-20:30') return '📞 Azubi Ruf 8–20:30 (So/FT)';
-  if (shiftType === 'So_Intern') return '🎓 Intern Tagdienst (08:30–20:30)';
-  if (shiftType.startsWith('N_')) return `🌙 Nacht (${shiftType})`;
-  if (shiftType.toLowerCase().includes('nacht')) return '🌙 Nachtdienst';
+  if (shiftType === 'Sa_10-21') return 'Frühdienst 10–21 (Sa)';
+  if (shiftType === 'Sa_10-19') return 'Spätdienst 10–19 (Azubi)';
+  if (shiftType === 'Sa_10-22') return 'Rufbereitschaft 10–22 (Sa)';
+  if (shiftType === 'Sa_Intern') return 'Intern Tagdienst (08:30–20:30)';
+  if (shiftType === 'So_8-20') return 'Frühdienst 8–20 (So/FT)';
+  if (shiftType === 'So_10-22') return 'Rufbereitschaft 10–22 (So/FT)';
+  if (shiftType === 'So_8-20:30') return 'Azubi Ruf 8–20:30 (So/FT)';
+  if (shiftType === 'So_Intern') return 'Intern Tagdienst (08:30–20:30)';
+  if (shiftType.startsWith('N_')) return `Nachtdienst (${shiftType.replace('N_', '')})`;
+  if (shiftType.toLowerCase().includes('nacht')) return 'Nachtdienst';
   return shiftType;
 };
 
@@ -521,17 +521,8 @@ export const PreAssignedView: React.FC = () => {
                         </div>
                       </td>
 
-                      <td className="px-3 py-3.5 text-xs font-semibold">
-                        <span
-                          className={cn(
-                            'inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold',
-                            weekday === 'Samstag' || weekday === 'Sonntag'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                              : weekday === 'Freitag'
-                                ? 'bg-purple-100 text-purple-900 border border-purple-200'
-                                : 'bg-stone-100 text-stone-700 border border-stone-200'
-                          )}
-                        >
+                      <td className="px-3 py-3.5 text-xs">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-600 border border-stone-200/70">
                           {weekday}
                         </span>
                       </td>
@@ -559,17 +550,14 @@ export const PreAssignedView: React.FC = () => {
                       </td>
 
                       <td className="px-3 py-3.5">
-                        {isNight ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
-                            <Moon className="h-3.5 w-3.5" />
-                            <span>{formatShiftLabel(rec.shift_type)}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 shadow-2xs">
-                            <SunMedium className="h-3.5 w-3.5" />
-                            <span>{formatShiftLabel(rec.shift_type)}</span>
-                          </span>
-                        )}
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-stone-100/70 text-stone-700 border border-stone-200/60">
+                          {isNight ? (
+                            <Moon className="h-3 w-3 text-stone-400 shrink-0" />
+                          ) : (
+                            <SunMedium className="h-3 w-3 text-stone-400 shrink-0" />
+                          )}
+                          <span>{formatShiftLabel(rec.shift_type)}</span>
+                        </span>
                       </td>
 
                       <td className="px-3 py-3.5 text-xs">

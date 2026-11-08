@@ -293,14 +293,13 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     return getWeekendShiftMeta(shiftType).num;
   };
 
-  const getStaffDisplayName = (id: string, isVet = false) => {
+  const getStaffDisplayName = (id: string) => {
     const s = getStaff(id);
     if (!s) return id.toUpperCase();
-    const prefix = isVet && (s.beruf === 'Vet' || s.beruf === 'Tierarzt') ? '🩺 ' : '';
     if (showFullNames) {
-      return `${prefix}${s.name}`;
+      return s.name;
     }
-    return `${prefix}${s.identifier}`;
+    return s.identifier;
   };
 
   const formatTimer = (seconds: number) => {
@@ -875,7 +874,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                             : 'text-stone-600 hover:text-stone-900'
                         )}
                       >
-                        {r === 'ALL' ? 'Alle Rollen' : r === 'Vet' ? 'Tierärzte (Vet)' : r}
+                        {r === 'ALL' ? 'Alle Rollen' : r}
                       </button>
                     ))}
                   </div>
@@ -1128,17 +1127,17 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
               {/* The Calendar Matrix Table */}
               <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full max-w-4xl text-left text-xs border-collapse">
                     <thead className="bg-[#f5f4f0] border-b border-stone-300 text-stone-700 font-bold">
                       <tr>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-28">Datum</th>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-52 bg-[#eee8f5]">
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-24">Datum</th>
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#eee8f5]">
                           🌙 Nacht
                         </th>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-64 bg-[#fff8e7]">
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-56 bg-[#fff8e7]">
                           ☀️ Sa/So Dienst & Rufbereitschaft (1–4)
                         </th>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#e8f5f3]">
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-36 bg-[#e8f5f3]">
                           <div className="flex items-center justify-between">
                             <span>🎓 Intern Tagdienst</span>
                             <span className="text-[10px] text-teal-800/70 font-mono font-normal">08:30–20:30</span>
@@ -1232,23 +1231,25 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                               <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
                                             </span>
                                           )}
-                                          <span>
-                                            {getStaffDisplayName(shift.actual_staff_id, true)}
+                                          <span className="font-bold text-stone-900 truncate">
+                                            {getStaffDisplayName(shift.actual_staff_id)}
                                           </span>
-                                          {role && role !== 'Vet' && role !== 'Tierarzt' && (
+                                          {role && (role === 'Vet' || role === 'Tierarzt') ? (
+                                            <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-rose-100 text-rose-900 border border-rose-200 shrink-0">
+                                              Vet
+                                            </span>
+                                          ) : role && role !== 'TFA' ? (
                                             <span
                                               className={cn(
-                                                'text-[10px] px-1 py-0.2 rounded font-medium',
+                                                'text-[10px] px-1 py-0.2 rounded font-medium shrink-0',
                                                 role === 'Azubi'
                                                   ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                                                  : role === 'Intern'
-                                                    ? 'bg-teal-100 text-teal-900 border border-teal-200'
-                                                    : 'bg-blue-100 text-blue-900 border border-blue-200'
+                                                  : 'bg-teal-100 text-teal-900 border border-teal-200'
                                               )}
                                             >
                                               {role}
                                             </span>
-                                          )}
+                                          ) : null}
                                           {shift.is_override && (
                                             <span className="text-[11px]" title="Getauchter Dienst">
                                               ⚠️
@@ -1286,42 +1287,13 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
                                           className={cn(
-                                            'flex items-center justify-between gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
+                                            'flex items-center gap-2 text-left font-semibold transition-all rounded px-1.5 py-0.5',
                                             isPre
                                               ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
                                               : 'text-stone-900'
                                           )}
                                         >
-                                          <div className="flex items-center gap-1.5 min-w-0">
-                                            {isPre && (
-                                              <span title="Fest vorgegebener Dienst">
-                                                <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
-                                              </span>
-                                            )}
-                                            <span className="truncate">
-                                              {getStaffDisplayName(shift.actual_staff_id, false)}
-                                            </span>
-                                            {role && role !== 'TFA' && (
-                                              <span
-                                                className={cn(
-                                                  'text-[9px] px-1 py-0.2 rounded font-medium shrink-0',
-                                                  role === 'Azubi'
-                                                    ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                                                    : role === 'Intern'
-                                                      ? 'bg-teal-100 text-teal-900 border border-teal-200'
-                                                      : 'bg-rose-100 text-rose-900 border border-rose-200'
-                                                )}
-                                              >
-                                                {role}
-                                              </span>
-                                            )}
-                                            {shift.is_override && (
-                                              <span className="text-[11px]" title="Getauchter Dienst">
-                                                ⚠️
-                                              </span>
-                                            )}
-                                          </div>
-
+                                          {/* Shift number (1, 2, 3, 4) left of the name */}
                                           <span
                                             className={cn(
                                               'text-[10px] font-bold px-1.5 py-0.2 rounded border font-mono shrink-0 cursor-help',
@@ -1329,8 +1301,41 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                             )}
                                             title={`${meta.label} (${meta.hours})`}
                                           >
-                                            ({meta.num})
+                                            {meta.num}
                                           </span>
+
+                                          {isPre && (
+                                            <span title="Fest vorgegebener Dienst">
+                                              <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
+                                            </span>
+                                          )}
+
+                                          <span className="font-bold text-stone-900 truncate">
+                                            {getStaffDisplayName(shift.actual_staff_id)}
+                                          </span>
+
+                                          {role && (role === 'Vet' || role === 'Tierarzt') ? (
+                                            <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-rose-100 text-rose-900 border border-rose-200 shrink-0">
+                                              Vet
+                                            </span>
+                                          ) : role && role !== 'TFA' ? (
+                                            <span
+                                              className={cn(
+                                                'text-[9px] px-1 py-0.2 rounded font-medium shrink-0',
+                                                role === 'Azubi'
+                                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                                  : 'bg-teal-100 text-teal-900 border border-teal-200'
+                                              )}
+                                            >
+                                              {role}
+                                            </span>
+                                          ) : null}
+
+                                          {shift.is_override && (
+                                            <span className="text-[11px]" title="Getauchter Dienst">
+                                              ⚠️
+                                            </span>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -1371,7 +1376,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                             </span>
                                           )}
                                           <span className="truncate">
-                                            {getStaffDisplayName(shift.actual_staff_id, false)}
+                                            {getStaffDisplayName(shift.actual_staff_id)}
                                           </span>
                                           {shift.is_override && (
                                             <span className="text-[11px]" title="Getauchter Dienst">

@@ -40,7 +40,7 @@ export function getStaffColorScheme(
       badge: 'bg-rose-50 text-rose-700 border-rose-200',
       dot: 'bg-rose-500',
       border: 'border-rose-300',
-      label: 'Tierarzt (Vet)',
+      label: 'Vet',
     };
   }
 

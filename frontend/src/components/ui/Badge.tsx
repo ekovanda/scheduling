@@ -45,8 +45,8 @@ export const RoleBadge: React.FC<{ role: Beruf }> = ({ role }) => {
     case 'vet':
     case 'tierarzt':
       return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80 shadow-2xs">
-          Tierarzt (Vet)
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200/80 shadow-2xs">
+          Vet
         </span>
       );
     case 'intern':
