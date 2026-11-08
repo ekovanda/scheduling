@@ -119,6 +119,10 @@ export interface SolverJobRecord {
   solutions_found: number;
   best_objective?: number | null;
   soft_penalty?: number | null;
+  status_name?: string | null;
+  best_objective_bound?: number | null;
+  stopped_due_to_stagnation?: boolean;
+  num_workers?: number | null;
   error?: string | null;
   diagnostics?: InfeasibilityDiagnosticRecord[];
 }

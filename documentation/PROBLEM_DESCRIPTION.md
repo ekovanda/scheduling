@@ -90,7 +90,7 @@ Staff:
 ## Solver Requirements
 
 ### CP-SAT (OR-Tools)
-- Constraint programming for guaranteed optimal fairness
+- Constraint programming for mathematically optimized fairness (proven optimal or best feasible within time/stagnation limit)
 - Models all hard constraints explicitly
 - Minimizes max FTE-deviation within role groups
 - Default time limit: 120 seconds

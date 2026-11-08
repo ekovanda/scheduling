@@ -221,6 +221,10 @@ class SolverJobRecord(BaseModel):
     solutions_found: int = 0
     best_objective: float | None = None
     soft_penalty: float | None = None
+    status_name: str | None = None
+    best_objective_bound: float | None = None
+    stopped_due_to_stagnation: bool = False
+    num_workers: int | None = None
     error: str | None = None
     diagnostics: list[InfeasibilityDiagnosticRecord] = Field(default_factory=list)
 

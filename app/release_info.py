@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.4"
+CURRENT_VERSION = "1.12.5"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.12.5",
+        date="08. November 2026",
+        summary="Skalierbarkeit, Concurrency & Solver-Transparenz",
+        highlights=(
+            "Single-Worker Cloud Run Topologie zur Absicherung aktiver Hintergrund-Optimierungen.",
+            "Globale Nebenläufigkeitsbegrenzung (429) und CPU-Thread-Deckelung für 2-vCPU Instanzen.",
+            "Transparente Dokumentation von Solver-Status, Best-Bound und Optimalitätslücke.",
+        ),
+    ),
     Release(
         version="1.12.4",
         date="08. November 2026",

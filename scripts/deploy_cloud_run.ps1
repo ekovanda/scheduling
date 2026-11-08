@@ -89,8 +89,8 @@ $DeployArgs = @(
     "--timeout", "900s",
     "--concurrency", "2",
     "--session-affinity",
-    "--min-instances", "0",
-    "--max-instances", "3",
+    "--min-instances", "1",
+    "--max-instances", "1",
     "--set-env-vars", $EnvVarsCsv,
     "--allow-unauthenticated"
 )

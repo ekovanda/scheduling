@@ -88,15 +88,16 @@ def _parse_quarter_key(quarter_key: str) -> tuple[int, int]:
     try:
         year = int(parts[0])
         quarter = int(parts[1])
+        if not (2020 <= year <= 2100):
+            raise ValueError(f"Year must be between 2020 and 2100 (got {year}).")
         if quarter not in (1, 2, 3, 4):
-            raise ValueError()
+            raise ValueError(f"Quarter must be 1, 2, 3, or 4 (got {quarter}).")
         return year, quarter
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Invalid quarter '{quarter_key}'. Year must be valid "
-                "and quarter must be 1, 2, 3, or 4."
+                f"Invalid quarter '{quarter_key}'. {err}"
             ),
         ) from None
 
@@ -534,6 +535,7 @@ def _execute_solver_worker(
             on_solver_created=on_solver_created,
             stagnation_limit_seconds=stagnation_limit_seconds,
             quarter_end=q_end,
+            num_workers=2,
         )
 
         elapsed = round(time.time() - start_time, 1)
@@ -545,8 +547,25 @@ def _execute_solver_worker(
         job_rec.elapsed_seconds = elapsed
         job_rec.completed_at = datetime.now(UTC)
 
+        status_name = getattr(result, "status_name", "UNKNOWN")
+        best_bound = getattr(result, "best_objective_bound", None)
+        obj_val = getattr(result, "objective_value", None)
+        stopped_due_to_stagnation = getattr(result, "stopped_due_to_stagnation", False)
+        num_workers = getattr(result, "num_workers", 2)
+        optimality_gap = (
+            round(abs(obj_val - best_bound), 2)
+            if (obj_val is not None and best_bound is not None)
+            else None
+        )
+
+        job_rec.status_name = status_name
+        job_rec.best_objective_bound = best_bound
+        job_rec.stopped_due_to_stagnation = stopped_due_to_stagnation
+        job_rec.num_workers = num_workers
+
         if cancellation_event.is_set():
             job_rec.status = SolverJobStatus.CANCELLED
+            job_rec.status_name = "CANCELLED"
             job_rec.error = "Berechnung durch Benutzer abgebrochen."
             repo.save_solver_job(job_rec)
             return
@@ -585,6 +604,13 @@ def _execute_solver_worker(
             "trailing_context_applied": context is not None,
             "solve_time_seconds": elapsed,
             "hard_violations": hard_violations,
+            "status_name": status_name,
+            "is_optimal": status_name == "OPTIMAL",
+            "best_objective_bound": best_bound,
+            "objective_value": obj_val,
+            "optimality_gap": optimality_gap,
+            "stopped_due_to_stagnation": stopped_due_to_stagnation,
+            "num_workers": num_workers,
         }
 
         doc = repo.get_schedule(quarter_key)
@@ -604,6 +630,10 @@ def _execute_solver_worker(
         job_rec.best_objective = best_penalty_val
         job_rec.soft_penalty = best_penalty_val
         job_rec.solutions_found = max(job_rec.solutions_found, 1)
+        job_rec.status_name = status_name
+        job_rec.best_objective_bound = best_bound
+        job_rec.stopped_due_to_stagnation = stopped_due_to_stagnation
+        job_rec.num_workers = num_workers
         repo.save_solver_job(job_rec)
 
     except Exception as exc:  # pylint: disable=broad-except
@@ -668,6 +698,17 @@ def generate_quarter_schedule(
     solver_req = req or GenerateScheduleRequest()
     _parse_quarter_key(quarter_key)
 
+    if sync and solver_req.max_solve_time_seconds > 850:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"max_solve_time_seconds ({solver_req.max_solve_time_seconds}s) exceeds "
+                "maximum allowable limit of 850s for synchronous solves "
+                "(Cloud Run HTTP request timeout is 900s). "
+                "Use asynchronous mode (sync=false) for longer solves."
+            ),
+        )
+
     year, quarter, q_start, q_end, staff_list, vacations, pa_shifts = _load_domain_data(
         quarter_key, repo
     )
@@ -709,17 +750,30 @@ def generate_quarter_schedule(
         return failed_record
 
     with _jobs_lock:
+        # Prune terminated threads from in-memory tracking
+        dead_keys = [k for k, v in _active_jobs.items() if not v.thread.is_alive()]
+        for k in dead_keys:
+            del _active_jobs[k]
+
         if quarter_key in _active_jobs:
             existing = _active_jobs[quarter_key]
-            if existing.thread.is_alive():
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        f"Solver job '{existing.job_id}' is already running "
-                        f"for quarter '{quarter_key}'."
-                    ),
-                )
-            del _active_jobs[quarter_key]
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Solver job '{existing.job_id}' is already running "
+                    f"for quarter '{quarter_key}'."
+                ),
+            )
+
+        if len(_active_jobs) >= 1:
+            running_q = next(iter(_active_jobs.keys()))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"A solver job is already actively running for quarter '{running_q}'. "
+                    "Only 1 concurrent solve is permitted per instance."
+                ),
+            )
 
         job_id = f"job_{quarter_key}_{uuid4().hex[:8]}"
         cancellation_event = threading.Event()
@@ -757,7 +811,7 @@ def generate_quarter_schedule(
         worker_thread.start()
 
     if sync:
-        worker_thread.join(timeout=solver_req.max_solve_time_seconds + 30)
+        worker_thread.join(timeout=min(solver_req.max_solve_time_seconds + 30, 880))
         final_record = repo.get_solver_job(quarter_key) or initial_record
         if final_record.status == SolverJobStatus.FAILED:
             raise HTTPException(

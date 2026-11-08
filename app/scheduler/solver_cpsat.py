@@ -4,6 +4,7 @@ This module provides an alternative solver using constraint programming
 for guaranteed optimal fairness within hard constraint satisfaction.
 """
 
+import os
 import threading
 import time
 from collections import defaultdict
@@ -13,6 +14,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
+from .feasibility import analyze_capacity, diagnose_structured_infeasibility
 from .models import (
     Abteilung,
     Assignment,
@@ -31,7 +33,6 @@ from .models import (
     get_staff_unavailable_dates,
 )
 from .validator import validate_schedule
-from .feasibility import analyze_capacity, diagnose_structured_infeasibility
 
 
 class SolverResult:
@@ -46,6 +47,11 @@ class SolverResult:
         convergence_log: list[dict[str, float]] | None = None,
         diagnostics: list[Any] | None = None,
         hard_violations: list[str] | None = None,
+        status_name: str = "UNKNOWN",
+        objective_value: float | None = None,
+        best_objective_bound: float | None = None,
+        stopped_due_to_stagnation: bool = False,
+        num_workers: int = 2,
     ) -> None:
         self.success = success
         self.schedules = schedules
@@ -54,6 +60,11 @@ class SolverResult:
         self.convergence_log: list[dict[str, float]] = convergence_log or []
         self.diagnostics: list[Any] = diagnostics or []
         self.hard_violations: list[str] = hard_violations or []
+        self.status_name: str = status_name
+        self.objective_value: float | None = objective_value
+        self.best_objective_bound: float | None = best_objective_bound
+        self.stopped_due_to_stagnation: bool = stopped_due_to_stagnation
+        self.num_workers: int = num_workers
 
     def get_best_schedule(self) -> Schedule | None:
         """Get the best schedule (lowest penalty)."""
@@ -136,6 +147,7 @@ def generate_schedule_cpsat(
     on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
     stagnation_limit_seconds: float | None = 15.0,
     quarter_end: date | None = None,
+    num_workers: int | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -1045,6 +1057,11 @@ def generate_schedule_cpsat(
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max_solve_time_seconds
+    if num_workers is not None:
+        effective_num_workers = max(1, num_workers)
+        solver.parameters.num_workers = effective_num_workers
+    else:
+        effective_num_workers = os.cpu_count() or 2
     if random_seed is not None:
         solver.parameters.random_seed = random_seed
 
@@ -1084,6 +1101,7 @@ def generate_schedule_cpsat(
 
     status = solver.Solve(model, progress)
     watchdog_stop.set()
+    status_name = solver.StatusName(status)
 
     if cancellation_event and cancellation_event.is_set():
         return SolverResult(
@@ -1094,9 +1112,21 @@ def generate_schedule_cpsat(
                 "Berechnung durch Benutzer abgebrochen (Cancelled by user)."
             ],
             convergence_log=progress.solutions,
+            status_name="CANCELLED",
+            stopped_due_to_stagnation=False,
+            num_workers=effective_num_workers,
         )
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        try:
+            obj_val: float | None = float(solver.ObjectiveValue())
+        except Exception:
+            obj_val = None
+        try:
+            bound_val: float | None = float(solver.BestObjectiveBound())
+        except Exception:
+            bound_val = None
+
         # Extract solution
         schedule = _extract_schedule(
             solver,
@@ -1125,6 +1155,11 @@ def generate_schedule_cpsat(
                 ],
                 convergence_log=progress.solutions,
                 hard_violations=violation_msgs,
+                status_name=status_name,
+                objective_value=obj_val,
+                best_objective_bound=bound_val,
+                stopped_due_to_stagnation=progress.stopped_due_to_stagnation,
+                num_workers=effective_num_workers,
             )
 
         return SolverResult(
@@ -1134,10 +1169,14 @@ def generate_schedule_cpsat(
             unsatisfiable_constraints=[],
             convergence_log=progress.solutions,
             hard_violations=[],
+            status_name=status_name,
+            objective_value=obj_val,
+            best_objective_bound=bound_val,
+            stopped_due_to_stagnation=progress.stopped_due_to_stagnation,
+            num_workers=effective_num_workers,
         )
     else:
         # Infeasible or timeout
-        status_name = solver.StatusName(status)
         unsatisfiable = _diagnose_infeasibility(
             model,
             staff_list,
@@ -1168,6 +1207,9 @@ def generate_schedule_cpsat(
             penalties=[],
             unsatisfiable_constraints=unsatisfiable,
             diagnostics=diag_records,
+            status_name=status_name,
+            stopped_due_to_stagnation=progress.stopped_due_to_stagnation,
+            num_workers=effective_num_workers,
         )
 
 

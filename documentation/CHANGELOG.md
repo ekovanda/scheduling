@@ -9,6 +9,24 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.5] - 2026-11-08
+
+### Serving Architecture, Concurrency & Solver Transparency (Findings C1, C2, C3)
+
+- **Single-Worker Cloud Run Deployment (`scripts/deploy_cloud_run.sh`, `scripts/deploy_cloud_run.ps1`) (Finding C1):**
+  - Cloud Run Dienstbereitstellung auf `--min-instances=1 --max-instances=1` fixiert. Dies verhindert den Verlust aktiver Hintergrund-Solver-Threads (`_active_jobs`), Fehler durch fehlende Session-Affinity bei Polling-Anfragen und unzeitiges Scale-to-Zero während mehrminütiger Berechnungen.
+  - Das robuste Multi-Worker-Zielmodell mit Cloud Tasks / Cloud Run Jobs, Heartbeats und Firestore-Transaktions-Locks wurde als Verbesserungsvorschlag im Backlog (`issues.md`) hinterlegt.
+- **Globale Nebenläufigkeitsbegrenzung & CPU-Ressourcenschutz (`app/api/v1/quarters.py`, `app/scheduler/solver_cpsat.py`, `app/scheduler/solver.py`) (Finding C2):**
+  - Globaler Concurrency-Guard in `generate_quarter_schedule`: Läuft bereits eine Hintergrund-Berechnung für ein Quartal, wird bei weiteren Aufrufen für andere Quartale sofort HTTP 429 (Too Many Requests) gemeldet.
+  - Bereinigung terminierter Threads aus dem In-Memory-Tracking `_active_jobs` vor jeder Prüfung.
+  - OR-Tools Worker-Allokation: `num_workers` kann konfiguriert werden und wird standardmäßig im API-Layer auf 2 Threads begrenzt, um CPU-Drosselung und OOM auf 2-vCPU Cloud Run Instanzen zu verhindern.
+  - Synchroner Timeout-Schutz: Bei `sync=true` wird `max_solve_time_seconds > 850s` mit HTTP 400 abgewiesen, um Cloud Run HTTP-Request-Timeouts (900s) abzufangen. Thread-Join-Timeout auf maximal 880s gekappt.
+  - Validierung des Quartalsjahres in `_parse_quarter_key`: Gültigkeitsbereich 2020–2100 strikt validiert (HTTP 400 bei unzulässigen Jahreszahlen).
+- **Transparenz für Solver-Status, Best-Bound & Optimalitätslücke (`app/scheduler/solver_cpsat.py`, `app/persistence/models.py`, `app/api/v1/quarters.py`, `frontend/src/types/api.ts`) (Finding C3):**
+  - `SolverResult` erfasst den exakten CP-SAT-Lösungsstatus (`status_name`, z.B. `OPTIMAL` oder `FEASIBLE`), `objective_value`, `best_objective_bound`, `num_workers` sowie das Stagnations-Abbruchflag `stopped_due_to_stagnation`.
+  - `SolverJobRecord` und `QuarterScheduleDocument.solver_metrics` speichern `status_name`, `is_optimal`, `best_objective_bound`, `objective_value`, `optimality_gap` (Differenz zwischen Zielwert und Schranke) und `stopped_due_to_stagnation`.
+  - Anpassung der Dokumentation (`PROBLEM_DESCRIPTION.md`, `ARCHITECTURE.md`): Klarstellung, dass der Solver mathematisch optimierte Dienstpläne (bewiesen optimal oder bestmögliche gefundene Lösung innerhalb der Zeit-/Stagnationsgrenze) generiert.
+
 ## [1.12.4] - 2026-11-08
 
 ### Constraints & Data Integrity: Mitarbeiter-Validierung & Abteilungs-Grenzschutz (Findings B8, B9)

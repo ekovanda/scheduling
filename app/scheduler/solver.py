@@ -28,6 +28,7 @@ def generate_schedule(
     on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
     stagnation_limit_seconds: float | None = 15.0,
     quarter_end: date | None = None,
+    num_workers: int | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -55,6 +56,8 @@ def generate_schedule(
         "config": config,
         "quarter_end": quarter_end,
     }
+    if num_workers is not None:
+        kwargs["num_workers"] = num_workers
     if cancellation_event is not None:
         kwargs["cancellation_event"] = cancellation_event
     if on_progress is not None:

@@ -156,7 +156,7 @@ Fast pre-solve validation:
 
 | Solver | Time | Optimality | Use Case |
 |--------|------|------------|----------|
-| CP-SAT | 60-120s | Guaranteed optimal | Production |
+| CP-SAT | 60-120s | Optimal or best found (within time/stagnation limit) | Production |
 
 ## Data Flow
 
@@ -192,3 +192,12 @@ st.session_state.validation_result: ValidationResult | None
 1. **New constraints**: Add check function to validator.py, add CP constraint to solver_cpsat.py
 2. **New shift types**: Add to ShiftType enum, update generate_quarter_shifts()
 3. **Custom objectives**: Modify `_add_group_fairness_objective()` in solver_cpsat.py
+
+## Cloud Run Web Serving & Concurrency Architecture
+
+- **Single-Worker Stateful Deployment (C1)**: Cloud Run service is deployed with `--min-instances=1 --max-instances=1`. This guarantees that background solver threads tracked in `_active_jobs` remain co-located on the active container instance, preventing session-affinity polling misses and scale-to-zero disruptions.
+- **Global Concurrency Guard (C2)**: In-memory mutex limits concurrent solves to at most 1 active solve per container instance, returning `HTTP 429 Too Many Requests` when another solve is in progress.
+- **Resource Quota & Thread Allocation (C2)**: OR-Tools solver thread count is constrained to `num_workers=2`, aligning with Cloud Run 2-vCPU quotas.
+- **Synchronous Timeout Guard (C2)**: Synchronous solves enforce `max_solve_time_seconds <= 850s` to prevent Cloud Run 900s HTTP request timeouts.
+- **Optimality Metrics & Status Transparency (C3)**: `SolverResult`, `SolverJobRecord`, and schedule documents record explicit `status_name` (OPTIMAL vs FEASIBLE), `best_objective_bound`, `optimality_gap`, and `stopped_due_to_stagnation` flags.
+
