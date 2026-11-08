@@ -3,8 +3,8 @@
 ## Transforming the Dienstplan Generator into a Unified Single Source of Truth (SSOT)
 
 **Feature Name / Slug**: `gcp-cloud-run-migration-and-modernization`  
-**Document Version**: 1.4 (Updated: Solver Explainability & Pre-Flight Engine, Planning Staff Authentication, Production Cutover & Phased Swap Roadmap)  
-**Status**: Approved & In Progress (Phase 1 & 2 Complete; Phase 3 Active Development)  
+**Document Version**: 1.5 (Updated: Stakeholder UI Ergonomics, 3-Column Schedule Redesign, Streamlined Workflows & Ad-hoc Shift Backlog)  
+**Status**: Approved & In Progress (Phase 1, 2, and 3 Complete; Phase 4 Dedicated Shift Swap Active)  
 **Target Architecture**: GCP Cloud Run (Containerized Backend) + GCP Cloud Firestore (Serverless Document Database with Local JSON Fallback) + Modern React/Tailwind Frontend (Firebase Hosting)  
 **Author**: Antigravity / Senior Cloud & Full-Stack Architect  
 
@@ -532,47 +532,60 @@ flowchart TD
 ### 6.2 Key User Interface Views
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  🏥 TIERKLINIK DIENSTPLAN   [2026-Q2 ▼]                                 │
-│  [Mitarbeiter] [Abwesenheiten] [Dienstplan Matrix] [Fairness] [Über]   │
-├────────────────────────────────────────────────────────────────────────┤
-│  Status: 🟢 AKTIV (IST-STAND)       [Dienst tauschen]  [Excel Export]  │
-│                                                                        │
-│  APRIL 2026                                                            │
-│  ┌────────────┬────────────────────────────┬─────────────────────────┐ │
-│  │ Datum      │ Notdienst (Nacht)          │ Wochenende (Tag)        │ │
-│  ├────────────┼────────────────────────────┼─────────────────────────┤ │
-│  │ Mi 01.04   │ 👤 Vet: Dr. Müller         │ —                       │ │
-│  │ Do 02.04   │ 👤 Vet: Dr. Müller         │ —                       │ │
-│  │ Fr 03.04   │ 👤 TFA: Schmidt, K.        │ —                       │ │
-│  │            │ 👤 Azubi: Bauer, L.        │                         │ │
-│  │ Sa 04.04   │ 👤 TFA: Schmidt, K.        │ 👤 TFA: Weber, M.       │ │
-│  │            │ 👤 Azubi: Bauer, L.        │ 👤 Intern: Dr. Koch     │ │
-│  │            │ ⚠️ [Tausch: Bauer ➔ Klein] │                         │ │
-│  └────────────┴────────────────────────────┴─────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  🏥 TIERKLINIK DIENSTPLAN   [2027-Q1 ▼]                                                │
+│  [Mitarbeiter] [Abwesenheiten] [Vorbelegungen] [Dienstplan] [Fairness] [Hilfe]        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Status: 🟢 GENERIERT (ENTWURF)    [Neues Quartal planen]    [Excel Export]            │
+│                                                                                        │
+│  APRIL 2027   [☑ Volle Namen anzeigen]   [Alle] [Apr] [Mai] [Jun]                      │
+│  ┌──────────┬───────────────────────┬──────────────────────────────┬─────────────────┐ │
+│  │ Datum    │ 🌙 Nacht              │ ☀️ Sa/So Dienst & Ruf        │ 🎓 Intern Tag   │ │
+│  ├──────────┼───────────────────────┼──────────────────────────────┼─────────────────┤ │
+│  │ Mi 01.04 │ 🩺 Dr. Müller         │ —                            │ —               │ │
+│  │ Do 02.04 │ 🩺 Dr. Müller         │ —                            │ —               │ │
+│  │ Fr 03.04 │ Schmidt, K.           │ —                            │ —               │ │
+│  │          │ Bauer, L. [Azubi]     │                              │                 │ │
+│  │ Sa 04.04 │ Schmidt, K.           │ [Früh 10-21] Weber, M.       │ [08:30-20:30]   │ │
+│  │          │ Bauer, L. [Azubi]     │ [Spät 10-19] Klein, A.       │ Dr. Koch        │ │
+│  │          │                       │ [Ruf 10-22]  📌 Becker, F.   │                 │ │
+│  │ So 05.04 │ 📌 🩺 Dr. Sommer      │ [Früh 8-20]  Weber, M.       │ [08:30-20:30]   │ │
+│  │          │ 📌 Schmidt, K.        │ [Ruf 8-20:30] Bauer, L.      │ Dr. Koch        │ │
+│  │          │                       │ [Ruf 10-22]  📌 Becker, F.   │                 │ │
+│  └──────────┴───────────────────────┴──────────────────────────────┴─────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Staff Directory Hub (Pilot Design Anchor)**:
+1. **Staff Directory Hub (`StaffView` - Pilot Design Anchor)**:
    - Filterable table of clinic employees with clear role badges (`Tierarzt`, `TFA`, `Azubi`, `Intern`).
    - Summary metric cards (Active Staff, Total Weekly Contract Hours, On-Call Eligibility).
    - Modal to add/edit contract hours, roles, department locks, and night availability.
    - Deactivate departing staff or set availability dates.
-2. **Interactive Absence & Vacation Planner**:
-   - Visual team calendar and ledger showing who is away when (Urlaub, Fortbildung, Krank).
-   - Quick-entry date range form with live validation.
-   - Immediate warning if an absence creates an impossible weekend or night coverage shortage.
-3. **Interactive Schedule Matrix & Operations (Hero View)**:
-   - Header with quarter status banner (`DRAFT` / `PUBLISHED` / `LOCKED`), 1-click solve trigger with asynchronous live progress modal / background status polling, and Excel export.
-   - Clean Matrix grid with colored badges for shift types (Night, Weekend Day, On-Call, Pre-Assigned).
-   - Instant Feasibility & Infeasibility Diagnostics Modal: Displays clear clinical conflict diagnoses when CP-SAT fails or user inputs/pre-assignments clash.
-   - (Note: Live Shift Swap & Ist-Tracking UI is decoupled from this phase and scheduled for Phase 4).
-4. **Simplified Fairness & Health Scorecard**:
+2. **Focused Absence & Vacation Planner (`AbsencesView`)**:
+   - **Streamlined Single View**: Per stakeholder instruction, unified exclusively around the Person-centric view (`Ansicht nach Person`); removed redundant chronological table and calendar views.
+   - **Live Instant Filter**: Search bar in the view header instantly filters staff cards and KPI summaries by employee name or abbreviation (`Kürzel`).
+   - **Accessible Autocomplete (`SearchableSelect`)**: Modal for creating absences features a keyboard-navigable combobox (`↑`/`↓`/`Enter`/`Escape`) with role badges and instant sub-string filtering, replacing cumbersome 40+ item native dropdowns.
+3. **Pre-Assignments & Holiday Master Ledger (`PreAssignedView`)**:
+   - **Streamlined Single List**: Per stakeholder instruction, unified exclusively around the sortable tabular list view (`Listenansicht`); removed redundant monthly calendar grid.
+   - **Reliable Holiday Night Shift Detection**: Central `isNightShift` logic properly classifies stakeholder holiday night assignments (`N_*`, `N_So-Mo`, `N_Mo-Di`) with moon badges and aggregates them into night KPIs instead of daytime.
+   - **Accessible Autocomplete (`SearchableSelect`)**: Rapid employee selection with keyboard navigation in the assignment modal.
+4. **Interactive Schedule Matrix & Operations (`MatrixView` - Hero View)**:
+   - **Redesigned 3-Column Schedule Layout**:
+     - *Column 1 (`🌙 Nacht`)*: Consolidated night shifts for Vets, TFAs, and Interns on night shifts.
+     - *Column 2 (`☀️ Sa/So Dienst & Rufbereitschaft`)*: Unified weekend day shifts and on-call / Rufbereitschaft shifts without Interns, sorted chronologically (`Früh` $\rightarrow$ `Spät` $\rightarrow$ `Ruf`) with explicit badges and hours (`Früh 10–21`, `Spät 10–19`, `Ruf 10–22`, `Früh 8–20`, `Ruf 8–20:30`).
+     - *Column 3 (`🎓 Intern Tagdienst`)*: Dedicated separate column for daytime weekend shifts of Interns (`08:30–20:30`).
+   - **Universal Emerald Green Highlighting**: All pre-assigned shifts across all columns (including on-call / Rufbereitschaft and holidays) are prominently highlighted in emerald green (`bg-emerald-100 border-emerald-300`) with a pin icon. Weekday holidays with day shifts remain visible without erroneous greying out.
+   - **Data Integrity & Name Toggle**: Case-insensitive identifier matching ensures "Volle Namen anzeigen" works reliably across the entire grid; employee role badges derive strictly from `stf.beruf` (e.g. Azubi correctly badged even when paired).
+   - **High-Visibility Planning Action**: Prominent primary button renamed to *"Neues Quartal planen"* (replacing ambiguous "Neu berechnen").
+   - **Diagnostics & Explainability**: Instant Feasibility & Infeasibility Diagnostics Modal displaying clear clinical conflict diagnoses when CP-SAT fails or user inputs clash.
+5. **Top Navigation Bar (`Navbar`)**:
+   - Clean, uncluttered header focusing strictly on clinic branding, quarter selector (`2027-Q1`), and primary tabs; eliminated redundant birthday notices to prevent visual noise.
+6. **Simplified Fairness & Health Scorecard (`FairnessView`)**:
    - Redesigned for stakeholder clarity: replaces confusing variance and Gini indices with 3 actionable signals:
      1. *Target Adherence Score*: Visual progress bar per staff member (assigned nights vs. target).
      2. *Weekend Burden Equity*: Distribution bar chart scaled to contract percentage.
      3. *Rest & Safety Traffic Light*: Green checks for 11h rest gap compliance and max consecutive streak limits.
-5. **About & Release Highlights**:
+7. **About & Release Highlights (`AboutView`)**:
    - Displays `CURRENT_VERSION` directly from `release_info.py`.
    - Changelog highlights showing recently deployed features and improvements.
    - Clinic planner documentation and support contacts.
@@ -722,9 +735,10 @@ gantt
     Phase 3A: Pre-Flight Feasibility & Diagnostics (v1.10.0) :done, p3_1, 2026-11-07, 1d
     Phase 3B: Planner Authentication & RBAC (v1.11.0)       :done, p3_2, after p3_1, 1d
     Phase 3C: Production Deployment Pipeline (v1.12.0)      :done, p3_3, after p3_2, 1d
+    Phase 3D: UI Ergonomics & 3-Col Redesign (v1.13.0)      :done, p3_4, after p3_3, 1d
 
     section Phase 4: Dedicated Shift Swap (Next)
-    Guided Replacement Suggester & Live Validation:p4_1, after p3_3, 5d
+    Guided Replacement Suggester & Live Validation:p4_1, after p3_4, 5d
     Audit Trail & Soll vs. Ist Ledger Tracking    :p4_2, after p4_1, 4d
 ```
 
@@ -742,3 +756,5 @@ To achieve the single source of truth vision, the following items are now formal
 7. **Resilient Asynchronous Solver Execution**: Replaces fragile synchronous HTTP calls with an in-process background worker (`POST /generate` $\rightarrow$ `202 Accepted`, `GET /solver-status`) and Cloud Run `--no-cpu-throttling`, withstanding 10-minute "Gründlich" solves and bypassing CDN reverse-proxy timeouts.
 8. **Cloud Firestore Multi-Planner Persistence (Dual-Driver Pattern)**: Replaces ephemeral container storage with Google Cloud Firestore (`europe-west3`) for concurrent, collision-free multi-user planning over weeks, preserving the local `FileJsonRepository` for fast, offline testing.
 9. **Dedicated Shift Swap Feature Decoupling**: Separates live operational shift swapping into Phase 4, keeping initial production release lean and rock-solid.
+10. **Stakeholder UI Ergonomics & 3-Column Schedule Architecture (v1.13.0)**: Streamlined single-mode views (`Ansicht nach Person` in Abwesenheiten, `Listenansicht` in Vorbelegungen), keyboard-accessible combobox instant search across forms (`SearchableSelect`), 3-column schedule partitioning (`🌙 Nacht`, `☀️ Sa/So Dienst & Rufbereitschaft` with Früh/Spät/Ruf badges and hours, `🎓 Intern Tagdienst`), and universal emerald-green pre-assignment highlighting.
+11. **Rule Compliance Audit & Ad-hoc Shift Flexibility (Backlog Roadmap)**: Systematic audit of ArbZG, 11-hour rest periods, and night-shift pairing across all corner cases, plus a planned UI capability to add manual ad-hoc or unconstrained shifts (e.g. second Azubi shift during peak volume) without failing strict CP-SAT quarter templates.
