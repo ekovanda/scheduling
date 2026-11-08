@@ -9,6 +9,20 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.4] - 2026-11-08
+
+### Constraints & Data Integrity: Mitarbeiter-Validierung & Abteilungs-Grenzschutz (Findings B8, B9)
+
+- **Stammdaten-Validierung & Identifikator-Schutz (`app/persistence/models.py`, `app/api/v1/staff.py`, `app/scheduler/models.py`) (Finding B8):**
+  - Pydantic-Feldgrenzen für `StaffMember`: `hours` (0–168), `nd_min_consecutive` (1–7), `nd_max_consecutive` (1–7), und Geburtstags-Muster `MM-DD`.
+  - Modellvalidierung erzwingt `hours > 0` für Nicht-Tierärzte (`Beruf != Beruf.VET`), `nd_min_consecutive <= nd_max_consecutive` sowie Wochentags-Werte `1 <= d <= 7` für `nd_exceptions`.
+  - Direkte Vorab-Prüfung bei der Datenerfassung gegen das Scheduler-Domänenmodell `to_scheduler_staff()`, wodurch ungültige Stammdaten den Solver-Thread nicht mehr nachträglich zum Absturz bringen können.
+  - Zentrale Eindeutigkeitsprüfung `check_identifier_unique` verhindert Namenskürzel-Kollisionen bei `POST /api/v1/staff`, `PUT /api/v1/staff/{id}` und `POST /api/v1/staff/bulk-import` (HTTP 409 Conflict).
+- **Abteilungs-Trennung über Quartalsgrenzen (`app/scheduler/solver_cpsat.py`, `app/scheduler/validator.py`) (Finding B9):**
+  - Berücksichtigung des Vorquartalskontexts (`previous_context.trailing_assignments`): Wenn ein Mitarbeiter aus OP oder Station die letzte Nacht des Vorquartals gearbeitet hat, darf am ersten Tag des neuen Quartals kein anderer Mitarbeiter derselben Abteilung eingeteilt werden (H17/H18).
+  - Der CP-SAT-Solver fixiert die Entscheidungsvariablen anderer Abteilungsmitglieder in Nacht 1 auf `0`.
+  - Der Validator prüft die Quartalsgrenze und meldet `Abteilung Consecutive Days`-Verletzungen bei Abteilungs-Konflikten zwischen Vorquartal und neuem Plan.
+
 ## [1.12.3] - 2026-11-08
 
 ### Constraints & Scheduling: Dienstplan-Horizont, Schichtabdeckung & Feiertags-Validierung (Findings B1, B3, B5, B7)

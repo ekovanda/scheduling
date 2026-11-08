@@ -1,6 +1,6 @@
 [project]
 name = "dienstplan"
-version = "1.12.3"
+version = "1.12.4"
 description = "Quarterly Notdienst scheduling app with Streamlit"
 requires-python = ">=3.12"
 dependencies = [

@@ -765,7 +765,14 @@ def generate_schedule_cpsat(
 
     # 10. Abteilung constraint: employees in same abteilung (op or station) cannot work
     # night shifts together or on consecutive days (prevents capacity shortages)
-    _add_abteilung_night_constraints(model, x, staff_list, night_shifts)
+    _add_abteilung_night_constraints(
+        model,
+        x,
+        staff_list,
+        night_shifts,
+        quarter_start=quarter_start,
+        previous_context=previous_context,
+    )
 
     # 11. Minimum shift participation: eligible staff must work at least 1 night and 1 weekend
     # This ensures better type balance and prevents "0 nights, all weekends" scenarios
@@ -1534,6 +1541,8 @@ def _add_abteilung_night_constraints(
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar],
     staff_list: list[Staff],
     night_shifts: list[Shift],
+    quarter_start: date | None = None,
+    previous_context: PreviousPlanContext | None = None,
 ) -> None:
     """Enforce abteilung separation on night shifts.
 
@@ -1554,6 +1563,24 @@ def _add_abteilung_night_constraints(
     for staff in staff_list:
         if staff.nd_possible and staff.abteilung in restricted_abteilungen:
             staff_by_abteilung[staff.abteilung].append(staff)
+
+    # Cross-quarter boundary constraint:
+    # If someone from a restricted abteilung worked the last night of the previous quarter,
+    # no DIFFERENT person from that same abteilung can work the first night of this quarter.
+    if previous_context and quarter_start:
+        prev_last_night = quarter_start - timedelta(days=1)
+        staff_by_id = {s.identifier: s for s in staff_list}
+        first_night_shifts = [s for s in sorted_nights if s.shift_date == quarter_start]
+        for ta in previous_context.trailing_assignments:
+            if ta.shift_date == prev_last_night and ta.shift_type.value.startswith("N_"):
+                prev_staff = staff_by_id.get(ta.staff_identifier)
+                if prev_staff and prev_staff.abteilung in restricted_abteilungen:
+                    for other_staff in staff_by_abteilung[prev_staff.abteilung]:
+                        if other_staff.identifier != prev_staff.identifier:
+                            for shift in first_night_shifts:
+                                key = (other_staff.identifier, shift.shift_date, shift.shift_type)
+                                if key in x:
+                                    model.Add(x[key] == 0)
 
     # For each restricted abteilung, add constraints
     for abteilung, abt_staff in staff_by_abteilung.items():

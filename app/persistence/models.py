@@ -36,24 +36,61 @@ class ScheduleState(str, Enum):
 class StaffMember(BaseModel):
     """Master staff record in persistent datastore."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    identifier: str
-    name: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    identifier: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    name: str = Field(min_length=1, max_length=128)
     beruf: Beruf = Beruf.TFA
     abteilung: Abteilung = Abteilung.OTHER
-    hours: int = 40
+    hours: int = Field(default=40, ge=0, le=168)
     adult: bool = True
     reception: bool = False
     nd_possible: bool = True
     nd_alone: bool = True
-    nd_min_consecutive: int = 2
-    nd_max_consecutive: int | None = None
+    nd_min_consecutive: int = Field(default=2, ge=1, le=7)
+    nd_max_consecutive: int | None = Field(default=None, ge=1, le=7)
     nd_exceptions: list[int] = Field(default_factory=list)
-    birthday: str | None = None
+    birthday: str | None = Field(default=None, pattern=r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
     available_from: date | None = None
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("birthday", mode="before")
+    @classmethod
+    def parse_birthday(cls, v: Any) -> str | None:
+        """Parse birthday, normalizing empty strings to None."""
+        if v is None or v == "" or (isinstance(v, str) and v.strip() == ""):
+            return None
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("nd_exceptions")
+    @classmethod
+    def validate_nd_exceptions(cls, v: list[int]) -> list[int]:
+        """Validate that nd_exceptions contains only ISO weekdays 1-7."""
+        for d in v:
+            if not (1 <= d <= 7):
+                raise ValueError(f"nd_exceptions values must be weekdays 1-7, got {d}.")
+        return sorted(set(v))
+
+    @model_validator(mode="after")
+    def validate_staff_invariants(self) -> "StaffMember":
+        """Validate business invariants and cross-check domain model conversion."""
+        if self.nd_max_consecutive is not None and self.nd_min_consecutive > self.nd_max_consecutive:
+            raise ValueError(
+                f"nd_min_consecutive ({self.nd_min_consecutive}) cannot exceed "
+                f"nd_max_consecutive ({self.nd_max_consecutive}) for staff '{self.identifier}'."
+            )
+        if self.beruf != Beruf.VET and self.hours <= 0:
+            raise ValueError(
+                f"Non-vet staff '{self.identifier}' must have contracted weekly hours > 0 (got {self.hours})."
+            )
+        try:
+            self.to_scheduler_staff()
+        except Exception as exc:
+            raise ValueError(f"Staff domain validation failed: {exc}") from exc
+        return self
 
     def to_scheduler_staff(self) -> Staff:
         """Convert persistent staff record to core scheduler domain model."""
@@ -105,8 +142,8 @@ class StaffMember(BaseModel):
 class AbsenceRecord(BaseModel):
     """Continuous absence ledger entry for vacations, sick leave, or training."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    staff_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    staff_id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
     absence_type: AbsenceType = AbsenceType.VACATION
     start_date: date
     end_date: date
@@ -191,8 +228,8 @@ class SolverJobRecord(BaseModel):
 class PreAssignedShiftRecord(BaseModel):
     """Pre-assigned (holiday or locked) shift record in persistent datastore."""
 
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    staff_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
+    staff_id: str = Field(pattern=r"^[A-Za-z0-9_äöüÄÖÜß-]{1,64}$")
     staff_identifier: str
     shift_date: date
     shift_type: str

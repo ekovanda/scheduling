@@ -16,6 +16,23 @@ RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
 StaffIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="Staff identifier")]
 
 
+def check_identifier_unique(
+    repo: RepositoryProtocol,
+    identifier: str,
+    exclude_id: str | None = None,
+) -> None:
+    """Ensure staff identifier is unique across all existing staff records."""
+    all_members = repo.list_staff(active_only=False)
+    for m in all_members:
+        if exclude_id and m.id == exclude_id:
+            continue
+        if m.identifier.strip().upper() == identifier.strip().upper():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Staff member with identifier '{identifier}' already exists.",
+            )
+
+
 @router.get("", response_model=list[StaffMember])
 def list_staff(
     repo: RepoDep,
@@ -37,14 +54,7 @@ def create_staff(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Staff member with id '{member.id}' already exists.",
         )
-    # Ensure identifier uniqueness among existing staff
-    all_members = repo.list_staff(active_only=False)
-    for m in all_members:
-        if m.identifier.upper() == member.identifier.upper():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Staff member with identifier '{member.identifier}' already exists.",
-            )
+    check_identifier_unique(repo, member.identifier, exclude_id=member.id)
     repo.save_staff(member)
     return member
 
@@ -77,6 +87,7 @@ def update_staff(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Staff member with id '{staff_id}' not found.",
         )
+    check_identifier_unique(repo, updated_data.identifier, exclude_id=staff_id)
     updated_data.id = staff_id
     updated_data.updated_at = datetime.now(UTC)
     repo.save_staff(updated_data)
@@ -116,6 +127,26 @@ def bulk_import_staff(
     repo: RepoDep,
 ) -> dict[str, int]:
     """Bulk import or upsert staff records."""
+    seen_ids: set[str] = set()
+    seen_identifiers: set[str] = set()
+    for m in members:
+        if m.id in seen_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Duplicate id '{m.id}' within import batch.",
+            )
+        ident_upper = m.identifier.strip().upper()
+        if ident_upper in seen_identifiers:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Duplicate identifier '{m.identifier}' within import batch.",
+            )
+        seen_ids.add(m.id)
+        seen_identifiers.add(ident_upper)
+
+    for m in members:
+        check_identifier_unique(repo, m.identifier, exclude_id=m.id)
+
     count = 0
     for member in members:
         repo.save_staff(member)

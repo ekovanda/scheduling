@@ -176,7 +176,7 @@ class Staff(BaseModel):
 
     @model_validator(mode="after")
     def _enforce_vet_invariants(self) -> "Staff":
-        """Enforce strict invariant attributes for Vets (Beruf.VET)."""
+        """Enforce strict invariant attributes for Vets (Beruf.VET) and general domain rules."""
         if self.beruf == Beruf.VET:
             self.adult = True
             self.hours = 0
@@ -186,6 +186,32 @@ class Staff(BaseModel):
             self.nd_alone = True
             self.nd_min_consecutive = 2
             self.nd_max_consecutive = 2
+            return self
+
+        if (
+            self.nd_max_consecutive is not None
+            and self.nd_min_consecutive > self.nd_max_consecutive
+        ):
+            raise StaffValidationError(
+                f"nd_min_consecutive ({self.nd_min_consecutive}) cannot exceed "
+                f"nd_max_consecutive ({self.nd_max_consecutive}) for staff '{self.identifier}'."
+            )
+
+        if self.nd_exceptions:
+            for d in self.nd_exceptions:
+                if not (1 <= d <= 7):
+                    raise StaffValidationError(
+                        f"nd_exceptions values must be weekdays 1-7, got {d} for staff '{self.identifier}'."
+                    )
+
+        if self.birthday is not None:
+            import re
+
+            if not re.match(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$", self.birthday):
+                raise StaffValidationError(
+                    f"birthday must be in MM-DD format, got '{self.birthday}' for staff '{self.identifier}'."
+                )
+
         return self
 
     @field_validator("birthday", mode="before")

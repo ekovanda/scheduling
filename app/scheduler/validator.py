@@ -171,7 +171,7 @@ def validate_schedule(
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
     violations.extend(_check_shift_coverage(schedule, staff_dict))
-    violations.extend(_check_abteilung_night_constraint(schedule, staff_dict))
+    violations.extend(_check_abteilung_night_constraint(schedule, staff_dict, previous_context))
     violations.extend(_check_vet_shift_constraints(schedule, staff_dict, previous_context))
 
     # Calculate soft penalty
@@ -982,7 +982,9 @@ def _check_shift_coverage(
 
 
 def _check_abteilung_night_constraint(
-    schedule: Schedule, staff_dict: dict[str, Staff]
+    schedule: Schedule,
+    staff_dict: dict[str, Staff],
+    previous_context: PreviousPlanContext | None = None,
 ) -> list[ConstraintViolation]:
     """Check abteilung separation on night shifts.
     
@@ -1002,6 +1004,30 @@ def _check_abteilung_night_constraint(
             night_assignments_by_date[assignment.shift.shift_date].append(assignment)
     
     sorted_dates = sorted(night_assignments_by_date.keys())
+
+    # Check cross-quarter boundary with previous context
+    if previous_context and schedule.quarter_start:
+        prev_last_night = schedule.quarter_start - timedelta(days=1)
+        first_night_assignments = night_assignments_by_date.get(schedule.quarter_start, [])
+        for ta in previous_context.trailing_assignments:
+            if ta.shift_date == prev_last_night and ta.shift_type.value.startswith("N_"):
+                prev_staff = staff_dict.get(ta.staff_identifier)
+                if prev_staff and prev_staff.abteilung in restricted_abteilungen:
+                    for a in first_night_assignments:
+                        curr_staff = staff_dict.get(a.staff_identifier)
+                        if (
+                            curr_staff
+                            and curr_staff.abteilung == prev_staff.abteilung
+                            and curr_staff.identifier != prev_staff.identifier
+                        ):
+                            violations.append(
+                                ConstraintViolation(
+                                    "Abteilung Consecutive Days",
+                                    f"Staff from {prev_staff.abteilung.value} on consecutive nights across quarter boundary: "
+                                    f"{prev_staff.name} on {prev_last_night.strftime('%d.%m.%Y')} "
+                                    f"and {curr_staff.name} on {schedule.quarter_start.strftime('%d.%m.%Y')}",
+                                )
+                            )
     
     for i, shift_date in enumerate(sorted_dates):
         assignments = night_assignments_by_date[shift_date]

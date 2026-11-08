@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.3"
+CURRENT_VERSION = "1.12.4"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.12.4",
+        date="08. November 2026",
+        summary="Stammdaten-Validierung & Abteilungs-Grenzschutz",
+        highlights=(
+            "Strenge API- und Datenmodell-Validierung für Mitarbeiter und Identifikatoren.",
+            "Vermeidung fehlerhafter Kennzahlen und Duplikate bei Einzel- und Massenimport.",
+            "Abteilungs-Trennung für OP und Station über Quartalsgrenzen hinweg (H17/H18).",
+        ),
+    ),
     Release(
         version="1.12.3",
         date="08. November 2026",
