@@ -495,3 +495,116 @@ def test_fairness_overview_excludes_deactivated_staff_without_shifts(
     assert "T_INACT" not in identifiers
     assert data["groups"]["TFA"]["total_staff"] == 1
 
+
+def test_b7_generate_request_accepts_block_gap_days(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ensure GenerateScheduleRequest accepts block_gap_days and passes it to SchedulerConfig (B7)."""
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "tfa_01",
+            "identifier": "T1",
+            "name": "TFA One",
+            "beruf": "TFA",
+            "hours": 40,
+            "nd_possible": True,
+            "nd_alone": True,
+        },
+    )
+
+    captured_config: dict[str, Any] = {}
+
+    def fake_solve(**kwargs: Any) -> SolverResult:
+        captured_config["config"] = kwargs.get("config")
+        return SolverResult(
+            success=True,
+            schedules=[
+                Schedule(
+                    quarter_start=date(2026, 4, 1),
+                    quarter_end=date(2026, 6, 30),
+                    assignments=[
+                        Assignment(
+                            shift=Shift(
+                                shift_type=ShiftType.NIGHT_WED_THU, shift_date=date(2026, 4, 1)
+                            ),
+                            staff_identifier="T1",
+                            is_paired=False,
+                        )
+                    ],
+                )
+            ],
+            penalties=[1.0],
+            unsatisfiable_constraints=[],
+        )
+
+    monkeypatch.setattr("app.api.v1.quarters.generate_schedule", fake_solve)
+
+    resp = client.post(
+        "/api/v1/quarters/2026-Q2/generate?sync=true",
+        json={"max_solve_time_seconds": 10, "block_gap_days": 14},
+    )
+    assert resp.status_code == 200
+    assert captured_config["config"] is not None
+    assert captured_config["config"].block_gap_days == 14
+
+
+def test_b8_cross_quarter_block_gap_holiday_on_second_day_of_block() -> None:
+    """Ensure cross-quarter block gap relaxation applies when a pre-assigned holiday is on day 2 of a block (B8)."""
+    from app.scheduler.models import PreviousPlanContext, Staff, TrailingAssignment
+    from app.scheduler.validator import find_cross_quarter_block_gap_exceptions
+
+    staff = [
+        Staff(
+            name="TFA One",
+            identifier="T1",
+            adult=True,
+            hours=40,
+            reception=False,
+            nd_possible=True,
+            nd_alone=True,
+        )
+    ]
+    prev_ctx = PreviousPlanContext(
+        quarter_start=date(2026, 10, 1),
+        quarter_end=date(2026, 12, 31),
+        trailing_assignments=[
+            TrailingAssignment(
+                staff_identifier="T1",
+                shift_date=date(2026, 12, 20),
+                shift_type=ShiftType.NIGHT_SUN_MON,
+            ),
+            TrailingAssignment(
+                staff_identifier="T1",
+                shift_date=date(2026, 12, 21),
+                shift_type=ShiftType.NIGHT_MON_TUE,
+            ),
+        ],
+        carry_forward=[],
+    )
+    # Current block starts 2027-01-01 (non-pre-assigned) and continues 2027-01-02 (pre-assigned holiday)
+    # Gap from 2026-12-20 to 2027-01-01 is 12 days (>= 7 holiday_gap_days, < 21 block_gap_days)
+    sched = Schedule(
+        quarter_start=date(2027, 1, 1),
+        quarter_end=date(2027, 3, 31),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_FRI_SAT, shift_date=date(2027, 1, 1)),
+                staff_identifier="T1",
+                is_paired=False,
+                is_pre_assigned=False,
+            ),
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_SAT_SUN, shift_date=date(2027, 1, 2)),
+                staff_identifier="T1",
+                is_paired=False,
+                is_pre_assigned=True,
+            ),
+        ],
+    )
+    exceptions = find_cross_quarter_block_gap_exceptions(
+        schedule=sched, previous_context=prev_ctx, staff_list=staff
+    )
+    assert len(exceptions) == 0
+
+

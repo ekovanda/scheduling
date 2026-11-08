@@ -112,6 +112,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
   const currentQuarterKey = `${setupYear}-${setupQuarter}`;
 
   useEffect(() => {
+    setSelectedMonth('ALL');
     loadData();
   }, [currentQuarterKey]);
 
@@ -190,7 +191,13 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     );
   };
 
-  const isShiftPreAssigned = (shift: { shift_date: string; shift_type: string; actual_staff_id: string }) => {
+  const isShiftPreAssigned = (shift: {
+    shift_date: string;
+    shift_type: string;
+    actual_staff_id: string;
+    is_pre_assigned?: boolean;
+  }) => {
+    if (shift.is_pre_assigned) return true;
     return preAssigned.some((pa) => {
       if (pa.shift_date !== shift.shift_date) return false;
       const paId = pa.staff_id?.trim().toLowerCase();
@@ -203,11 +210,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
       const isPaNight = isNightShift(pa.shift_type);
       const isShiftNight = isNightShift(shift.shift_type);
 
-      return (
-        pa.shift_type === shift.shift_type ||
-        (isPaNight && isShiftNight) ||
-        (!isPaNight && !isShiftNight)
-      );
+      return pa.shift_type === shift.shift_type || (isPaNight && isShiftNight);
     });
   };
 
@@ -331,6 +334,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         max_solve_time_seconds: maxSolveMinutes * 60,
         stagnation_limit_seconds: 30,
         include_previous_context: includePreviousQuarter,
+        block_gap_days: blockGapDays,
       });
       setActiveJob(job);
       if (job.status === 'FAILED') {
@@ -1412,17 +1416,37 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                   </div>
                   <div>
                     <span className="text-stone-500">Vorbelegt: </span>
-                    <span className="font-bold text-teal-800">{preAssigned.length}</span>
+                    <span className="font-bold text-teal-800">
+                      {assignments.filter((a) => isShiftPreAssigned(a)).length}
+                    </span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 text-stone-500">
-                  <span>Solver-Laufzeit: 14.2s</span>
-                  <span>&middot;</span>
-                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                    Optimale Lösung
+                  <span>
+                    Solver-Laufzeit:{' '}
+                    {typeof schedule?.solver_metrics?.solve_time_seconds === 'number'
+                      ? `${schedule.solver_metrics.solve_time_seconds.toFixed(1)}s`
+                      : '—'}
                   </span>
+                  <span>&middot;</span>
+                  {schedule?.solver_metrics?.status_name === 'OPTIMAL' ||
+                  schedule?.solver_metrics?.is_optimal === true ? (
+                    <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      Optimale Lösung
+                    </span>
+                  ) : schedule?.solver_metrics?.stopped_due_to_stagnation ? (
+                    <span className="text-teal-700 font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" />
+                      Konvergierte Lösung (Smart-Stop)
+                    </span>
+                  ) : (
+                    <span className="text-teal-700 font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" />
+                      Gültige Lösung ({String(schedule?.solver_metrics?.status_name || 'FEASIBLE')})
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

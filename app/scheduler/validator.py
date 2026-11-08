@@ -97,14 +97,23 @@ def find_cross_quarter_block_gap_exceptions(
 
     exceptions: list[CrossQuarterBlockGapException] = []
     for staff_identifier, current_dates in current_dates_by_staff.items():
-        all_work_dates = sorted(
-            trailing_dates_by_staff.get(staff_identifier, set()) | current_dates
-        )
+        all_work_dates_set = trailing_dates_by_staff.get(staff_identifier, set()) | current_dates
+        all_work_dates = sorted(all_work_dates_set)
         block_starts = [
             work_date
             for work_date in all_work_dates
-            if work_date - timedelta(days=1) not in all_work_dates
+            if work_date - timedelta(days=1) not in all_work_dates_set
         ]
+
+        staff_pa_dates = pre_assigned_dates_by_staff.get(staff_identifier, set())
+
+        def _block_has_pre_assigned(start_d: date) -> bool:
+            cur = start_d
+            while cur in all_work_dates_set:
+                if cur in staff_pa_dates:
+                    return True
+                cur += timedelta(days=1)
+            return False
 
         staff = staff_dict.get(staff_identifier)
         staff_gap = (
@@ -116,14 +125,15 @@ def find_cross_quarter_block_gap_exceptions(
         for previous_block_start in block_starts:
             if previous_block_start >= schedule.quarter_start:
                 continue
+            prev_has_pa = _block_has_pre_assigned(previous_block_start)
             for current_block_start in block_starts:
                 if current_block_start < schedule.quarter_start:
                     continue
+                curr_has_pa = _block_has_pre_assigned(current_block_start)
                 actual_gap_days = (current_block_start - previous_block_start).days
                 required_gap_days = (
                     config.holiday_gap_days
-                    if current_block_start
-                    in pre_assigned_dates_by_staff.get(staff_identifier, set())
+                    if (prev_has_pa or curr_has_pa)
                     else staff_gap
                 )
                 if actual_gap_days < required_gap_days:

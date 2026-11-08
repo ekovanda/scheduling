@@ -56,6 +56,7 @@ class GenerateScheduleRequest(BaseModel):
     random_seed: int | None = None
     include_previous_context: bool = True
     stagnation_limit_seconds: float | None = Field(default=30.0, ge=2.0, le=300.0)
+    block_gap_days: int = Field(default=21, ge=7, le=42)
 
 
 class ShiftSwapRequest(BaseModel):
@@ -507,6 +508,7 @@ def _execute_solver_worker(
     cancellation_event: threading.Event,
     active_job: ActiveJobState,
     stagnation_limit_seconds: float | None = 15.0,
+    block_gap_days: int = 21,
 ) -> None:
     """Worker function executed inside background thread."""
     start_time = time.time()
@@ -532,11 +534,14 @@ def _execute_solver_worker(
         if include_previous_context:
             context = get_previous_quarter_context(year, quarter, repo)
 
+        from app.scheduler.models import SchedulerConfig
+
         result = generate_schedule(
             staff_list=staff_list,
             quarter_start=q_start,
             vacations=vacations,
             pre_assigned=pa_shifts if pa_shifts else None,
+            config=SchedulerConfig(block_gap_days=block_gap_days),
             max_solve_time_seconds=max_solve_time_seconds,
             random_seed=random_seed,
             previous_context=context,
@@ -748,7 +753,7 @@ def generate_quarter_schedule(
         pre_assigned=pa_shifts,
         quarter_start=q_start,
         quarter_end=q_end,
-        config=SchedulerConfig(),
+        config=SchedulerConfig(block_gap_days=solver_req.block_gap_days),
         quarter_key=quarter_key,
     )
     if feasibility_report.blocking_error_count > 0:
@@ -824,6 +829,7 @@ def generate_quarter_schedule(
                 cancellation_event,
                 active_job,
                 solver_req.stagnation_limit_seconds,
+                solver_req.block_gap_days,
             ),
             daemon=True,
         )

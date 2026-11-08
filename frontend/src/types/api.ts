@@ -63,6 +63,7 @@ export interface ShiftAssignmentRecord {
   planned_staff_id: string;
   actual_staff_id: string;
   is_paired: boolean;
+  is_pre_assigned?: boolean;
   is_override: boolean;
   override_reason?: string | null;
   override_timestamp?: string | null;

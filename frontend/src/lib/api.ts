@@ -205,6 +205,7 @@ export async function startSolverJob(
     random_seed?: number;
     include_previous_context?: boolean;
     stagnation_limit_seconds?: number;
+    block_gap_days?: number;
   }
 ): Promise<SolverJobRecord> {
   const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/generate`, {
@@ -215,6 +216,7 @@ export async function startSolverJob(
       random_seed: options?.random_seed,
       include_previous_context: options?.include_previous_context ?? true,
       stagnation_limit_seconds: options?.stagnation_limit_seconds ?? 30,
+      block_gap_days: options?.block_gap_days ?? 21,
     }),
   });
   if (!res.ok && res.status !== 202) {

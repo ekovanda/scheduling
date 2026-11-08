@@ -9,6 +9,20 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.0.2] - 2026-11-08
+
+### Fixed: Real Solver Footer Metrics, `block_gap_days` Wiring, Pre-Assigned Highlighting & Multi-Day Holiday Block Gap Relaxation
+
+- **Echte Solver-Metriken & Quartalsnavigation im Dienstplan (`frontend/src/views/MatrixView.tsx`, `frontend/src/lib/api.ts`, `frontend/src/types/api.ts`, `app/api/v1/quarters.py`):**
+  - Fußzeile in `MatrixView.tsx` zeigt die tatsächliche `solve_time_seconds`, den echten CP-SAT-Status (`OPTIMAL`, Smart-Stop-Stagnation oder `FEASIBLE`) sowie die quartalsbezogene Anzahl vorbelegter Schichten anstelle statischer Platzhalterwerte (behebt Review-Finding `B7`).
+  - `selectedMonth` wird beim Wechsel von `currentQuarterKey` automatisch auf `'ALL'` zurückgesetzt, damit beim Quartalswechsel keine leere Monatsfilterung stehenbleibt.
+  - `isShiftPreAssigned()` prüft vorrangig `shift.is_pre_assigned` und gleicht Tagdienste exakt über `pa.shift_type === shift.shift_type` ab, sodass am Wochenende nur die tatsächlich vorbelegte Einzelschicht grün hervorgehoben wird.
+  - `blockGapDays` aus den erweiterten Einstellungen wird über `startSolverJob` und `GenerateScheduleRequest.block_gap_days` an `SchedulerConfig(block_gap_days=...)` im Vorprüfungs- und Solver-Lauf übergeben.
+- **Feiertags-Blockabstand für mehrtägige Nachtdienstblöcke (`app/scheduler/solver_cpsat.py`, `app/scheduler/validator.py`):**
+  - `_add_3week_block_constraints` in `solver_cpsat.py` und `find_cross_quarter_block_gap_exceptions` in `validator.py` prüfen nun über die gesamte Blocklänge (`d + offset`), ob ein Dienstblock einen vorbelegten Feiertagsdienst enthält, und wenden die 7-Tage-Relaxation (`HOLIDAY_GAP`) konsistent zu `validate_schedule` an (behebt Review-Finding `B8`).
+- **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
+  - Neue Tests `test_b7_generate_request_accepts_block_gap_days` und `test_b8_cross_quarter_block_gap_holiday_on_second_day_of_block`.
+
 ## [2.0.1] - 2026-11-08
 
 ### Fixed: Authenticated Excel Export, Mock Data Removal, Umlaut Entity IDs & Active-Staff Fairness

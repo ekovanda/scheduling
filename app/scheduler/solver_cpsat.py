@@ -1376,8 +1376,17 @@ def _add_block_constraints(
         #            This implements the rolling 3-week window across quarters.
         #   Q3 → Q3: ENFORCE (standard intra-quarter rest constraint).
         staff_pa_dates = pre_assigned_dates_by_staff.get(staff.identifier, set())
+        max_block_len = (
+            staff.nd_max_consecutive
+            if staff.nd_max_consecutive is not None
+            else max(staff.nd_min_consecutive, 3)
+        )
         block_start_dates = sorted(block_starts.keys())
         for i, d1 in enumerate(block_start_dates):
+            d1_is_holiday_block = any(
+                (d1 + timedelta(days=offset)) in staff_pa_dates
+                for offset in range(max_block_len)
+            )
             for d2 in block_start_dates[i + 1 :]:
                 gap = (d2 - d1).days
                 if gap >= staff_gap_days:
@@ -1385,9 +1394,13 @@ def _add_block_constraints(
                 # Skip only when both dates are Q2 trailing (fixed history)
                 if d1 < quarter_start and d2 < quarter_start:
                     continue
-                # Use relaxed gap if either date is pre-assigned
+                d2_is_holiday_block = any(
+                    (d2 + timedelta(days=offset)) in staff_pa_dates
+                    for offset in range(max_block_len)
+                )
+                # Use relaxed gap if either block contains a pre-assigned shift
                 required_gap = (
-                    HOLIDAY_GAP if d1 in staff_pa_dates or d2 in staff_pa_dates else staff_gap_days
+                    HOLIDAY_GAP if (d1_is_holiday_block or d2_is_holiday_block) else staff_gap_days
                 )
                 if gap < required_gap:
                     is_cross_quarter = d1 < quarter_start and d2 >= quarter_start

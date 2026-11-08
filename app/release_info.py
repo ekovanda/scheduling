@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.0.1"
+CURRENT_VERSION = "2.0.2"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.0.2",
+        date="08. November 2026",
+        summary="Echte Solver-Kennzahlen, Blockabstand & Feiertagsblöcke",
+        highlights=(
+            "Echte Anzeige von Berechnungsdauer, Lösungsstatus und vorbelegten Schichten im Dienstplan.",
+            "Einstellbarer Mindest-Blockabstand und automatische Monats-Rückstellung beim Quartalswechsel.",
+            "Feiertags-Ruhezeitverkürzung greift zuverlässig auch an Folgetagen mehrtägiger Nachtblöcke.",
+        ),
+    ),
     Release(
         version="2.0.1",
         date="08. November 2026",
