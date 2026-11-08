@@ -151,6 +151,7 @@ def generate_schedule_cpsat(
     stagnation_limit_seconds: float | None = 15.0,
     quarter_end: date | None = None,
     num_workers: int | None = None,
+    accepted_violation_ids: list[str] | set[str] | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -1210,6 +1211,7 @@ def generate_schedule_cpsat(
             quarter_end=quarter_end or date(2026, 3, 31),
             config=config or SchedulerConfig(),
             unsatisfiable_strings=unsatisfiable,
+            accepted_violation_ids=accepted_violation_ids,
         )
         return SolverResult(
             success=False,
@@ -1420,6 +1422,9 @@ def _add_block_constraints(
                     break  # No need to check further
                 # Skip only when both dates are Q2 trailing (fixed history)
                 if d1 < quarter_start and d2 < quarter_start:
+                    continue
+                # Skip if both dates are pre-assigned to this staff member (fixed history/pre-assignments)
+                if d1 in staff_pa_dates and d2 in staff_pa_dates:
                     continue
                 d2_is_holiday_block = any(
                     (d2 + timedelta(days=offset)) in staff_pa_dates

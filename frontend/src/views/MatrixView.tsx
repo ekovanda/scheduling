@@ -1585,19 +1585,24 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
               <div className="max-h-72 overflow-y-auto space-y-2.5 pr-1">
                 {activeJob.diagnostics.map((diag, idx) => {
                   const isErr = diag.severity === 'ERROR';
+                  const isAccepted = diag.is_accepted;
                   return (
                     <div
                       key={idx}
                       className={cn(
                         'p-3.5 rounded-xl border text-xs space-y-2 transition-all',
-                        isErr
+                        isAccepted
+                          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                          : isErr
                           ? 'bg-red-50/70 border-red-200 text-red-950'
                           : 'bg-amber-50/70 border-amber-200 text-amber-950'
                       )}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          {isErr ? (
+                          {isAccepted ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          ) : isErr ? (
                             <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                           ) : (
                             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
@@ -1605,12 +1610,14 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                           <span
                             className={cn(
                               'text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider',
-                              isErr
+                              isAccepted
+                                ? 'bg-emerald-200/80 text-emerald-900'
+                                : isErr
                                 ? 'bg-red-200/80 text-red-900'
                                 : 'bg-amber-200/80 text-amber-900'
                             )}
                           >
-                            {isErr ? 'Blockierend' : 'Warnung'}
+                            {isAccepted ? 'Ausnahme akzeptiert' : isErr ? 'Blockierend' : 'Warnung'}
                           </span>
                           <span className="font-bold text-stone-900">{diag.title}</span>
                         </div>

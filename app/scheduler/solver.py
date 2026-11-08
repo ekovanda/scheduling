@@ -29,6 +29,7 @@ def generate_schedule(
     stagnation_limit_seconds: float | None = 15.0,
     quarter_end: date | None = None,
     num_workers: int | None = None,
+    accepted_violation_ids: list[str] | set[str] | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -55,6 +56,7 @@ def generate_schedule(
         "pre_assigned": pre_assigned,
         "config": config,
         "quarter_end": quarter_end,
+        "accepted_violation_ids": accepted_violation_ids,
     }
     if num_workers is not None:
         kwargs["num_workers"] = num_workers

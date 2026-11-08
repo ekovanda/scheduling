@@ -9,6 +9,25 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.2.1] - 2026-11-08
+
+### Fixed: Robuste Ausnahmegenehmigung bei Vorbelegungen & Block-Abständen
+
+- **CP-SAT Solver Block Constraints (`app/scheduler/solver_cpsat.py`):**
+  - In `_add_block_constraints`: Wenn beide Block-Startdaten `d1` und `d2` durch Vorbelegungen für dieselbe Person festgelegt sind, wird das gegenseitige Ausschluss-Constraint (`block_starts[d1] + block_starts[d2] <= 1`) übersprungen. Dies verhindert einen harten mathematischen Widerspruch (`1 + 1 <= 1`), wenn ein Anwender getrennte Vorbelegungen mit weniger als 7 Tagen Abstand festlegt (z. B. nach dem selektiven Löschen von Zwischendiensten).
+  - Parameter `accepted_violation_ids` an `generate_schedule_cpsat` und `diagnose_structured_infeasibility` durchgereicht, sodass bereits akzeptierte Ausnahmen bei Solver-Abbrüchen nicht fälschlich als ungelöste Blockaden diagnostiziert werden.
+- **Feasibility & Diagnostik (`app/scheduler/feasibility.py`):**
+  - Neuer Konflikttyp `InfeasibilityCategory.PREASSIGNED_BLOCK_GAP`: Erkennt getrennte Vorbelegungs-Blöcke desselben Mitarbeiters mit einem Abstand unter 7 Tagen bereits in der Vorprüfung. Anwender können diesen Zustand direkt im Feasibility-Modal als Ausnahme akzeptieren oder auflösen.
+  - `diagnose_structured_infeasibility` respektiert `accepted_violation_ids`: Wenn alle Vorbelegungskonflikte akzeptiert wurden, wird bei einem Solver-Abbruch die zutreffende `SOLVER_UNSATISFIABLE`-Diagnose ausgewiesen, statt bereits akzeptierte Einzelkonflikte fälschlicherweise erneut als blockierend anzuzeigen.
+- **API Worker & Fehlerrückmeldung (`app/api/v1/quarters.py`):**
+  - In `_execute_solver_worker`: Persistierte `accepted_feasibility_violations` aus dem Quartalsdokument werden an `generate_schedule` übergeben.
+  - Bei Abbruch des Solvers wird die Fehlermeldung präzise auf nicht akzeptierte Fehler oder Solver-Restriktionen bezogen, statt akzeptierte Ausnahmen heranzuziehen.
+  - In `generate_quarter_schedule`: `unaccepted_blocking` ermittelt den ersten tatsächlich unakzeptierten Fehler, statt blind `diagnostics[0]` zu referenzieren.
+- **Frontend Solver Progress Modal (`frontend/src/views/MatrixView.tsx`):**
+  - Im Fortschritts- und Abbruch-Modal werden akzeptierte Diagnosen (`is_accepted=True`) mit grünem Styling und "Ausnahme akzeptiert"-Kennzeichnung gerendert, statt rot als "Blockierend" zu erscheinen.
+- **Tests (`tests/test_feasibility_diagnostics.py`):**
+  - Neuer Test `test_preassigned_block_gap_detected` zur Verifikation der Früherkennung unzureichender Blockabstände zwischen Vorbelegungen.
+
 ## [2.2.0] - 2026-11-08
 
 ### Added: Interaktive Ausnahme-Akzeptanz für Vorbelegungen in der Machbarkeitsprüfung

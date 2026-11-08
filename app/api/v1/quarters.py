@@ -28,7 +28,10 @@ from app.persistence.rollover import (
     get_quarter_date_range,
 )
 from app.scheduler.exceptions import SchedulingError
-from app.scheduler.feasibility import run_full_feasibility_check
+from app.scheduler.feasibility import (
+    DiagnosticSeverity,
+    run_full_feasibility_check,
+)
 from app.scheduler.models import (
     Assignment,
     Beruf,
@@ -561,6 +564,9 @@ def _execute_solver_worker(
 
         from app.scheduler.models import SchedulerConfig
 
+        doc = repo.get_schedule(quarter_key)
+        accepted_ids = doc.config.get("accepted_feasibility_violations", []) if doc else []
+
         result = generate_schedule(
             staff_list=staff_list,
             quarter_start=q_start,
@@ -576,6 +582,7 @@ def _execute_solver_worker(
             stagnation_limit_seconds=stagnation_limit_seconds,
             quarter_end=q_end,
             num_workers=2,
+            accepted_violation_ids=accepted_ids,
         )
 
         elapsed = round(time.time() - start_time, 1)
@@ -614,13 +621,21 @@ def _execute_solver_worker(
         hard_violations = getattr(result, "hard_violations", [])
         if not result.success or best_schedule is None or hard_violations:
             job_rec.status = SolverJobStatus.FAILED
-            err_msg = (
-                "; ".join(result.unsatisfiable_constraints or hard_violations)
-                if (result.unsatisfiable_constraints or hard_violations)
-                else "Kein machbarer Dienstplan gefunden."
-            )
+            diags = getattr(result, "diagnostics", [])
+            unaccepted_errs = [
+                d for d in diags
+                if d.severity == DiagnosticSeverity.ERROR and not d.is_accepted
+            ]
+            if unaccepted_errs:
+                err_msg = f"Vorprüfung fehlgeschlagen: {unaccepted_errs[0].title} — {unaccepted_errs[0].message}"
+            elif hard_violations:
+                err_msg = f"Post-Solve-Validierung fehlgeschlagen: {'; '.join(hard_violations)}"
+            elif result.unsatisfiable_constraints:
+                err_msg = "; ".join(result.unsatisfiable_constraints)
+            else:
+                err_msg = "Kein machbarer Dienstplan gefunden."
             job_rec.error = err_msg
-            job_rec.diagnostics = getattr(result, "diagnostics", [])
+            job_rec.diagnostics = diags
             repo.save_solver_job(job_rec)
             return
 
@@ -840,7 +855,11 @@ def generate_quarter_schedule(
         accepted_violation_ids=accepted_ids,
     )
     if feasibility_report.blocking_error_count > 0:
-        first_err = feasibility_report.diagnostics[0]
+        unaccepted_blocking = [
+            d for d in feasibility_report.diagnostics
+            if d.severity == DiagnosticSeverity.ERROR and not d.is_accepted
+        ]
+        first_err = unaccepted_blocking[0] if unaccepted_blocking else feasibility_report.diagnostics[0]
         failed_record = SolverJobRecord(
             job_id=f"job_{quarter_key}_{uuid4().hex[:8]}",
             quarter_key=quarter_key,

@@ -39,6 +39,7 @@ class InfeasibilityCategory(str, Enum):
     PREASSIGNED_QUALIFICATION_MISMATCH = "PREASSIGNED_QUALIFICATION_MISMATCH"
     PREASSIGNED_SOLO_UNQUALIFIED = "PREASSIGNED_SOLO_UNQUALIFIED"
     PREASSIGNED_PAIRING_UNQUALIFIED = "PREASSIGNED_PAIRING_UNQUALIFIED"
+    PREASSIGNED_BLOCK_GAP = "PREASSIGNED_BLOCK_GAP"
 
     # Capacity & Structural conflicts
     CAPACITY_TFA_OPEN_NIGHTS = "CAPACITY_TFA_OPEN_NIGHTS"
@@ -780,6 +781,61 @@ def validate_pre_assigned_consistency(
                             )
                         )
 
+        # 4b. Pre-assigned block gap violations (< 7 days between separate blocks)
+        if staff.beruf != Beruf.VET:
+            staff_pa_dates = sorted({
+                pa.shift_date for pa in pa_list
+                if quarter_start <= pa.shift_date <= quarter_end
+            })
+            if len(staff_pa_dates) >= 2:
+                # Group contiguous dates into blocks
+                pa_blocks: list[list[date]] = []
+                curr_b = [staff_pa_dates[0]]
+                for next_d in staff_pa_dates[1:]:
+                    if (next_d - curr_b[-1]).days == 1:
+                        curr_b.append(next_d)
+                    else:
+                        pa_blocks.append(curr_b)
+                        curr_b = [next_d]
+                pa_blocks.append(curr_b)
+
+                for b_idx in range(len(pa_blocks) - 1):
+                    b1 = pa_blocks[b_idx]
+                    b2 = pa_blocks[b_idx + 1]
+                    gap = (b2[0] - b1[0]).days
+                    if gap < 7:
+                        aff_dates = [b1[0], b2[0]]
+                        aff_pa_ids = [
+                            pa.id for pa in pa_list
+                            if (pa.shift_date in b1 or pa.shift_date in b2) and pa.id
+                        ]
+                        diagnostics.append(
+                            InfeasibilityDiagnosticRecord(
+                                id=_generate_diagnostic_id(
+                                    InfeasibilityCategory.PREASSIGNED_BLOCK_GAP,
+                                    [staff.identifier],
+                                    aff_dates,
+                                ),
+                                category=InfeasibilityCategory.PREASSIGNED_BLOCK_GAP,
+                                severity=DiagnosticSeverity.ERROR,
+                                title="Mindestabstand zwischen Vorbelegungen unterschritten",
+                                message=(
+                                    f"{staff.name} ({staff.identifier}) ist für zwei getrennte Dienstblöcke "
+                                    f"am {b1[0].strftime('%d.%m.%Y')} und {b2[0].strftime('%d.%m.%Y')} vorbelegt. "
+                                    f"Der Abstand zwischen den Blöcken beträgt nur {gap} Tag(e) (erforderlich: mindestens 7 Tage)."
+                                ),
+                                affected_staff_ids=[staff.identifier],
+                                affected_dates=aff_dates,
+                                remediation_hint=(
+                                    "Verbinden Sie die Vorbelegungen zu einem zusammenhängenden Block, "
+                                    "entfernen Sie eine der Vorbelegungen oder akzeptieren Sie die Ausnahme."
+                                ),
+                                can_be_accepted=True,
+                                is_accepted=False,
+                                pre_assigned_ids=aff_pa_ids,
+                            )
+                        )
+
     # 5. Night Pairings & Solo Qualifications
     night_shifts_by_date: dict[date, list[PreAssignedShift]] = defaultdict(list)
     for pa in pre_assigned:
@@ -1004,6 +1060,7 @@ def diagnose_structured_infeasibility(
     quarter_end: date,
     config: SchedulerConfig,
     unsatisfiable_strings: list[str] | None = None,
+    accepted_violation_ids: list[str] | set[str] | None = None,
 ) -> list[InfeasibilityDiagnosticRecord]:
     """Produce rich diagnostic records after an INFEASIBLE CP-SAT solver run."""
     report = run_full_feasibility_check(
@@ -1013,16 +1070,23 @@ def diagnose_structured_infeasibility(
         quarter_start=quarter_start,
         quarter_end=quarter_end,
         config=config,
+        accepted_violation_ids=accepted_violation_ids,
     )
     diagnostics = list(report.diagnostics)
 
-    if not diagnostics:
+    blocking_unaccepted = [
+        d for d in diagnostics
+        if d.severity == DiagnosticSeverity.ERROR and not d.is_accepted
+    ]
+
+    if not blocking_unaccepted:
         raw_msg = (
             "; ".join(unsatisfiable_strings)
             if unsatisfiable_strings
             else "Das CP-SAT-Modell ist mit den gewählten Randbedingungen unlösbar."
         )
-        diagnostics.append(
+        diagnostics.insert(
+            0,
             InfeasibilityDiagnosticRecord(
                 id=_generate_diagnostic_id(InfeasibilityCategory.SOLVER_UNSATISFIABLE, [], []),
                 category=InfeasibilityCategory.SOLVER_UNSATISFIABLE,

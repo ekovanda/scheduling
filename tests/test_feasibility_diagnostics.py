@@ -331,3 +331,38 @@ def test_accept_feasibility_violation_lifecycle(client: TestClient) -> None:
     rev_report = revoke_resp.json()
     rev_target = next(d for d in rev_report["diagnostics"] if d["id"] == v_id)
     assert rev_target["is_accepted"] is False
+
+
+def test_preassigned_block_gap_detected() -> None:
+    """Verify that separate pre-assigned blocks with gap < 7 days are flagged as PREASSIGNED_BLOCK_GAP."""
+    staff = _make_tfa(name="Kaitlyn S", ident="KS")
+    # Pre-assignments on 25th (Thu) and 27th (Sat), with 26th skipped
+    pa_list = [
+        PreAssignedShift(
+            id="pa_1",
+            staff_identifier="KS",
+            shift_date=date(2027, 3, 25),
+            shift_type=ShiftType.NIGHT_THU_FRI,
+        ),
+        PreAssignedShift(
+            id="pa_2",
+            staff_identifier="KS",
+            shift_date=date(2027, 3, 27),
+            shift_type=ShiftType.NIGHT_SAT_SUN,
+        ),
+    ]
+
+    diags = validate_pre_assigned_consistency(
+        pre_assigned=pa_list,
+        staff_list=[staff],
+        vacations=[],
+        quarter_start=date(2027, 1, 1),
+        quarter_end=date(2027, 3, 31),
+    )
+    gap_diags = [d for d in diags if d.category == InfeasibilityCategory.PREASSIGNED_BLOCK_GAP]
+    assert len(gap_diags) == 1
+    assert gap_diags[0].can_be_accepted is True
+    assert gap_diags[0].affected_staff_ids == ["KS"]
+    assert gap_diags[0].affected_dates == [date(2027, 3, 25), date(2027, 3, 27)]
+    assert gap_diags[0].pre_assigned_ids == ["pa_1", "pa_2"]
+
