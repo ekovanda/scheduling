@@ -989,6 +989,99 @@ def test_min_consecutive_uses_per_staff_value() -> None:
     )
 
 
+def test_min_consecutive_nights_cross_quarter_boundary() -> None:
+    """Cross-quarter trailing night satisfies min-consecutive requirement for first day."""
+    from app.scheduler.models import (
+        Assignment,
+        PreviousPlanContext,
+        Schedule,
+        Shift,
+        ShiftType,
+        TrailingAssignment,
+    )
+
+    tfa = Staff(
+        name="Alina C",
+        identifier="Ach",
+        adult=True,
+        hours=32,
+        beruf=Beruf.TFA,
+        reception=True,
+        nd_possible=True,
+        nd_alone=False,
+        nd_min_consecutive=2,
+        nd_max_consecutive=2,
+        nd_exceptions=[],
+    )
+
+    # Schedule has only 1 night on quarter start
+    schedule = Schedule(
+        quarter_start=date(2027, 1, 1),
+        quarter_end=date(2027, 3, 31),
+        assignments=[
+            Assignment(
+                shift=Shift(shift_type=ShiftType.NIGHT_FRI_SAT, shift_date=date(2027, 1, 1)),
+                staff_identifier="Ach",
+                is_paired=True,
+            ),
+        ],
+    )
+
+    context = PreviousPlanContext(
+        quarter_start=date(2026, 10, 1),
+        quarter_end=date(2026, 12, 31),
+        carry_forward=[],
+        trailing_assignments=[
+            TrailingAssignment(
+                shift_date=date(2026, 12, 31),
+                shift_type=ShiftType.NIGHT_THU_FRI,
+                staff_identifier="Ach",
+                is_paired=True,
+            )
+        ],
+    )
+
+    # 1. With previous_context, the 2-night block (31.12 + 01.01) is complete -> valid!
+    val_with_context = validate_schedule(schedule, [tfa], previous_context=context)
+    min_violations_with = [
+        v for v in val_with_context.hard_violations if v.constraint_name == "Min Consecutive Nights"
+    ]
+    assert len(min_violations_with) == 0, (
+        f"Cross-quarter consecutive night must not violate min-consecutive: {min_violations_with}"
+    )
+
+    # 2. Without previous_context, only 01.01 is visible -> violation
+    val_no_context = validate_schedule(schedule, [tfa], previous_context=None)
+    min_violations_without = [
+        v for v in val_no_context.hard_violations if v.constraint_name == "Min Consecutive Nights"
+    ]
+    assert len(min_violations_without) == 1, (
+        "Without previous_context, a single night on Jan 1 must trigger a violation"
+    )
+
+    # 3. Trailing night on a non-adjacent date (e.g. 29.12) does not form a block with 01.01
+    context_non_adjacent = PreviousPlanContext(
+        quarter_start=date(2026, 10, 1),
+        quarter_end=date(2026, 12, 31),
+        carry_forward=[],
+        trailing_assignments=[
+            TrailingAssignment(
+                shift_date=date(2026, 12, 29),
+                shift_type=ShiftType.NIGHT_TUE_WED,
+                staff_identifier="Ach",
+                is_paired=True,
+            )
+        ],
+    )
+    val_non_adjacent = validate_schedule(schedule, [tfa], previous_context=context_non_adjacent)
+    min_violations_non_adj = [
+        v for v in val_non_adjacent.hard_violations if v.constraint_name == "Min Consecutive Nights"
+    ]
+    assert len(min_violations_non_adj) == 1, (
+        "Non-adjacent trailing night must not satisfy min-consecutive"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Birthday tests
 # ---------------------------------------------------------------------------

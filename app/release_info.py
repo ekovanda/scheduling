@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.1.1"
+CURRENT_VERSION = "2.1.2"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,14 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.1.2",
+        date="08. November 2026",
+        summary="Korrektur der Nachtdienst-Validierung an Quartalsgrenzen",
+        highlights=(
+            "Nachtdienstblöcke über Quartalsgrenzen hinweg werden in der Planprüfung nun korrekt berücksichtigt.",
+        ),
+    ),
     Release(
         version="2.1.1",
         date="08. November 2026",

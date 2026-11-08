@@ -12,6 +12,7 @@ from .models import (
     PreviousPlanContext,
     Schedule,
     SchedulerConfig,
+    Shift,
     ShiftType,
     Staff,
     generate_quarter_shifts,
@@ -76,15 +77,15 @@ def find_cross_quarter_block_gap_exceptions(
     staff_dict = {s.identifier: s for s in staff_list} if staff_list else {}
 
     trailing_dates_by_staff: dict[str, set[date]] = defaultdict(set)
-    for assignment in previous_context.trailing_assignments:
-        staff = staff_dict.get(assignment.staff_identifier)
+    for ta in previous_context.trailing_assignments:
+        staff = staff_dict.get(ta.staff_identifier)
         staff_gap = (
             config.intern_block_gap_days
             if staff and staff.beruf == Beruf.INTERN
             else config.block_gap_days
         )
-        if 0 < (schedule.quarter_start - assignment.shift_date).days <= staff_gap:
-            trailing_dates_by_staff[assignment.staff_identifier].add(assignment.shift_date)
+        if 0 < (schedule.quarter_start - ta.shift_date).days <= staff_gap:
+            trailing_dates_by_staff[ta.staff_identifier].add(ta.shift_date)
 
     current_dates_by_staff: dict[str, set[date]] = defaultdict(set)
     pre_assigned_dates_by_staff: dict[str, set[date]] = defaultdict(set)
@@ -176,8 +177,10 @@ def validate_schedule(
     violations.extend(_check_same_day_next_day_constraint(schedule))
     violations.extend(_check_three_week_block_constraint(schedule, staff_dict, config))
     violations.extend(_check_weekend_isolation_constraint(schedule))
-    violations.extend(_check_min_consecutive_nights_constraint(schedule, staff_dict))
-    # violations.extend(_check_nd_max_consecutive_constraint(schedule, staff_dict))  # Relaxed to soft
+    violations.extend(
+        _check_min_consecutive_nights_constraint(schedule, staff_dict, previous_context)
+    )
+    # violations.extend(_check_nd_max_consecutive_constraint(schedule, staff_dict, previous_context))  # Relaxed to soft
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
     violations.extend(_check_shift_coverage(schedule, staff_dict))
@@ -185,7 +188,7 @@ def validate_schedule(
     violations.extend(_check_vet_shift_constraints(schedule, staff_dict, previous_context))
 
     # Calculate soft penalty
-    soft_penalty = _calculate_soft_penalty(schedule, staff_list)
+    soft_penalty = _calculate_soft_penalty(schedule, staff_list, previous_context)
 
     return ValidationResult(hard_violations=violations, soft_penalty=soft_penalty)
 
@@ -755,11 +758,16 @@ def _find_consecutive_blocks(sorted_assignments: list[Assignment]) -> list[list[
 
 
 def _check_min_consecutive_nights_constraint(
-    schedule: Schedule, staff_dict: dict[str, Staff]
+    schedule: Schedule,
+    staff_dict: dict[str, Staff],
+    previous_context: PreviousPlanContext | None = None,
 ) -> list[ConstraintViolation]:
     """Staff must work at least nd_min_consecutive consecutive nights per block.
 
     Skips staff where nd_min_consecutive <= 1 (e.g. Azubis or special TFA cases).
+    When previous_context is provided, trailing night assignments from the
+    previous quarter are considered so cross-quarter consecutive night blocks
+    are properly validated without false-positive violations.
     """
     violations: list[ConstraintViolation] = []
 
@@ -768,6 +776,21 @@ def _check_min_consecutive_nights_constraint(
     for assignment in schedule.assignments:
         if assignment.shift.is_night_shift():
             staff_night_assignments[assignment.staff_identifier].append(assignment)
+
+    # Collect trailing night assignments by staff if previous_context is provided
+    trailing_nights_by_staff: dict[str, list[Assignment]] = defaultdict(list)
+    if previous_context and previous_context.trailing_assignments:
+        ident_canonical = {sid.casefold(): sid for sid in staff_dict}
+        for ta in previous_context.trailing_assignments:
+            if ta.shift_type.value.startswith("N_"):
+                canonical_id = ident_canonical.get(ta.staff_identifier.casefold(), ta.staff_identifier)
+                trailing_nights_by_staff[canonical_id].append(
+                    Assignment(
+                        shift=Shift(shift_date=ta.shift_date, shift_type=ta.shift_type),
+                        staff_identifier=canonical_id,
+                        is_paired=ta.is_paired,
+                    )
+                )
 
     for staff_id, night_assignments in staff_night_assignments.items():
         staff = staff_dict.get(staff_id)
@@ -778,13 +801,24 @@ def _check_min_consecutive_nights_constraint(
         if min_consecutive <= 1:
             continue  # Single nights allowed — no constraint to enforce
 
+        # Include trailing nights to recognize cross-quarter blocks
+        all_nights = night_assignments + trailing_nights_by_staff.get(staff_id, [])
+
         # Sort by date
-        sorted_nights = sorted(night_assignments, key=lambda a: a.shift.shift_date)
+        sorted_nights = sorted(all_nights, key=lambda a: a.shift.shift_date)
 
         # Find consecutive night blocks
         consecutive_blocks = _find_consecutive_blocks(sorted_nights)
 
         for block in consecutive_blocks:
+            # Only validate blocks that touch the current planning period.
+            # Historical blocks wholly within the prior quarter are already committed.
+            if not any(
+                schedule.quarter_start <= a.shift.shift_date <= schedule.quarter_end
+                for a in block
+            ):
+                continue
+
             block_length = len(block)
             if block_length < min_consecutive:
                 violations.append(
@@ -801,7 +835,9 @@ def _check_min_consecutive_nights_constraint(
 
 
 def _check_nd_max_consecutive_constraint(
-    schedule: Schedule, staff_dict: dict[str, Staff]
+    schedule: Schedule,
+    staff_dict: dict[str, Staff],
+    previous_context: PreviousPlanContext | None = None,
 ) -> list[ConstraintViolation]:
     """Check that consecutive night counts don't exceed staff nd_max_consecutive."""
     violations: list[ConstraintViolation] = []
@@ -812,18 +848,43 @@ def _check_nd_max_consecutive_constraint(
         if assignment.shift.is_night_shift():
             staff_night_assignments[assignment.staff_identifier].append(assignment)
 
+    # Collect trailing night assignments by staff if previous_context is provided
+    trailing_nights_by_staff: dict[str, list[Assignment]] = defaultdict(list)
+    if previous_context and previous_context.trailing_assignments:
+        ident_canonical = {sid.casefold(): sid for sid in staff_dict}
+        for ta in previous_context.trailing_assignments:
+            if ta.shift_type.value.startswith("N_"):
+                canonical_id = ident_canonical.get(ta.staff_identifier.casefold(), ta.staff_identifier)
+                trailing_nights_by_staff[canonical_id].append(
+                    Assignment(
+                        shift=Shift(shift_date=ta.shift_date, shift_type=ta.shift_type),
+                        staff_identifier=canonical_id,
+                        is_paired=ta.is_paired,
+                    )
+                )
+
     for staff_id, night_assignments in staff_night_assignments.items():
         staff = staff_dict.get(staff_id)
         if not staff or staff.beruf == Beruf.VET or staff.nd_max_consecutive is None:
             continue
 
+        # Include trailing nights to recognize cross-quarter blocks
+        all_nights = night_assignments + trailing_nights_by_staff.get(staff_id, [])
+
         # Sort by date
-        sorted_nights = sorted(night_assignments, key=lambda a: a.shift.shift_date)
+        sorted_nights = sorted(all_nights, key=lambda a: a.shift.shift_date)
 
         # Find consecutive night blocks
         consecutive_blocks = _find_consecutive_blocks(sorted_nights)
 
         for block in consecutive_blocks:
+            # Only validate blocks that touch the current planning period
+            if not any(
+                schedule.quarter_start <= a.shift.shift_date <= schedule.quarter_end
+                for a in block
+            ):
+                continue
+
             block_length = len(block)
             if block_length > staff.nd_max_consecutive:
                 violations.append(
@@ -1081,7 +1142,11 @@ def _check_abteilung_night_constraint(
     return violations
 
 
-def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> float:
+def _calculate_soft_penalty(
+    schedule: Schedule,
+    staff_list: list[Staff],
+    previous_context: PreviousPlanContext | None = None,
+) -> float:
     """Calculate soft constraint penalty score.
 
     Lower is better. Penalizes:
@@ -1137,7 +1202,9 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
         penalty += (w_variance**0.5) * 10
     
     # Soft penalty for consecutive night shifts exceeding nd_max_consecutive
-    consecutive_nd_violations = _check_nd_max_consecutive_constraint(schedule, staff_dict)
+    consecutive_nd_violations = _check_nd_max_consecutive_constraint(
+        schedule, staff_dict, previous_context=previous_context
+    )
     penalty += 100.0 * len(consecutive_nd_violations)
 
     return penalty

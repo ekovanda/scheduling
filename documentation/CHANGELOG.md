@@ -9,6 +9,17 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.1.2] - 2026-11-08
+
+### Fixed: Berücksichtigung von Vorquartals-Nachtdiensten in der Post-Solve-Validierung (`nd_min_consecutive`)
+
+- **Post-Solve-Validierung (`app/scheduler/validator.py`):**
+  - `_check_min_consecutive_nights_constraint` und `_check_nd_max_consecutive_constraint` um den Parameter `previous_context: PreviousPlanContext | None = None` erweitert.
+  - Trailing-Night-Assignments des Vorquartals werden nun bei der Prüfung aufeinanderfolgender Nachtdienste berücksichtigt. Blöcke, die an der Quartalsgrenze beginnen (z. B. 31.12. + 01.01.), werden somit als zusammenhängender Block erkannt und lösen keine fälschliche Verletzung der Mindestblocklänge (`nd_min_consecutive`) mehr aus.
+  - `validate_schedule` und `_calculate_soft_penalty` leiten `previous_context` nun konsistent an die entsprechenden Prüffunktionen weiter.
+- **Tests (`tests/test_scheduler.py`, `tests/test_release_info.py`):**
+  - Neuer Test `test_min_consecutive_nights_cross_quarter_boundary` prüft, dass ein Nachtdienst am ersten Tag des Quartals in Verbindung mit einem Vorquartalsdienst die Mindestblocklänge erfüllt, während isolierte Einzeldienste ohne Vorquartalsbezug weiterhin zuverlässig als Verletzung erkannt werden.
+
 ## [2.1.1] - 2026-11-08
 
 ### Changed: Bereinigung der Anmeldeoberfläche (LoginGate)
