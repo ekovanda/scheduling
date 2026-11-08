@@ -278,7 +278,9 @@ def load_staff_from_file(file_path: Path | str) -> dict[str, dict[str, Any]]:
                 int(_safe_get_value(row, col_nd_max)) if _safe_get_value(row, col_nd_max) else None
             ),
             "nd_min_consecutive": (
-                int(_safe_get_value(row, col_nd_min)) if _safe_get_value(row, col_nd_min) else 2
+                int(_safe_get_value(row, col_nd_min))
+                if _safe_get_value(row, col_nd_min)
+                else (min(2, int(_safe_get_value(row, col_nd_max))) if _safe_get_value(row, col_nd_max) else 2)
             ),
             "nd_exceptions": nd_exceptions,
             "birthday": _safe_get_value(row, col_birthday),

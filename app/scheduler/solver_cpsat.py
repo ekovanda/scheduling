@@ -1698,11 +1698,12 @@ def _add_group_fairness_objective_with_presence(
 
     scaled_counts = []
     for staff in group:
-        count_expr = counts.get(staff.identifier, 0)
         presence = presence_factors.get(staff.identifier, PRESENCE_SCALE)
-        # Avoid division by zero if someone has no available days
-        if presence == 0:
-            presence = 1
+        # Exclude staff with 0 available days in the quarter (e.g. future hires, absent all quarter)
+        if presence <= 0:
+            continue
+
+        count_expr = counts.get(staff.identifier, 0)
 
         if isinstance(count_expr, int) and count_expr == 0:
             scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
@@ -1735,6 +1736,9 @@ def _add_group_fairness_objective_with_presence(
         else:
             scaled_counts.append(scaled_var)
 
+    if len(scaled_counts) < 2:
+        return
+
     min_bound = -10000 if has_carry_forward else 0
     max_var = model.NewIntVar(min_bound, 100000, f"{prefix}_max")
     min_var = model.NewIntVar(min_bound, 100000, f"{prefix}_min")
@@ -1744,8 +1748,8 @@ def _add_group_fairness_objective_with_presence(
     range_var = model.NewIntVar(0, 100000, f"{prefix}_range")
     model.Add(range_var == max_var - min_var)
 
-    # Hard constraint threshold (adjusted for presence scaling)
-    threshold_scaled = int(max_fte_deviation * 2 * (scale // 40) * (PRESENCE_SCALE // 100))
+    # Hard constraint threshold: in scaled units (1 Notdienst = 2 half-units * (scale // 40) = 20 scaled units for 40h)
+    threshold_scaled = int(max_fte_deviation * 2 * (scale // 40))
     # Widen threshold when carry-forward is active to avoid infeasibility
     if has_carry_forward:
         group_cfs = [carry_forward_deltas.get(s.identifier, 0.0) for s in group]
@@ -1795,10 +1799,11 @@ def _add_type_balance_objective(
 
     scaled_counts = []
     for staff in group:
-        count_expr = night_counts.get(staff.identifier, 0)
         presence = presence_factors.get(staff.identifier, PRESENCE_SCALE)
-        if presence == 0:
-            presence = 1
+        if presence <= 0:
+            continue
+
+        count_expr = night_counts.get(staff.identifier, 0)
 
         if isinstance(count_expr, int) and count_expr == 0:
             scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
@@ -1815,6 +1820,9 @@ def _add_type_balance_objective(
             scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
             model.Add(scaled_var == count_expr * combined_multiplier)
         scaled_counts.append(scaled_var)
+
+    if len(scaled_counts) < 2:
+        return
 
     max_var = model.NewIntVar(0, 50000, f"{prefix}_max")
     min_var = model.NewIntVar(0, 50000, f"{prefix}_min")

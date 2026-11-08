@@ -86,21 +86,20 @@ def test_e2_b2_fairness_ceiling_probe() -> None:
         max_fte_deviation=1.5,
     )
 
-    # Helper to test feasibility under forced duty difference
-    def check_difference(diff_duties: int) -> int:
+    # Helper to test feasibility under forced half-unit duty difference
+    def check_difference_half_units(diff_half_units: int) -> int:
         test_model = model.Clone()
-        # In half-units: diff_duties * 2
-        test_model.Add(c1 - c2 == diff_duties * 2)
+        test_model.Add(c1 - c2 == diff_half_units)
         solver = cp_model.CpSolver()
         return solver.Solve(test_model)
 
-    # 14 Notdienste difference is OPTIMAL/FEASIBLE under current ceiling
-    status_14 = check_difference(14)
-    assert status_14 in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    # 1.5 Notdienste difference (= 3 half-units) is OPTIMAL/FEASIBLE under 1.5 FTE ceiling (threshold_scaled = 30)
+    status_1_5 = check_difference_half_units(3)
+    assert status_1_5 in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
-    # 16 Notdienste difference exceeds ceiling and is INFEASIBLE
-    status_16 = check_difference(16)
-    assert status_16 == cp_model.INFEASIBLE
+    # 2.0 Notdienste difference (= 4 half-units) exceeds the 1.5 ceiling (scaled range 40 > 30) and is INFEASIBLE
+    status_2_0 = check_difference_half_units(4)
+    assert status_2_0 == cp_model.INFEASIBLE
 
 
 def test_e2_b6_schedule_lifecycle_states(tmp_path: Path) -> None:
