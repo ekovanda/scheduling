@@ -27,6 +27,7 @@ def generate_schedule(
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
     stagnation_limit_seconds: float | None = 15.0,
+    quarter_end: date | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -37,6 +38,7 @@ def generate_schedule(
         max_solve_time_seconds: Maximum solver time in seconds (default 120)
         random_seed: Random seed for reproducibility
         previous_context: Carry-forward context from previous quarter
+        quarter_end: End date of quarter (inclusive)
 
     Returns:
         SolverResult with best schedule or unsatisfiable constraints
@@ -51,6 +53,7 @@ def generate_schedule(
         "previous_context": previous_context,
         "pre_assigned": pre_assigned,
         "config": config,
+        "quarter_end": quarter_end,
     }
     if cancellation_event is not None:
         kwargs["cancellation_event"] = cancellation_event

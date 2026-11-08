@@ -533,6 +533,7 @@ def _execute_solver_worker(
             on_progress=on_progress,
             on_solver_created=on_solver_created,
             stagnation_limit_seconds=stagnation_limit_seconds,
+            quarter_end=q_end,
         )
 
         elapsed = round(time.time() - start_time, 1)
@@ -551,11 +552,12 @@ def _execute_solver_worker(
             return
 
         best_schedule = result.get_best_schedule()
-        if not result.success or best_schedule is None:
+        hard_violations = getattr(result, "hard_violations", [])
+        if not result.success or best_schedule is None or hard_violations:
             job_rec.status = SolverJobStatus.FAILED
             err_msg = (
-                "; ".join(result.unsatisfiable_constraints)
-                if result.unsatisfiable_constraints
+                "; ".join(result.unsatisfiable_constraints or hard_violations)
+                if (result.unsatisfiable_constraints or hard_violations)
                 else "Kein machbarer Dienstplan gefunden."
             )
             job_rec.error = err_msg
@@ -570,16 +572,19 @@ def _execute_solver_worker(
                 planned_staff_id=a.staff_identifier,
                 actual_staff_id=a.staff_identifier,
                 is_paired=a.is_paired,
+                is_pre_assigned=a.is_pre_assigned,
                 is_override=False,
             )
             for a in best_schedule.assignments
         ]
+        best_penalty_val = float(result.penalties[0]) if result.penalties else 0.0
         metrics = {
-            "best_penalty": result.penalties[0] if result.penalties else 0.0,
+            "best_penalty": best_penalty_val,
             "candidate_count": len(result.schedules),
             "convergence_steps": len(result.convergence_log),
             "trailing_context_applied": context is not None,
             "solve_time_seconds": elapsed,
+            "hard_violations": hard_violations,
         }
 
         doc = repo.get_schedule(quarter_key)
@@ -596,19 +601,19 @@ def _execute_solver_worker(
         repo.save_schedule(doc)
 
         job_rec.status = SolverJobStatus.COMPLETED
-        job_rec.best_objective = metrics["best_penalty"]
-        job_rec.soft_penalty = metrics["best_penalty"]
+        job_rec.best_objective = best_penalty_val
+        job_rec.soft_penalty = best_penalty_val
         job_rec.solutions_found = max(job_rec.solutions_found, 1)
         repo.save_solver_job(job_rec)
 
     except Exception as exc:  # pylint: disable=broad-except
-        job_rec = repo.get_solver_job(quarter_key)
-        if job_rec:
-            job_rec.status = SolverJobStatus.FAILED
-            job_rec.completed_at = datetime.now(UTC)
-            job_rec.elapsed_seconds = round(time.time() - start_time, 1)
-            job_rec.error = str(exc)
-            repo.save_solver_job(job_rec)
+        err_job = repo.get_solver_job(quarter_key)
+        if err_job:
+            err_job.status = SolverJobStatus.FAILED
+            err_job.completed_at = datetime.now(UTC)
+            err_job.elapsed_seconds = round(time.time() - start_time, 1)
+            err_job.error = str(exc)
+            repo.save_solver_job(err_job)
     finally:
         with _jobs_lock:
             if quarter_key in _active_jobs and _active_jobs[quarter_key].job_id == job_id:
@@ -872,6 +877,7 @@ def swap_shift(
                 shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
                 staff_identifier=staff_id,
                 is_paired=a.is_paired,
+                is_pre_assigned=a.is_pre_assigned,
             )
         )
     proposed_schedule = Schedule(
@@ -927,6 +933,7 @@ def validate_quarter_plan(
             shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
             staff_identifier=a.actual_staff_id,
             is_paired=a.is_paired,
+            is_pre_assigned=a.is_pre_assigned,
         )
         for a in doc.assignments
     ]

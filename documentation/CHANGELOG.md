@@ -9,6 +9,27 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.3] - 2026-11-08
+
+### Constraints & Scheduling: Dienstplan-Horizont, Schichtabdeckung & Feiertags-Validierung (Findings B1, B3, B5, B7)
+
+- **Exakter Kalenderquartal-Horizont (`app/scheduler/models.py`, `app/api/v1/quarters.py`) (Finding B1):**
+  - `generate_quarter_shifts` akzeptiert optionales `quarter_end` und leitet bei `None` das echte kalendarische Quartalsende ab (31. März, 30. Juni, 30. September, 31. Dezember).
+  - Feste 91-Tage-Schleife durch inklusiven Datumsvergleich (`current_date <= quarter_end`) ersetzt, wodurch der 30. September und 31. Dezember vollständig geplant und Doppelplanungen zum 1. April vermieden werden.
+  - Randabsicherung bei gekoppelten Intern-Wochenenden am Quartalsende gegen Indexüberschreitung.
+- **Erzwungene Schichtabdeckung in Solver und Validator (`app/scheduler/solver_cpsat.py`, `app/scheduler/validator.py`) (Finding B3):**
+  - Keine stillschweigende Nicht-Erstellung von Schicht-Constraints im CP-SAT-Solver bei fehlendem Personal; stattdessen explizite Unlösbarkeits-Constraints (`model.Add(0 == target)`), die Lücken sofort aufdecken.
+  - Geschlossene Nächte ohne wählbare Nicht-Azubis werden im Solver als unlösbar markiert, und Azubi-Zuweisungen werden auf `0` fixiert, falls keine Begleitperson existiert.
+  - `_check_shift_coverage` im Validator prüft alle Soll-Schichten aus `generate_quarter_shifts` gegen die tatsächlichen Belegungen und moniert unbesetzte Wochenendschichten, unbesetzte Nächte sowie Nächte ohne Fachpersonal (H12).
+- **Strikte Bindung des Solver-Erfolgs an die Validierung (`app/scheduler/solver_cpsat.py`, `app/api/v1/quarters.py`) (Finding B5):**
+  - `SolverResult` transportiert `hard_violations` aus der Post-Solve-Validierung. Bei harten Regelverletzungen wird `success=False` gesetzt.
+  - Im Hintergrund-Worker `_execute_solver_worker` führt jede harte Validierungsverletzung zum Status `FAILED` des Solver-Jobs und verhindert das Speichern inkonsistenter Dienstpläne.
+- **Vorab zugewiesene Schichten & Feiertags-Lockerung (`app/persistence/models.py`, `app/api/v1/preassigned.py`, `app/api/v1/quarters.py`, `app/scheduler/validator.py`) (Finding B7):**
+  - Validierung von `PreAssignedShiftRecord.shift_type` via Pydantic-Validator gegen `ShiftType`-Enums und `"nacht"`.
+  - Vorab-Prüfung bei der Anlage von Schichten (`POST /api/v1/preassigned`) auf Existenz des Mitarbeiters (`422 Unprocessable Entity`).
+  - Erweiterung von `ShiftAssignmentRecord` um `is_pre_assigned: bool`, sodass der Status bei Persistierung und Rekonstruktion erhalten bleibt.
+  - Implementierung der 7-Tage-Lockerung (`holiday_gap_days`) in der 3-Wochen-Block-Validierung (`_check_three_week_block_constraint`), wenn vorab zugewiesene Feiertagsdienste involviert sind.
+
 ## [1.12.2] - 2026-11-08
 
 ### Security: Session-Härtung, Pfad-Validierung & Container-Bereinigung (Findings A3, A4, A5, A7)

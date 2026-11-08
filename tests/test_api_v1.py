@@ -320,6 +320,19 @@ def test_quarters_async_solver_and_cancellation(
 
 def test_preassigned_api_crud_lifecycle(client: TestClient) -> None:
     """Ensure full CRUD operations for pre-assigned shifts through REST API."""
+    # 0. Create prerequisite staff member
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "ks",
+            "identifier": "KS",
+            "name": "Dr. Katharina Schmidt",
+            "beruf": "TFA",
+            "hours": 40,
+            "nd_possible": True,
+        },
+    )
+
     payload = {
         "id": "pa-test-1",
         "staff_id": "ks",

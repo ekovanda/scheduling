@@ -14,6 +14,7 @@ from .models import (
     SchedulerConfig,
     ShiftType,
     Staff,
+    generate_quarter_shifts,
 )
 
 
@@ -169,7 +170,7 @@ def validate_schedule(
     # violations.extend(_check_nd_max_consecutive_constraint(schedule, staff_dict))  # Relaxed to soft
     violations.extend(_check_nd_exceptions_constraint(schedule, staff_dict))
     violations.extend(_check_shift_eligibility(schedule, staff_dict))
-    violations.extend(_check_shift_coverage(schedule))
+    violations.extend(_check_shift_coverage(schedule, staff_dict))
     violations.extend(_check_abteilung_night_constraint(schedule, staff_dict))
     violations.extend(_check_vet_shift_constraints(schedule, staff_dict, previous_context))
 
@@ -613,7 +614,7 @@ def _check_three_week_block_constraint(
         # Find consecutive blocks
         blocks = _find_consecutive_blocks(sorted_assignments)
 
-        required_gap = (
+        base_gap = (
             config.intern_block_gap_days
             if staff and staff.beruf == Beruf.INTERN
             else config.block_gap_days
@@ -623,15 +624,29 @@ def _check_three_week_block_constraint(
         for i, block1 in enumerate(blocks):
             block1_start = block1[0].shift.shift_date
             block1_end = block1[-1].shift.shift_date
+            b1_has_holiday = any(a.is_pre_assigned for a in block1)
 
             for block2 in blocks[i + 1 :]:
                 block2_start = block2[0].shift.shift_date
+                b2_has_holiday = any(a.is_pre_assigned for a in block2)
+
+                # 7-day relaxation if either block includes pre-assigned holiday duty
+                required_gap = (
+                    config.holiday_gap_days
+                    if (b1_has_holiday or b2_has_holiday)
+                    else base_gap
+                )
 
                 # Check if block2 starts within required_gap days of block1 start
                 if (block2_start - block1_start).days < required_gap:
+                    name = (
+                        "Holiday Block Limit"
+                        if (b1_has_holiday or b2_has_holiday)
+                        else ("3-Week Block Limit" if required_gap >= 21 else "10-Day Block Limit")
+                    )
                     violations.append(
                         ConstraintViolation(
-                            "3-Week Block Limit" if required_gap >= 21 else "10-Day Block Limit",
+                            name,
                             f"{staff_id} has multiple shift blocks within {required_gap} days: "
                             f"{block1_start.strftime('%d.%m.%Y')}-{block1_end.strftime('%d.%m.%Y')} "
                             f"and {block2_start.strftime('%d.%m.%Y')}",
@@ -881,25 +896,43 @@ def _check_shift_eligibility(
     return violations
 
 
-def _check_shift_coverage(schedule: Schedule) -> list[ConstraintViolation]:
-    """Check that all required shifts are covered."""
+def _check_shift_coverage(
+    schedule: Schedule,
+    staff_dict: dict[str, Staff] | None = None,
+) -> list[ConstraintViolation]:
+    """Check that all required shifts are covered.
+
+    Iterates over the expected shift list from generate_quarter_shifts:
+    - Weekend regular shifts: exactly 1 person (or matches pre-assigned count).
+    - Night shifts: 1-2 persons, and on closed nights at least 1 non-Azubi.
+    """
     violations: list[ConstraintViolation] = []
+    if not schedule.assignments:
+        return violations
 
-    # Group assignments by shift
-    shift_coverage: dict[tuple[Any, Any], int] = defaultdict(int)
-    for assignment in schedule.assignments:
-        key = (assignment.shift.shift_date, assignment.shift.shift_type)
-        shift_coverage[key] += 1
+    holiday_dates = {
+        a.shift.shift_date
+        for a in schedule.assignments
+        if a.shift.shift_date.weekday() < 5 and a.shift.is_weekend_shift()
+    }
+    expected_shifts = generate_quarter_shifts(
+        schedule.quarter_start, holiday_dates=holiday_dates, quarter_end=schedule.quarter_end
+    )
 
-    # Check night shifts (require 1-2 staff)
-    for key, count in shift_coverage.items():
-        shift_date, shift_type = key
-        if shift_type.value.startswith("N_"):
+    assignments_by_shift: dict[tuple[date, ShiftType], list[Assignment]] = defaultdict(list)
+    for a in schedule.assignments:
+        assignments_by_shift[(a.shift.shift_date, a.shift.shift_type)].append(a)
+
+    for shift in expected_shifts:
+        assigned = assignments_by_shift.get((shift.shift_date, shift.shift_type), [])
+        count = len(assigned)
+
+        if shift.is_night_shift():
             if count == 0:
                 violations.append(
                     ConstraintViolation(
                         "Shift Coverage",
-                        f"Night shift {shift_type.value} on {shift_date.strftime('%d.%m.%Y')} "
+                        f"Night shift {shift.shift_type.value} on {shift.shift_date.strftime('%d.%m.%Y')} "
                         "has no coverage",
                     )
                 )
@@ -907,8 +940,41 @@ def _check_shift_coverage(schedule: Schedule) -> list[ConstraintViolation]:
                 violations.append(
                     ConstraintViolation(
                         "Shift Overstaffing",
-                        f"Night shift {shift_type.value} on {shift_date.strftime('%d.%m.%Y')} "
+                        f"Night shift {shift.shift_type.value} on {shift.shift_date.strftime('%d.%m.%Y')} "
                         f"has {count} staff (max 2)",
+                    )
+                )
+            elif staff_dict and shift.is_closed_night():
+                # On closed nights, at least one assigned staff member must be non-Azubi (H12)
+                non_azubi = [
+                    a
+                    for a in assigned
+                    if staff_dict.get(a.staff_identifier)
+                    and staff_dict[a.staff_identifier].beruf != Beruf.AZUBI
+                ]
+                if not non_azubi:
+                    violations.append(
+                        ConstraintViolation(
+                            "Shift Coverage",
+                            f"Night shift {shift.shift_type.value} on {shift.shift_date.strftime('%d.%m.%Y')} "
+                            "has no non-Azubi staff (Azubi alone on closed night)",
+                        )
+                    )
+        elif shift.is_weekend_shift() and not shift.is_intern_weekend_shift():
+            if count == 0:
+                violations.append(
+                    ConstraintViolation(
+                        "Shift Coverage",
+                        f"Weekend shift {shift.shift_type.value} on {shift.shift_date.strftime('%d.%m.%Y')} "
+                        "has no coverage",
+                    )
+                )
+            elif count > 1 and not any(a.is_pre_assigned for a in assigned):
+                violations.append(
+                    ConstraintViolation(
+                        "Shift Overstaffing",
+                        f"Weekend shift {shift.shift_type.value} on {shift.shift_date.strftime('%d.%m.%Y')} "
+                        f"has {count} staff (expected 1)",
                     )
                 )
 

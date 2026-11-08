@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.scheduler.feasibility import (
     DiagnosticSeverity,
@@ -131,6 +131,7 @@ class ShiftAssignmentRecord(BaseModel):
     planned_staff_id: str
     actual_staff_id: str
     is_paired: bool
+    is_pre_assigned: bool = False
     is_override: bool = False
     override_reason: str | None = None
     override_timestamp: datetime | None = None
@@ -198,6 +199,20 @@ class PreAssignedShiftRecord(BaseModel):
     is_holiday: bool = True
     note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("shift_type")
+    @classmethod
+    def validate_shift_type(cls, v: str) -> str:
+        try:
+            ShiftType(v)
+            return v
+        except ValueError as err:
+            if "nacht" in v.lower():
+                return v
+            valid = [s.value for s in ShiftType]
+            raise ValueError(
+                f"Invalid shift_type '{v}'. Must be one of {valid} or contain 'nacht'."
+            ) from err
 
 
 __all__ = [

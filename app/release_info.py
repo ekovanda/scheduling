@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.2"
+CURRENT_VERSION = "1.12.3"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.12.3",
+        date="08. November 2026",
+        summary="Dienstplan-Horizont, Schichtabdeckung & Feiertage",
+        highlights=(
+            "Exakte Kalenderquartal-Horizonte ohne Schicht-Überlappung oder Auslassung.",
+            "Strikte Schichtabdeckungs-Garantie und Validierungs-Prüfung nach Optimierung.",
+            "Validierung vorab zugewiesener Schichten und Persistierung des Feiertags-Status.",
+        ),
+    ),
     Release(
         version="1.12.2",
         date="08. November 2026",

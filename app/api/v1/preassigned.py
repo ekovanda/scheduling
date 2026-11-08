@@ -31,6 +31,12 @@ def create_preassigned(
     repo: RepoDep,
 ) -> PreAssignedShiftRecord:
     """Create or overwrite a pre-assigned shift."""
+    staff = repo.get_staff(record.staff_id)
+    if not staff:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Staff member '{record.staff_id}' does not exist.",
+        )
     repo.save_preassigned(record)
     return record
 

@@ -83,6 +83,7 @@ def get_previous_quarter_context(
             shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
             staff_identifier=id_to_ident.get(a.actual_staff_id.casefold(), a.actual_staff_id),
             is_paired=a.is_paired,
+            is_pre_assigned=getattr(a, "is_pre_assigned", False),
         )
         for a in prev_doc.assignments
     ]

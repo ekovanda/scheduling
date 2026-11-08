@@ -97,6 +97,7 @@ def build_solver_cache_key(  # pylint: disable=too-many-positional-arguments
     previous_context: PreviousPlanContext | None = None,
     pre_assigned: list[PreAssignedShift] | None = None,
     config: SchedulerConfig | None = None,
+    quarter_end: date | None = None,
 ) -> str:
     """Build a deterministic JSON cache key from solver problem inputs.
 
@@ -106,6 +107,7 @@ def build_solver_cache_key(  # pylint: disable=too-many-positional-arguments
     payload = {
         "staff": [_serialize_item(s) for s in staff_list],
         "quarter_start": quarter_start.isoformat(),
+        "quarter_end": quarter_end.isoformat() if quarter_end else None,
         "vacations": [_serialize_item(v) for v in (vacations or [])],
         "random_seed": random_seed,
         "previous_context": _serialize_item(previous_context),
@@ -179,6 +181,7 @@ def _configure_test_solver(
             previous_context=previous_context,
             pre_assigned=pre_assigned,
             config=config,
+            quarter_end=kwargs.get("quarter_end"),
         )
         if key not in session_cache:
             session_cache[key] = original_cpsat_fn(

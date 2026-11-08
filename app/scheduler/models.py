@@ -493,22 +493,33 @@ class PreAssignedShift(BaseModel):
 def generate_quarter_shifts(
     quarter_start: date,
     holiday_dates: set[date] | None = None,
+    quarter_end: date | None = None,
 ) -> list[Shift]:
-    """Generate all shifts for a quarter (13 weeks).
+    """Generate all shifts for a quarter.
 
     Args:
         quarter_start: First day of the quarter.
         holiday_dates: Weekday dates that should receive Sunday-pattern
             weekend shifts (e.g., public holidays).
+        quarter_end: Last day of the quarter (inclusive). If None, derived
+            from quarter_start based on the calendar quarter.
     """
     shifts: list[Shift] = []
     current_date = quarter_start
     holiday_dates = holiday_dates or set()
 
-    # Q2/2026: April 1 - June 30 (91 days, 13 weeks)
-    quarter_end = quarter_start + timedelta(days=91)
+    if quarter_end is None:
+        quarter = (quarter_start.month - 1) // 3 + 1
+        if quarter == 1:
+            quarter_end = date(quarter_start.year, 3, 31)
+        elif quarter == 2:
+            quarter_end = date(quarter_start.year, 6, 30)
+        elif quarter == 3:
+            quarter_end = date(quarter_start.year, 9, 30)
+        else:
+            quarter_end = date(quarter_start.year, 12, 31)
 
-    while current_date < quarter_end:
+    while current_date <= quarter_end:
         weekday = current_date.weekday()  # 0=Mon, 5=Sat, 6=Sun
         is_holiday = current_date in holiday_dates
 
@@ -533,8 +544,8 @@ def generate_quarter_shifts(
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_8_2030, shift_date=current_date))
 
         # Intern weekend shifts (natural full weekends only, independent of is_holiday)
-        # Quarter-Boundary Guard: Sa_Intern and So_Intern only generated when both d and d+1 fall within [quarter_start, quarter_end)
-        if weekday == 5 and (current_date + timedelta(days=1)) < quarter_end:
+        # Quarter-Boundary Guard: Sa_Intern and So_Intern only generated when both d and d+1 fall within [quarter_start, quarter_end]
+        if weekday == 5 and (current_date + timedelta(days=1)) <= quarter_end:
             shifts.append(Shift(shift_type=ShiftType.SATURDAY_INTERN, shift_date=current_date))
         elif weekday == 6 and (current_date - timedelta(days=1)) >= quarter_start:
             shifts.append(Shift(shift_type=ShiftType.SUNDAY_INTERN, shift_date=current_date))

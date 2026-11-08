@@ -45,6 +45,7 @@ class SolverResult:
         unsatisfiable_constraints: list[str],
         convergence_log: list[dict[str, float]] | None = None,
         diagnostics: list[Any] | None = None,
+        hard_violations: list[str] | None = None,
     ) -> None:
         self.success = success
         self.schedules = schedules
@@ -52,6 +53,7 @@ class SolverResult:
         self.unsatisfiable_constraints = unsatisfiable_constraints
         self.convergence_log: list[dict[str, float]] = convergence_log or []
         self.diagnostics: list[Any] = diagnostics or []
+        self.hard_violations: list[str] = hard_violations or []
 
     def get_best_schedule(self) -> Schedule | None:
         """Get the best schedule (lowest penalty)."""
@@ -133,6 +135,7 @@ def generate_schedule_cpsat(
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     on_solver_created: Callable[[cp_model.CpSolver], None] | None = None,
     stagnation_limit_seconds: float | None = 15.0,
+    quarter_end: date | None = None,
 ) -> SolverResult:
     """Generate schedule using OR-Tools CP-SAT solver.
 
@@ -142,6 +145,7 @@ def generate_schedule_cpsat(
         vacations: List of vacation periods (staff unavailability)
         max_solve_time_seconds: Maximum solver time in seconds
         random_seed: Random seed for reproducibility
+        quarter_end: Optional inclusive end date of the quarter
 
     Returns:
         SolverResult with best schedule or unsatisfiable constraints
@@ -159,8 +163,10 @@ def generate_schedule_cpsat(
     holiday_dates = get_pre_assigned_holiday_dates(pre_assigned)
 
     # Generate all shifts for the quarter (including holiday Sunday-pattern shifts)
-    shifts = generate_quarter_shifts(quarter_start, holiday_dates=holiday_dates)
-    quarter_end = max(s.shift_date for s in shifts) if shifts else quarter_start
+    shifts = generate_quarter_shifts(
+        quarter_start, holiday_dates=holiday_dates, quarter_end=quarter_end
+    )
+    quarter_end = max(s.shift_date for s in shifts) if shifts else (quarter_end or quarter_start)
 
     # Index mappings
     staff_by_id = {s.identifier: s for s in staff_list}
@@ -321,14 +327,17 @@ def generate_schedule_cpsat(
     pre_assigned_shift_slots: set[tuple[date, ShiftType]] = set(pre_assigned_count.keys())
 
     for shift in regular_weekend_shifts:
+        target = pre_assigned_count.get((shift.shift_date, shift.shift_type), 1)
         staff_for_shift = [
             x[(s.identifier, shift.shift_date, shift.shift_type)]
             for s in staff_list
             if (s.identifier, shift.shift_date, shift.shift_type) in x
         ]
         if staff_for_shift:
-            target = pre_assigned_count.get((shift.shift_date, shift.shift_type), 1)
             model.Add(sum(staff_for_shift) == target)
+        else:
+            # Explicitly unsatisfiable: no eligible staff exists for this required shift
+            model.Add(0 == target)
 
     # Intern weekend shifts (soft coverage: at most 1 Intern per shift)
     if intern_staff:
@@ -537,13 +546,13 @@ def generate_schedule_cpsat(
         ]
         all_vars = azubi_vars + non_azubi_vars
 
-        if not all_vars:
-            continue
-
         if shift_slot in pre_assigned_shift_slots:
             # Pre-assigned holiday night: enforce exact headcount, skip role rules
             target = pre_assigned_count[shift_slot]
-            model.Add(sum(all_vars) == target)
+            if all_vars:
+                model.Add(sum(all_vars) == target)
+            else:
+                model.Add(0 == target)
         elif shift.is_open_night():
             # Open nights (Sun-Mon, Mon-Tue): exactly 2 persons, at least 1 TFA, max 1 Azubi
             tfa_vars = [
@@ -552,21 +561,33 @@ def generate_schedule_cpsat(
                 if (s.identifier, shift.shift_date, shift.shift_type) in x and s.beruf == Beruf.TFA
             ]
             # 1. Gesamtkopfzahl immer exakt 2 Personen
-            model.Add(sum(all_vars) == 2)
+            if all_vars:
+                model.Add(sum(all_vars) == 2)
+            else:
+                model.Add(0 == 2)
 
             # 2. Mindestens 1 TFA zwingend erforderlich
-            model.Add(sum(tfa_vars) >= 1)
+            if tfa_vars:
+                model.Add(sum(tfa_vars) >= 1)
+            else:
+                model.Add(0 >= 1)
 
             # 3. Maximal 1 Azubi (verhindert Azubi + Azubi)
             if azubi_vars:
                 model.Add(sum(azubi_vars) <= 1)
         else:
             # Closed nights: 1-2 people total, at least 1 non-Azubi
-            coverage_sum = sum(all_vars)
-            model.Add(coverage_sum >= 1)
-            model.Add(coverage_sum <= 2)
+            if all_vars:
+                coverage_sum = sum(all_vars)
+                model.Add(coverage_sum >= 1)
+                model.Add(coverage_sum <= 2)
+            else:
+                model.Add(0 >= 1)
+
             if non_azubi_vars:
                 model.Add(sum(non_azubi_vars) >= 1)
+            else:
+                model.Add(0 >= 1)
 
         # Link is_paired variable: paired iff 2 people assigned (for all night shifts)
         coverage_sum = sum(all_vars)
@@ -621,6 +642,8 @@ def generate_schedule_cpsat(
             if non_azubi_vars:
                 # If Azubi is assigned, at least one non-Azubi must be assigned
                 model.Add(sum(non_azubi_vars) >= 1).OnlyEnforceIf(azubi_var)
+            else:
+                model.Add(azubi_var == 0)
 
         # For closed nights (nd_alone strictly enforced):
         if shift.is_closed_night():
@@ -1084,12 +1107,26 @@ def generate_schedule_cpsat(
         )
         penalty = validation.soft_penalty
 
+        if validation.hard_violations:
+            violation_msgs = [f"{v.constraint_name}: {v.description}" for v in validation.hard_violations]
+            return SolverResult(
+                success=False,
+                schedules=[],
+                penalties=[],
+                unsatisfiable_constraints=[
+                    f"Post-solve validation failed ({len(violation_msgs)} violation(s)): {'; '.join(violation_msgs)}"
+                ],
+                convergence_log=progress.solutions,
+                hard_violations=violation_msgs,
+            )
+
         return SolverResult(
             success=True,
             schedules=[schedule],
             penalties=[penalty],
             unsatisfiable_constraints=[],
             convergence_log=progress.solutions,
+            hard_violations=[],
         )
     else:
         # Infeasible or timeout
