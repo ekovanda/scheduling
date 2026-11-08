@@ -27,38 +27,51 @@ class FirestoreRepository:
         self,
         project: str | None = None,
         database: str | None = None,
+        collection_prefix: str | None = None,
         client: Any | None = None,
     ) -> None:
         """Initialize Firestore client and collection handles."""
+        db_name = database or os.getenv("FIRESTORE_DATABASE")
         if client is not None:
             self.client = client
         else:
             proj = project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
             try:
-                self.client = firestore.Client(project=proj, database=database)
+                self.client = firestore.Client(project=proj, database=db_name)
             except Exception:  # pylint: disable=broad-except
                 # Developer fallback: check for gcloud auth token if running locally outside Cloud Run
                 import shutil
                 import subprocess
                 from pathlib import Path
 
-                from google.oauth2.credentials import Credentials  # type: ignore[import-untyped]
+                from google.oauth2.credentials import Credentials
 
-                gcloud_bin = shutil.which("gcloud") or str(Path.home() / "google-cloud-sdk/bin/gcloud")
+                gcloud_bin = shutil.which("gcloud") or str(
+                    Path.home() / "google-cloud-sdk/bin/gcloud"
+                )
                 try:
                     token = subprocess.check_output(
                         [gcloud_bin, "auth", "print-access-token"], text=True
                     ).strip()
-                    creds = Credentials(token)
-                    self.client = firestore.Client(project=proj, database=database, credentials=creds)
+                    creds = Credentials(token)  # type: ignore[no-untyped-call]
+                    self.client = firestore.Client(
+                        project=proj, database=db_name, credentials=creds
+                    )
                 except Exception:
                     raise
 
-        self.staff_col = self.client.collection("staff")
-        self.absence_col = self.client.collection("absences")
-        self.schedule_col = self.client.collection("schedules")
-        self.job_col = self.client.collection("solver_jobs")
-        self.preassigned_col = self.client.collection("preassigned")
+        raw_prefix = (
+            collection_prefix
+            if collection_prefix is not None
+            else os.getenv("FIRESTORE_COLLECTION_PREFIX", "")
+        ).strip()
+        prefix = f"{raw_prefix}_" if raw_prefix and not raw_prefix.endswith("_") else raw_prefix
+
+        self.staff_col = self.client.collection(f"{prefix}staff")
+        self.absence_col = self.client.collection(f"{prefix}absences")
+        self.schedule_col = self.client.collection(f"{prefix}schedules")
+        self.job_col = self.client.collection(f"{prefix}solver_jobs")
+        self.preassigned_col = self.client.collection(f"{prefix}preassigned")
 
     # -------------------------------------------------------------------------
     # Staff Member CRUD
@@ -189,9 +202,5 @@ class FirestoreRepository:
     def delete_preassigned(self, preassigned_id: str) -> None:
         doc_ref = self.preassigned_col.document(preassigned_id)
         if not doc_ref.get().exists:
-            raise EntityNotFoundError(
-                f"Pre-assigned shift '{preassigned_id}' does not exist."
-            )
+            raise EntityNotFoundError(f"Pre-assigned shift '{preassigned_id}' does not exist.")
         doc_ref.delete()
-
-

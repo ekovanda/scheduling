@@ -29,3 +29,7 @@ README.md
 temp_*
 *.log
 
+# Sensitive clinic data exclusion (Finding A7)
+data/
+!data/staff_sample.csv
+

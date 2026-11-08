@@ -12,12 +12,16 @@ Provides three ways to balance test speed and solver depth:
 """
 
 import json
+import os
 from collections.abc import Generator
 from dataclasses import asdict, is_dataclass
 from datetime import date
 from typing import Any
 
 import pytest
+
+# Default to insecure dev mode for local test suites unless explicitly overridden
+os.environ.setdefault("ALLOW_INSECURE_DEV", "1")
 
 from app.scheduler import solver as solver_facade
 from app.scheduler import solver_cpsat
@@ -212,9 +216,11 @@ def _configure_test_solver(
 def client(tmp_path: Any) -> Generator[Any, None, None]:
     """Fixture providing a test client with an isolated temporary repository."""
     from pathlib import Path
+
     from fastapi.testclient import TestClient
-    from app.api.main import app
+
     from app.api.dependencies import get_repository
+    from app.api.main import app
     from app.persistence.repository import FileJsonRepository
 
     test_repo = FileJsonRepository(base_dir=Path(tmp_path) / "api_test_db")

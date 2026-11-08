@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
@@ -13,6 +13,9 @@ from app.persistence.repository import RepositoryProtocol
 router = APIRouter(prefix="/absences", tags=["Absences"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
+AbsenceIdPath = Annotated[
+    str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="Absence identifier")
+]
 StaffIdQuery = Annotated[
     str | None, Query(description="Filter absences for a specific staff member")
 ]
@@ -70,7 +73,7 @@ def create_absence(
 
 @router.get("/{absence_id}", response_model=AbsenceRecord)
 def get_absence_by_id(
-    absence_id: str,
+    absence_id: AbsenceIdPath,
     repo: RepoDep,
 ) -> AbsenceRecord:
     """Retrieve an absence record by ID."""
@@ -85,7 +88,7 @@ def get_absence_by_id(
 
 @router.delete("/{absence_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_absence(
-    absence_id: str,
+    absence_id: AbsenceIdPath,
     repo: RepoDep,
 ) -> None:
     """Delete an absence record by ID."""

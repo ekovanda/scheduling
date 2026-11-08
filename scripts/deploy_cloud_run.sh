@@ -47,10 +47,14 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 if [ "$TARGET" = "dev" ]; then
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-dev}"
-    AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
+    AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
+    STORAGE_BACKEND="${STORAGE_BACKEND:-file}"
+    FIRESTORE_COLLECTION_PREFIX="${FIRESTORE_COLLECTION_PREFIX:-dev_}"
 else
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-app}"
     AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
+    STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
+    FIRESTORE_COLLECTION_PREFIX="${FIRESTORE_COLLECTION_PREFIX:-}"
 fi
 
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE_NAME}:${IMAGE_TAG}"
@@ -59,6 +63,7 @@ echo "=========================================================="
 echo " Deploying Dienstplan App to GCP Cloud Run"
 echo " Target Mode:   ${TARGET} (APP_TARGET=${APP_TARGET})"
 echo " Auth Enforced: ${AUTH_REQUIRED}"
+echo " Storage Mode:  ${STORAGE_BACKEND}"
 echo " Project:       ${PROJECT_ID}"
 echo " Region:        ${REGION}"
 echo " Service:       ${SERVICE_NAME}"
@@ -66,7 +71,6 @@ echo " Image:         ${IMAGE_NAME}"
 echo "=========================================================="
 
 # 2. Environment Variables Configuration
-STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
 ENV_VARS_LIST=(
   "APP_TARGET=${APP_TARGET}"
   "STORAGE_BACKEND=${STORAGE_BACKEND}"
@@ -74,6 +78,22 @@ ENV_VARS_LIST=(
   "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
   "GCP_PROJECT=${PROJECT_ID}"
 )
+
+if [ -n "${FIRESTORE_COLLECTION_PREFIX}" ]; then
+  ENV_VARS_LIST+=("FIRESTORE_COLLECTION_PREFIX=${FIRESTORE_COLLECTION_PREFIX}")
+fi
+
+if [ -n "${FIRESTORE_DATABASE:-}" ]; then
+  ENV_VARS_LIST+=("FIRESTORE_DATABASE=${FIRESTORE_DATABASE}")
+fi
+
+# Ensure multi-instance Cloud Run shares a persistent SESSION_SECRET (A4)
+if [ -n "${SESSION_SECRET:-}" ]; then
+  ENV_VARS_LIST+=("SESSION_SECRET=${SESSION_SECRET}")
+else
+  SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')
+  ENV_VARS_LIST+=("SESSION_SECRET=${SESSION_SECRET}")
+fi
 
 if [ -n "${APP_PASSWORD:-}" ]; then
     echo "Hashing provided APP_PASSWORD..."

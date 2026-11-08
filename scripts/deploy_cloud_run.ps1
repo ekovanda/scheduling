@@ -17,11 +17,15 @@ $AppTarget = if ($LegacyStreamlit) { "streamlit" } else { "fastapi" }
 if ($Dev) {
     $Target = "dev"
     $ServiceName = "dienstplan-dev"
-    $AuthRequired = "false"
+    $AuthRequired = "true"
+    $DefaultStorage = "file"
+    $CollectionPrefix = "dev_"
 } else {
     $Target = "prod"
     $ServiceName = "dienstplan-app"
     $AuthRequired = "true"
+    $DefaultStorage = "firestore"
+    $CollectionPrefix = ""
 }
 
 $ImageName = "${Region}-docker.pkg.dev/${ProjectId}/${Repository}/${ServiceName}:${ImageTag}"
@@ -30,13 +34,14 @@ Write-Host "==========================================================" -Foregro
 Write-Host " Deploying Dienstplan App to GCP Cloud Run" -ForegroundColor Cyan
 Write-Host " Target Mode:   $Target (APP_TARGET=$AppTarget)"
 Write-Host " Auth Enforced: $AuthRequired"
+Write-Host " Storage Mode:  $DefaultStorage"
 Write-Host " Project:       $ProjectId"
 Write-Host " Region:        $Region"
 Write-Host " Service:       $ServiceName"
 Write-Host " Image:         $ImageName"
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-$StorageBackend = if ($env:STORAGE_BACKEND) { $env:STORAGE_BACKEND } else { "firestore" }
+$StorageBackend = if ($env:STORAGE_BACKEND) { $env:STORAGE_BACKEND } else { $DefaultStorage }
 $EnvVars = @(
     "APP_TARGET=$AppTarget",
     "STORAGE_BACKEND=$StorageBackend",
@@ -44,6 +49,16 @@ $EnvVars = @(
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "GCP_PROJECT=$ProjectId"
 )
+
+if ($CollectionPrefix -ne "") {
+    $EnvVars += "FIRESTORE_COLLECTION_PREFIX=$CollectionPrefix"
+}
+if ($env:FIRESTORE_DATABASE) {
+    $EnvVars += "FIRESTORE_DATABASE=$($env:FIRESTORE_DATABASE)"
+}
+
+$SessionSecret = if ($env:SESSION_SECRET) { $env:SESSION_SECRET } else { [System.Guid]::NewGuid().ToString("N") + [System.Guid]::NewGuid().ToString("N") }
+$EnvVars += "SESSION_SECRET=$SessionSecret"
 $EffectivePassword = if ($AppPassword -ne "") { $AppPassword } elseif ($env:APP_PASSWORD) { $env:APP_PASSWORD } else { "" }
 if ($EffectivePassword -ne "") {
     $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('SHA256')

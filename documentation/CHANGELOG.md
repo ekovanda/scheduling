@@ -9,6 +9,28 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.2] - 2026-11-08
+
+### Security: Session-Härtung, Pfad-Validierung & Container-Bereinigung (Findings A3, A4, A5, A7)
+
+- **Auth Fail-Closed & Firestore-Umgebungs-Isolierung (Finding A3):**
+  - `is_auth_required()` schützt die API standardmäßig (`True`), Bypass via `ALLOW_INSECURE_DEV=1` wird in Cloud Run (`K_SERVICE` gesetzt) strikt ignoriert.
+  - `FirestoreRepository` unterstützt isolierte `collection_prefix`-Namespaces (z.B. `dev_`) und alternative Datenbanken via `FIRESTORE_DATABASE`, womit Entwickler-Deployments Produktionsdaten nicht überschreiben können.
+  - `deploy_cloud_run.sh --dev` deployt standardmäßig mit `STORAGE_BACKEND=file`.
+- **Zeitlich begrenzte Tokens, Kennwort-Hashing & Brute-Force-Schutz (Finding A4):**
+  - Signierte, zeitlich limitierte Tokens via `itsdangerous.URLSafeTimedSerializer` mit 12 Stunden maximaler Gültigkeit (`TOKEN_MAX_AGE_SECONDS`).
+  - Automatische Ungültigmachung aktiver Sitzungstokens bei Kennwort-Änderung über Kennwort-Prägungsstempel (`stamp`).
+  - Sichere Kennwort-Ableitung mit `hashlib.scrypt` (N=16384, r=8, p=1) inklusive Abwärtskompatibilität für bestehende SHA-256 Hashes.
+  - Fehlgeschlagene Login-Versuche werden verzögert (`_throttle_failed_login`), um Brute-Force-Angriffe einzudämmen.
+  - Automatisierte Bereitstellung und Injektion eines persistenten `SESSION_SECRET` in den Cloud Run Deploy-Skripten.
+- **Pfad-Validierung & Schutz vor Directory Traversal (Finding A5):**
+  - Pydantic-Validierung aller Datastore-IDs (`StaffMember`, `AbsenceRecord`, `PreAssignedShiftRecord`, `SolverJobRecord`, `QuarterScheduleDocument`) via Regex `^[A-Za-z0-9_-]{1,64}$`.
+  - Path-Parameter-Validierung auf API-Routenebene (`Path(pattern=...)`) in `staff.py`, `absences.py`, `preassigned.py`.
+  - Zentraler `_safe_path()`-Sicherheitscheck in `FileJsonRepository`, der Traversierungsversuche (`../`) mit `ValueError` abwehrt.
+- **Ausschluss sensibler Klinikdaten aus Container-Builds (Finding A7):**
+  - `.dockerignore` und `.gcloudignore` schließen `data/` vollständig aus (unter Ausnahme der synthetischen `data/staff_sample.csv`).
+  - `Dockerfile` kopiert nur noch `data/staff_sample.csv`, wodurch reale Mitarbeiter- und Dienstplandaten nicht mehr in Container-Images oder Cloud Build Buckets gelangen.
+
 ## [1.12.1] - 2026-11-08
 
 ### Security: API-Zugriffskontrolle & Fail-Closed Deployment-Härtung (Findings A1, A2)

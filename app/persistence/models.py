@@ -36,7 +36,7 @@ class ScheduleState(str, Enum):
 class StaffMember(BaseModel):
     """Master staff record in persistent datastore."""
 
-    id: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     identifier: str
     name: str
     beruf: Beruf = Beruf.TFA
@@ -105,8 +105,8 @@ class StaffMember(BaseModel):
 class AbsenceRecord(BaseModel):
     """Continuous absence ledger entry for vacations, sick leave, or training."""
 
-    id: str
-    staff_id: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    staff_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     absence_type: AbsenceType = AbsenceType.VACATION
     start_date: date
     end_date: date
@@ -139,7 +139,7 @@ class ShiftAssignmentRecord(BaseModel):
 class QuarterScheduleDocument(BaseModel):
     """Quarterly schedule document representing candidate, active, or closed state."""
 
-    quarter_key: str
+    quarter_key: str = Field(pattern=r"^\d{4}-Q[1-4]$")
     year: int
     quarter: int
     state: ScheduleState = ScheduleState.DRAFT
@@ -173,8 +173,8 @@ class SolverJobStatus(str, Enum):
 class SolverJobRecord(BaseModel):
     """Persistent execution record and live metrics for a background solve."""
 
-    job_id: str
-    quarter_key: str
+    job_id: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,64}$")
+    quarter_key: str = Field(pattern=r"^\d{4}-Q[1-4]$")
     status: SolverJobStatus = SolverJobStatus.RUNNING
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
@@ -190,8 +190,8 @@ class SolverJobRecord(BaseModel):
 class PreAssignedShiftRecord(BaseModel):
     """Pre-assigned (holiday or locked) shift record in persistent datastore."""
 
-    id: str
-    staff_id: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    staff_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     staff_identifier: str
     shift_date: date
     shift_type: str
@@ -215,5 +215,3 @@ __all__ = [
     "SolverJobStatus",
     "StaffMember",
 ]
-
-

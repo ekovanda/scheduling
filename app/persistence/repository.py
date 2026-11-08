@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -123,6 +124,27 @@ def _json_serial(obj: Any) -> Any:
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
+ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _safe_path(base_dir: Path, record_id: str) -> Path:
+    """Validate record identifier and resolve a safe path within base_dir.
+
+    Guards against directory traversal by verifying ID format and asserting that
+    the resolved target path is strictly within base_dir.
+
+    Raises:
+        ValueError: If record_id is invalid or path resolution attempts directory traversal.
+    """
+    if not ID_PATTERN.fullmatch(record_id):
+        raise ValueError(f"Invalid record identifier format: '{record_id}'")
+    target_path = (base_dir / f"{record_id}.json").resolve()
+    base_resolved = base_dir.resolve()
+    if not target_path.is_relative_to(base_resolved):
+        raise ValueError(f"Path traversal detected for record id: '{record_id}'")
+    return target_path
+
+
 class FileJsonRepository:
     """Flat, file-based JSON repository with atomic writes.
 
@@ -162,7 +184,7 @@ class FileJsonRepository:
     # -------------------------------------------------------------------------
 
     def get_staff(self, staff_id: str) -> StaffMember | None:
-        path = self.staff_dir / f"{staff_id}.json"
+        path = _safe_path(self.staff_dir, staff_id)
         if not path.is_file():
             return None
         with open(path, encoding="utf-8") as f:
@@ -180,11 +202,11 @@ class FileJsonRepository:
         return members
 
     def save_staff(self, member: StaffMember) -> None:
-        path = self.staff_dir / f"{member.id}.json"
+        path = _safe_path(self.staff_dir, member.id)
         self._atomic_write_json(path, member.model_dump(mode="json"))
 
     def delete_staff(self, staff_id: str) -> None:
-        path = self.staff_dir / f"{staff_id}.json"
+        path = _safe_path(self.staff_dir, staff_id)
         if not path.is_file():
             raise EntityNotFoundError(f"Staff member with id '{staff_id}' does not exist.")
         path.unlink()
@@ -194,7 +216,7 @@ class FileJsonRepository:
     # -------------------------------------------------------------------------
 
     def get_absence(self, absence_id: str) -> AbsenceRecord | None:
-        path = self.absence_dir / f"{absence_id}.json"
+        path = _safe_path(self.absence_dir, absence_id)
         if not path.is_file():
             return None
         with open(path, encoding="utf-8") as f:
@@ -227,11 +249,11 @@ class FileJsonRepository:
         return sorted(absences, key=lambda a: a.start_date)
 
     def save_absence(self, absence: AbsenceRecord) -> None:
-        path = self.absence_dir / f"{absence.id}.json"
+        path = _safe_path(self.absence_dir, absence.id)
         self._atomic_write_json(path, absence.model_dump(mode="json"))
 
     def delete_absence(self, absence_id: str) -> None:
-        path = self.absence_dir / f"{absence_id}.json"
+        path = _safe_path(self.absence_dir, absence_id)
         if not path.is_file():
             raise EntityNotFoundError(f"Absence record with id '{absence_id}' does not exist.")
         path.unlink()
@@ -241,7 +263,7 @@ class FileJsonRepository:
     # -------------------------------------------------------------------------
 
     def get_schedule(self, quarter_key: str) -> QuarterScheduleDocument | None:
-        path = self.schedule_dir / f"{quarter_key}.json"
+        path = _safe_path(self.schedule_dir, quarter_key)
         if not path.is_file():
             return None
         with open(path, encoding="utf-8") as f:
@@ -257,11 +279,11 @@ class FileJsonRepository:
         return sorted(docs, key=lambda d: (d.year, d.quarter))
 
     def save_schedule(self, document: QuarterScheduleDocument) -> None:
-        path = self.schedule_dir / f"{document.quarter_key}.json"
+        path = _safe_path(self.schedule_dir, document.quarter_key)
         self._atomic_write_json(path, document.model_dump(mode="json"))
 
     def delete_schedule(self, quarter_key: str) -> None:
-        path = self.schedule_dir / f"{quarter_key}.json"
+        path = _safe_path(self.schedule_dir, quarter_key)
         if not path.is_file():
             raise EntityNotFoundError(f"Schedule for '{quarter_key}' does not exist.")
         path.unlink()
@@ -271,7 +293,7 @@ class FileJsonRepository:
     # -------------------------------------------------------------------------
 
     def get_solver_job(self, quarter_key: str) -> SolverJobRecord | None:
-        path = self.job_dir / f"{quarter_key}.json"
+        path = _safe_path(self.job_dir, quarter_key)
         if not path.is_file():
             return None
         with open(path, encoding="utf-8") as f:
@@ -279,11 +301,11 @@ class FileJsonRepository:
         return SolverJobRecord.model_validate(data)
 
     def save_solver_job(self, record: SolverJobRecord) -> None:
-        path = self.job_dir / f"{record.quarter_key}.json"
+        path = _safe_path(self.job_dir, record.quarter_key)
         self._atomic_write_json(path, record.model_dump(mode="json"))
 
     def delete_solver_job(self, quarter_key: str) -> None:
-        path = self.job_dir / f"{quarter_key}.json"
+        path = _safe_path(self.job_dir, quarter_key)
         if not path.is_file():
             raise EntityNotFoundError(f"Solver job for '{quarter_key}' does not exist.")
         path.unlink()
@@ -293,7 +315,7 @@ class FileJsonRepository:
     # -------------------------------------------------------------------------
 
     def get_preassigned(self, preassigned_id: str) -> PreAssignedShiftRecord | None:
-        path = self.preassigned_dir / f"{preassigned_id}.json"
+        path = _safe_path(self.preassigned_dir, preassigned_id)
         if not path.is_file():
             return None
         with open(path, encoding="utf-8") as f:
@@ -309,15 +331,11 @@ class FileJsonRepository:
         return sorted(records, key=lambda r: (r.shift_date, r.shift_type))
 
     def save_preassigned(self, record: PreAssignedShiftRecord) -> None:
-        path = self.preassigned_dir / f"{record.id}.json"
+        path = _safe_path(self.preassigned_dir, record.id)
         self._atomic_write_json(path, record.model_dump(mode="json"))
 
     def delete_preassigned(self, preassigned_id: str) -> None:
-        path = self.preassigned_dir / f"{preassigned_id}.json"
+        path = _safe_path(self.preassigned_dir, preassigned_id)
         if not path.is_file():
-            raise EntityNotFoundError(
-                f"Pre-assigned shift '{preassigned_id}' does not exist."
-            )
+            raise EntityNotFoundError(f"Pre-assigned shift '{preassigned_id}' does not exist.")
         path.unlink()
-
-

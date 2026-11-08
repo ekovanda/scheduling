@@ -58,6 +58,7 @@ def test_all_api_v1_routes_require_auth_when_enforced(
     raw_path: str,
 ) -> None:
     """Every endpoint under /api/v1 (except /health and /auth/*) returns 401 without credentials."""
+    monkeypatch.delenv("ALLOW_INSECURE_DEV", raising=False)
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     monkeypatch.setenv("APP_PASSWORD", "test-clinic-secret-123")
 
@@ -91,6 +92,7 @@ def test_protected_routes_accept_valid_bearer_token(
     raw_path: str,
 ) -> None:
     """Protected endpoints accept valid planner Bearer token (no 401)."""
+    monkeypatch.delenv("ALLOW_INSECURE_DEV", raising=False)
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     monkeypatch.setenv("APP_PASSWORD", "test-clinic-secret-123")
 

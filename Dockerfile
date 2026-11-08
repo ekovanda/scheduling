@@ -45,10 +45,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app:/app/app"
 
-# Copy application code, scripts, and sample data
+# Copy application code, scripts, and non-sensitive sample data (A7)
 COPY app/ ./app/
 COPY scripts/ ./scripts/
-COPY data/ ./data/
+COPY data/staff_sample.csv ./data/staff_sample.csv
 
 # Copy compiled React frontend from frontend-builder stage
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

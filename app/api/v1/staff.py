@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from app.api.dependencies import get_repository
 from app.persistence.exceptions import EntityNotFoundError
@@ -13,6 +13,7 @@ from app.persistence.repository import RepositoryProtocol
 router = APIRouter(prefix="/staff", tags=["Staff"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
+StaffIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="Staff identifier")]
 
 
 @router.get("", response_model=list[StaffMember])
@@ -50,7 +51,7 @@ def create_staff(
 
 @router.get("/{staff_id}", response_model=StaffMember)
 def get_staff_by_id(
-    staff_id: str,
+    staff_id: StaffIdPath,
     repo: RepoDep,
 ) -> StaffMember:
     """Retrieve a staff member by ID."""
@@ -65,7 +66,7 @@ def get_staff_by_id(
 
 @router.put("/{staff_id}", response_model=StaffMember)
 def update_staff(
-    staff_id: str,
+    staff_id: StaffIdPath,
     updated_data: StaffMember,
     repo: RepoDep,
 ) -> StaffMember:
@@ -84,7 +85,7 @@ def update_staff(
 
 @router.delete("/{staff_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_staff(
-    staff_id: str,
+    staff_id: StaffIdPath,
     repo: RepoDep,
     hard_delete: bool = False,
 ) -> None:
