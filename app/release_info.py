@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.5"
+CURRENT_VERSION = "1.13.3"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,46 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.13.3",
+        date="08. November 2026",
+        summary="Bearbeitung für Abwesenheiten & Vorbelegungen",
+        highlights=(
+            "Neuer Bearbeiten-Button (Stift-Symbol) für bestehende Einträge in beiden Ansichten.",
+            "Formulardialoge öffnen mit vorhandenen Daten zur schnellen Anpassung.",
+            "Direkte Aktualisierung im Frontend und REST-API-Abgleich via PUT-Endpunkten.",
+        ),
+    ),
+    Release(
+        version="1.13.2",
+        date="08. November 2026",
+        summary="Dienstplan: Angepinnte Legende & Schichtnummerierung",
+        highlights=(
+            "Mitarbeiternamen im Vordergrund; Schichten kompakt als (1) bis (4) nummeriert.",
+            "Angepinnte Schicht-Legende bleibt beim vertikalen Scrollen dauerhaft sichtbar.",
+            "Intern-Tagdienst auf Person fokussiert ohne redundante Zeit- und Rollenanzeige.",
+        ),
+    ),
+    Release(
+        version="1.13.1",
+        date="08. November 2026",
+        summary="Vorbelegungs-Kacheln & Wochentagsanzeige",
+        highlights=(
+            "Interaktive Schicht-Kacheln zur direkten Auswahl tagesabhängiger Dienste statt Dropdown.",
+            "Neue Tabellenspalte für Wochentage zur schnellen Prüfung des Dienstkontexts.",
+            "Leeres Datumsfeld mit automatischer Kalenderöffnung im Planungsjahr 2027.",
+        ),
+    ),
+    Release(
+        version="1.13.0",
+        date="08. November 2026",
+        summary="UI-Fokussierung, Sofortsuche & Dienstplan-Neugestaltung",
+        highlights=(
+            "Neue Sofortsuche und Autocomplete-Auswahl für Mitarbeiter in Formularen und Abwesenheiten.",
+            "Fokussierte Ansichten nach Person (Abwesenheiten) und reine Listenansicht (Vorbelegungen).",
+            "Dienstplan mit neuer Spaltenaufteilung für Tag/Rufbereitschaft und Interns sowie grüner Vorbelegung.",
+        ),
+    ),
     Release(
         version="1.12.5",
         date="08. November 2026",

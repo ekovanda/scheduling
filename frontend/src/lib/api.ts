@@ -134,6 +134,16 @@ export async function createAbsence(record: AbsenceRecord): Promise<AbsenceRecor
   return res.json();
 }
 
+export async function updateAbsence(id: string, record: AbsenceRecord): Promise<AbsenceRecord> {
+  const res = await authFetch(`${API_BASE}/absences/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
+  if (!res.ok) throw new Error(`Failed to update absence: ${res.statusText}`);
+  return res.json();
+}
+
 export async function deleteAbsence(id: string): Promise<void> {
   const res = await authFetch(`${API_BASE}/absences/${id}`, {
     method: 'DELETE',
@@ -161,6 +171,16 @@ export async function createPreAssigned(shift: PreAssignedShift): Promise<PreAss
     body: JSON.stringify(shift),
   });
   if (!res.ok) throw new Error(`Failed to save preassigned shift: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updatePreAssigned(id: string, shift: PreAssignedShift): Promise<PreAssignedShift> {
+  const res = await authFetch(`${API_BASE}/preassigned/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(shift),
+  });
+  if (!res.ok) throw new Error(`Failed to update preassigned shift: ${res.statusText}`);
   return res.json();
 }
 

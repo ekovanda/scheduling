@@ -4,7 +4,6 @@ import {
   Play,
   CheckCircle2,
   Calendar as CalendarIcon,
-  RotateCcw,
   Pin,
   Settings2,
   Loader2,
@@ -40,7 +39,7 @@ import {
 } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { cn, isBirthdayToday } from '../lib/utils';
+import { cn, isBirthdayToday, isNightShift } from '../lib/utils';
 
 interface MatrixViewProps {
   currentQuarter?: string;
@@ -182,7 +181,113 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     setLoading(false);
   };
 
-  const getStaff = (id: string) => staffList.find((s) => s.id === id);
+  const getStaff = (idOrIdent: string) => {
+    if (!idOrIdent) return undefined;
+    const needle = idOrIdent.trim().toLowerCase();
+    return staffList.find(
+      (s) => s.id.toLowerCase() === needle || s.identifier.toLowerCase() === needle
+    );
+  };
+
+  const isShiftPreAssigned = (shift: { shift_date: string; shift_type: string; actual_staff_id: string }) => {
+    return preAssigned.some((pa) => {
+      if (pa.shift_date !== shift.shift_date) return false;
+      const paId = pa.staff_id?.trim().toLowerCase();
+      const paIdent = pa.staff_identifier?.trim().toLowerCase();
+      const shiftStaff = shift.actual_staff_id.trim().toLowerCase();
+
+      const staffMatches = paId === shiftStaff || paIdent === shiftStaff;
+      if (!staffMatches) return false;
+
+      const isPaNight = isNightShift(pa.shift_type);
+      const isShiftNight = isNightShift(shift.shift_type);
+
+      return (
+        pa.shift_type === shift.shift_type ||
+        (isPaNight && isShiftNight) ||
+        (!isPaNight && !isShiftNight)
+      );
+    });
+  };
+
+  interface WeekendShiftMeta {
+    num: number;
+    label: string;
+    hours: string;
+    className: string;
+  }
+
+  const getWeekendShiftMeta = (shiftType: string): WeekendShiftMeta => {
+    const t = (shiftType || '').toLowerCase().trim();
+
+    // 1: Frühdienst (Sa 10–21, So/FT 8–20)
+    if (shiftType === 'Sa_10-21') {
+      return {
+        num: 1,
+        label: 'Frühdienst',
+        hours: 'Sa 10:00–21:00',
+        className: 'bg-amber-100 text-amber-900 border-amber-300',
+      };
+    }
+    if (shiftType === 'So_8-20') {
+      return {
+        num: 1,
+        label: 'Frühdienst',
+        hours: 'So/FT 08:00–20:00',
+        className: 'bg-amber-100 text-amber-900 border-amber-300',
+      };
+    }
+
+    // 2: Spätdienst Azubi (Sa 10–19)
+    if (shiftType === 'Sa_10-19') {
+      return {
+        num: 2,
+        label: 'Spätdienst Azubi',
+        hours: 'Sa 10:00–19:00',
+        className: 'bg-orange-100 text-orange-900 border-orange-300',
+      };
+    }
+
+    // 3: Rufbereitschaft (Sa/So 10–22)
+    if (shiftType === 'Sa_10-22' || shiftType === 'So_10-22') {
+      return {
+        num: 3,
+        label: 'Rufbereitschaft',
+        hours: 'Sa & So 10:00–22:00',
+        className: 'bg-purple-100 text-purple-900 border-purple-300',
+      };
+    }
+
+    // 4: Azubi Rufbereitschaft (So 8–20:30)
+    if (shiftType === 'So_8-20:30') {
+      return {
+        num: 4,
+        label: 'Azubi Rufbereitschaft',
+        hours: 'So/FT 08:00–20:30',
+        className: 'bg-blue-100 text-blue-900 border-blue-300',
+      };
+    }
+
+    // Generic fallbacks
+    if (t.includes('8-20') || t.includes('10-21') || t.includes('früh') || t.includes('tag')) {
+      return { num: 1, label: 'Frühdienst', hours: '', className: 'bg-amber-100 text-amber-900 border-amber-300' };
+    }
+    if (t.includes('10-19') || t.includes('spät')) {
+      return { num: 2, label: 'Spätdienst', hours: '', className: 'bg-orange-100 text-orange-900 border-orange-300' };
+    }
+    if (t.includes('10-22') || t.includes('ruf')) {
+      return { num: 3, label: 'Rufbereitschaft', hours: '', className: 'bg-purple-100 text-purple-900 border-purple-300' };
+    }
+    if (t.includes('20:30') || t.includes('azubi')) {
+      return { num: 4, label: 'Azubi Ruf', hours: '', className: 'bg-blue-100 text-blue-900 border-blue-300' };
+    }
+
+    return { num: 1, label: shiftType, hours: '', className: 'bg-stone-100 text-stone-700 border-stone-200' };
+  };
+
+  const getShiftOrder = (shiftType: string): number => {
+    return getWeekendShiftMeta(shiftType).num;
+  };
 
   const getStaffDisplayName = (id: string, isVet = false) => {
     const s = getStaff(id);
@@ -666,12 +771,13 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
 
               <Button
                 onClick={() => setPageMode('setup')}
-                variant="outline"
+                variant="primary"
                 size="sm"
-                className="text-xs"
+                className="text-xs bg-[#324b9b] hover:bg-[#25397a] text-white shadow-xs font-semibold px-3 py-1.5"
+                title="Öffnet den Planungs-Assistenten für ein neues Quartal"
               >
-                <RotateCcw className="h-3.5 w-3.5 mr-1.5 text-stone-500" />
-                Neu berechnen
+                <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-300" />
+                Neues Quartal planen
               </Button>
             </div>
           </div>
@@ -942,20 +1048,70 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </label>
               </div>
 
-              {/* Legend Banner (Streamlit-style) */}
-              <div className="flex items-center gap-4 text-[11px] text-stone-600 px-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#e8e0f0] border border-purple-200 inline-block" />
-                  <span>🌙 Nachtdienst</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#fff3e0] border border-amber-200 inline-block" />
-                  <span>☀️ Wochenenddienst</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#b2dfdb] border border-teal-300 inline-block" />
-                  <span>📌 Fest vorbelegt</span>
-                </span>
+              {/* Pinned Sticky Legend for Shifts */}
+              <div className="sticky top-14 z-30 bg-white/95 backdrop-blur-md border border-stone-200/90 rounded-lg px-3 py-2 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
+                  {/* Left: Weekend Shift Numbers (1, 2, 3, 4) */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <span className="font-bold text-stone-700 flex items-center gap-1 shrink-0">
+                      <span>☀️ Wochenendschichten:</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5 font-sans">
+                      <span
+                        className="inline-flex items-center gap-1 bg-amber-50 text-amber-950 border border-amber-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag 10:00–21:00 / Sonntag & Feiertag 08:00–20:00"
+                      >
+                        <span className="font-bold text-amber-900 font-mono">(1)</span>
+                        <span className="font-medium">Früh</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa 10–21 / So 8–20)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-orange-50 text-orange-950 border border-orange-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag 10:00–19:00 (Azubi)"
+                      >
+                        <span className="font-bold text-orange-900 font-mono">(2)</span>
+                        <span className="font-medium">Spät Azubi</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa 10–19)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-purple-50 text-purple-950 border border-purple-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag & Sonntag 10:00–22:00"
+                      >
+                        <span className="font-bold text-purple-900 font-mono">(3)</span>
+                        <span className="font-medium">Ruf</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa & So 10–22)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-blue-50 text-blue-950 border border-blue-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Sonntag & Feiertag 08:00–20:30 (Azubi Präsenz 8–12, Ruf 12–20:30)"
+                      >
+                        <span className="font-bold text-blue-900 font-mono">(4)</span>
+                        <span className="font-medium">Azubi Ruf</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(So 8–20:30)</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right: Quick Indicators */}
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-stone-600">
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-[#eee8f5] border border-purple-300 inline-block" />
+                      <span>🌙 Nacht</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-[#e8f5f3] border border-teal-300 inline-block" />
+                      <span>🎓 Intern (08:30–20:30)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-emerald-100 border border-emerald-300 inline-block" />
+                      <Pin className="h-2.5 w-2.5 text-emerald-700" />
+                      <span className="text-emerald-950 font-medium">Fest vorbelegt</span>
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* The Streamlit-Style Calendar Matrix Table */}
@@ -968,11 +1124,14 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                         <th className="py-2.5 px-3 border-r border-stone-200 w-52 bg-[#eee8f5]">
                           🌙 Nacht
                         </th>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-48 bg-[#fff8e7]">
-                          ☀️ Sa/So Dienst
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-64 bg-[#fff8e7]">
+                          ☀️ Sa/So Dienst & Rufbereitschaft (1–4)
                         </th>
-                        <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#fff8e7]">
-                          ☀️ Rufbereitschaft
+                        <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#e8f5f3]">
+                          <div className="flex items-center justify-between">
+                            <span>🎓 Intern Tagdienst</span>
+                            <span className="text-[10px] text-teal-800/70 font-mono font-normal">08:30–20:30</span>
+                          </div>
                         </th>
                       </tr>
                     </thead>
@@ -994,25 +1153,22 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                           const isWknd = isWeekendDay(dateStr);
                           const dayShifts = assignments.filter((a) => a.shift_date === dateStr);
 
-                          // 1. Night shifts (starts with 'N_')
+                          // 1. Night shifts (starts with 'N_') - includes Vets, TFAs, and Night-Interns
                           const nightShifts = dayShifts.filter((a) => a.shift_type.startsWith('N_'));
 
-                          // 2. Rufbereitschaft shifts (10-22 or 20:30)
-                          const rufShifts = dayShifts.filter(
-                            (a) => a.shift_type.includes('10-22') || a.shift_type.includes('20:30')
+                          // 2. Weekend day shifts & Rufbereitschaft (non-night, non-intern)
+                          const weekendAndRufShifts = dayShifts
+                            .filter((a) => !a.shift_type.startsWith('N_') && !a.shift_type.includes('Intern'))
+                            .sort((a, b) => getShiftOrder(a.shift_type) - getShiftOrder(b.shift_type));
+
+                          // 3. Daytime Intern weekend shifts
+                          const internShifts = dayShifts.filter(
+                            (a) => !a.shift_type.startsWith('N_') && a.shift_type.includes('Intern')
                           );
 
-                          // 3. Weekend day shifts (e.g. 10-21, 8-20, 10-19, Intern)
-                          const weekendShifts = dayShifts.filter(
-                            (a) => !a.shift_type.startsWith('N_') && !rufShifts.includes(a)
-                          );
-
-                          const isNightPreAssigned = preAssigned.some(
-                            (pa) => pa.shift_date === dateStr && pa.shift_type.startsWith('N_')
-                          );
-                          const isWkndPreAssigned = preAssigned.some(
-                            (pa) => pa.shift_date === dateStr && !pa.shift_type.startsWith('N_')
-                          );
+                          const isNightPreAssigned = nightShifts.some((s) => isShiftPreAssigned(s));
+                          const isWkndPreAssigned = weekendAndRufShifts.some((s) => isShiftPreAssigned(s));
+                          const isInternPreAssigned = internShifts.some((s) => isShiftPreAssigned(s));
 
                           const [, month, day] = dateStr.split('-');
                           const dayLabel = `${day}.${month}. ${getWeekdayShort(dateStr)}`;
@@ -1047,24 +1203,39 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                 {nightShifts.length > 0 ? (
                                   <div className="flex flex-col gap-1">
                                     {nightShifts.map((shift, idx) => {
-                                      const isPaired = shift.is_paired || nightShifts.length > 1;
-                                      const isPre = preAssigned.some(
-                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
-                                      );
+                                      const isPre = isShiftPreAssigned(shift);
+                                      const stf = getStaff(shift.actual_staff_id);
+                                      const role = stf?.beruf;
                                       return (
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          className="flex items-center gap-1.5 text-left font-semibold"
+                                          className={cn(
+                                            'flex items-center gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
+                                            isPre
+                                              ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
+                                              : 'text-stone-900'
+                                          )}
                                         >
                                           {isPre && (
-                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
+                                            <span title="Fest vorgegebener Dienst">
+                                              <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
+                                            </span>
                                           )}
                                           <span>
                                             {getStaffDisplayName(shift.actual_staff_id, true)}
                                           </span>
-                                          {isPaired && (
-                                            <span className="text-[10px] text-purple-700 bg-purple-100/80 px-1 py-0.2 rounded font-normal">
-                                              TFA
+                                          {role && role !== 'Vet' && role !== 'Tierarzt' && (
+                                            <span
+                                              className={cn(
+                                                'text-[10px] px-1 py-0.2 rounded font-medium',
+                                                role === 'Azubi'
+                                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                                  : role === 'Intern'
+                                                    ? 'bg-teal-100 text-teal-900 border border-teal-200'
+                                                    : 'bg-blue-100 text-blue-900 border border-blue-200'
+                                              )}
+                                            >
+                                              {role}
                                             </span>
                                           )}
                                           {shift.is_override && (
@@ -1081,40 +1252,74 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                 )}
                               </td>
 
-                              {/* ☀️ Weekend Day Shift Column */}
+                              {/* ☀️ Sa/So Dienst & Rufbereitschaft Column */}
                               <td
                                 className={cn(
-                                  'py-2 px-3 border-r border-stone-200 font-sans font-semibold transition-colors',
-                                  !isWknd
-                                    ? 'bg-stone-50/30 text-stone-400 font-normal'
-                                    : isWkndPreAssigned
-                                      ? 'bg-[#b2dfdb] text-teal-950'
-                                      : 'bg-[#fff4e3] text-amber-950'
+                                  'py-2 px-3 border-r border-stone-200 font-sans transition-colors',
+                                  isWkndPreAssigned
+                                    ? 'bg-[#b2dfdb] text-teal-950 font-semibold'
+                                    : !isWknd && weekendAndRufShifts.length === 0
+                                      ? 'bg-stone-50/30 text-stone-400 font-normal'
+                                      : 'bg-[#fff4e3] text-amber-950 font-semibold'
                                 )}
                               >
-                                {weekendShifts.length > 0 ? (
+                                {weekendAndRufShifts.length > 0 ? (
                                   <div className="flex flex-col gap-1">
-                                    {weekendShifts.map((shift, idx) => {
-                                      const isPre = preAssigned.some(
-                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
-                                      );
+                                    {weekendAndRufShifts.map((shift, idx) => {
+                                      const isPre = isShiftPreAssigned(shift);
+                                      const stf = getStaff(shift.actual_staff_id);
+                                      const role = stf?.beruf;
+                                      const meta = getWeekendShiftMeta(shift.shift_type);
+
                                       return (
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          className="flex items-center gap-1.5 text-left font-semibold text-amber-950"
+                                          className={cn(
+                                            'flex items-center justify-between gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
+                                            isPre
+                                              ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
+                                              : 'text-stone-900'
+                                          )}
                                         >
-                                          {isPre && (
-                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
-                                          )}
-                                          <span>
-                                            {getStaffDisplayName(shift.actual_staff_id, false)}
-                                          </span>
-                                          {shift.shift_type.includes('Intern') && (
-                                            <span className="text-[10px] text-amber-800 bg-amber-100/80 px-1 py-0.2 rounded font-normal">
-                                              Intern
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            {isPre && (
+                                              <span title="Fest vorgegebener Dienst">
+                                                <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
+                                              </span>
+                                            )}
+                                            <span className="truncate">
+                                              {getStaffDisplayName(shift.actual_staff_id, false)}
                                             </span>
-                                          )}
-                                          {shift.is_override && <span>⚠️</span>}
+                                            {role && role !== 'TFA' && (
+                                              <span
+                                                className={cn(
+                                                  'text-[9px] px-1 py-0.2 rounded font-medium shrink-0',
+                                                  role === 'Azubi'
+                                                    ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                                    : role === 'Intern'
+                                                      ? 'bg-teal-100 text-teal-900 border border-teal-200'
+                                                      : 'bg-rose-100 text-rose-900 border border-rose-200'
+                                                )}
+                                              >
+                                                {role}
+                                              </span>
+                                            )}
+                                            {shift.is_override && (
+                                              <span className="text-[11px]" title="Getauchter Dienst">
+                                                ⚠️
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          <span
+                                            className={cn(
+                                              'text-[10px] font-bold px-1.5 py-0.2 rounded border font-mono shrink-0 cursor-help',
+                                              meta.className
+                                            )}
+                                            title={`${meta.label} (${meta.hours})`}
+                                          >
+                                            ({meta.num})
+                                          </span>
                                         </div>
                                       );
                                     })}
@@ -1124,36 +1329,44 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                 )}
                               </td>
 
-                              {/* ☀️ Rufbereitschaft Column (Shows actual on-call staff!) */}
+                              {/* 🎓 Intern Tagdienst Column */}
                               <td
                                 className={cn(
-                                  'py-2 px-3 border-r border-stone-200 font-sans',
-                                  isWknd ? 'bg-[#fff8ed] text-stone-700' : 'bg-stone-50/30 text-stone-300'
+                                  'py-2 px-3 border-r border-stone-200 font-sans transition-colors',
+                                  isInternPreAssigned
+                                    ? 'bg-[#b2dfdb] text-teal-950 font-semibold'
+                                    : !isWknd && internShifts.length === 0
+                                      ? 'bg-stone-50/30 text-stone-300 font-normal'
+                                      : 'bg-[#f0faf7] text-teal-950 font-semibold'
                                 )}
                               >
-                                {rufShifts.length > 0 ? (
+                                {internShifts.length > 0 ? (
                                   <div className="flex flex-col gap-1">
-                                    {rufShifts.map((shift, idx) => {
-                                      const isPre = preAssigned.some(
-                                        (pa) => pa.shift_date === dateStr && pa.shift_type === shift.shift_type
-                                      );
+                                    {internShifts.map((shift, idx) => {
+                                      const isPre = isShiftPreAssigned(shift);
                                       return (
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
-                                          className="flex items-center gap-1.5 text-left font-medium text-stone-800"
+                                          className={cn(
+                                            'flex items-center gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
+                                            isPre
+                                              ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
+                                              : 'text-stone-900'
+                                          )}
                                         >
                                           {isPre && (
-                                            <Pin className="h-3 w-3 text-teal-800 shrink-0" />
-                                          )}
-                                          <span>
-                                            {getStaffDisplayName(shift.actual_staff_id, false)}
-                                          </span>
-                                          {shift.shift_type.includes('20:30') && (
-                                            <span className="text-[10px] text-stone-500 bg-stone-100 px-1 py-0.2 rounded font-normal">
-                                              Azubi
+                                            <span title="Fest vorgegebener Dienst">
+                                              <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
                                             </span>
                                           )}
-                                          {shift.is_override && <span>⚠️</span>}
+                                          <span className="truncate">
+                                            {getStaffDisplayName(shift.actual_staff_id, false)}
+                                          </span>
+                                          {shift.is_override && (
+                                            <span className="text-[11px]" title="Getauchter Dienst">
+                                              ⚠️
+                                            </span>
+                                          )}
                                         </div>
                                       );
                                     })}

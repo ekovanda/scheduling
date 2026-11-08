@@ -1,7 +1,6 @@
 import React from 'react';
 import { Users, CalendarDays, Calendar, Scale, HelpCircle, ChevronDown, Pin, LogOut } from 'lucide-react';
-import { cn, isBirthdayToday } from '../lib/utils';
-import { fetchStaff } from '../lib/api';
+import { cn } from '../lib/utils';
 
 export type NavTab = 'staff' | 'absences' | 'preassignments' | 'matrix' | 'fairness' | 'about';
 
@@ -20,19 +19,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onQuarterChange,
   onLogout,
 }) => {
-  const [todaysBirthdays, setTodaysBirthdays] = React.useState<string[]>([]);
-
-  React.useEffect(() => {
-    fetchStaff()
-      .then((staff) => {
-        const matches = staff
-          .filter((s) => s.is_active && isBirthdayToday(s.birthday))
-          .map((s) => s.name);
-        setTodaysBirthdays(matches);
-      })
-      .catch(() => {});
-  }, []);
-
   const tabs = [
     { id: 'staff' as NavTab, label: 'Mitarbeiter', icon: Users },
     { id: 'absences' as NavTab, label: 'Abwesenheiten', icon: CalendarDays },
@@ -75,17 +61,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               <ChevronDown className="pointer-events-none absolute right-0 h-3 w-3 text-stone-400" />
             </div>
           </div>
-
-          {/* Subtle Birthday Note in Header Whitespace */}
-          {todaysBirthdays.length > 0 && (
-            <div className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200/90 shadow-2xs animate-in fade-in">
-              <span className="text-xs">🎂</span>
-              <span>
-                Heute Geburtstag:{' '}
-                <strong className="font-semibold">{todaysBirthdays.join(', ')}</strong>
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Right: Single-Line Nav Tabs */}

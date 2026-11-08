@@ -9,6 +9,82 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.13.3] - 2026-11-08
+
+### UI & API: Bearbeitungsfunktion für Abwesenheiten und Vorbelegungen
+
+- **Bearbeiten-Schaltfläche in Abwesenheiten (`frontend/src/views/AbsencesView.tsx`, `frontend/src/lib/api.ts`):**
+  - Neuer `Pencil`-Aktionsbutton neben dem Lösch-Icon für jeden Abwesenheitseintrag.
+  - Öffnet den Modal-Dialog vorausgefüllt mit Mitarbeiter und Datumsintervall (`handleOpenEditModal`).
+  - Reaktive Aktualisierung des lokalen Komponenten-Zustands und Persistenz via `updateAbsence`.
+- **Bearbeiten-Schaltfläche in Vorbelegungen (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/lib/api.ts`):**
+  - Neuer `Pencil`-Aktionsbutton in der Tabelle der Vorbelegungen (`handleOpenEditModal`).
+  - Vorbelegung mit Mitarbeiter, Datum, Schichtkachel, Feiertags-Status und Notiz wird im Dialog editierbar gemacht.
+  - Lokale Zustandsaktualisierung und synchrone Persistenz via `updatePreAssigned`.
+- **REST-API Erweiterungen (`app/api/v1/absences.py`, `app/api/v1/preassigned.py`):**
+  - Neuer Endpunkt `PUT /api/v1/absences/{absence_id}` zur Aktualisierung bestehender Abwesenheiten.
+  - Neuer Endpunkt `PUT /api/v1/preassigned/{preassigned_id}` zur Aktualisierung bestehender Vorbelegungen.
+  - Vollständige Validierung von Pfad- und Payload-IDs, Existenzprüfungen sowie Absicherung durch `require_planner`.
+  - Erweiterung der API-Integrationstests in `tests/test_api_v1.py`.
+
+## [1.13.2] - 2026-11-08
+
+### UI: Kompakte Schichtnummerierung, angepinnte Legende & Intern-Bereinigung im Dienstplan
+
+- **Kompakte Wochenendschicht-Nummerierung (`frontend/src/views/MatrixView.tsx`):**
+  - Mitarbeiternamen und -kürzel stehen in Spalte 2 an erster Stelle und im klaren visuellen Fokus.
+  - Ersatz der breiten Schichttext-Badges durch kompakte, farblich abgestimmte Ziffern-Tags `(1)` bis `(4)`:
+    - `(1)`: Frühdienst (`Sa 10–21`, `So/FT 8–20`)
+    - `(2)`: Spätdienst Azubi (`Sa 10–19`)
+    - `(3)`: Rufbereitschaft (`Sa/So 10–22`)
+    - `(4)`: Azubi Rufbereitschaft (`So 8–20:30`)
+  - Tooltips auf den Ziffern-Tags zeigen bei Mouseover die vollständige Schichtbezeichnung und Arbeitszeiten.
+- **Angepinnte Schicht-Legende (`frontend/src/views/MatrixView.tsx`):**
+  - Neue sticky Legende (`sticky top-14 z-30`) über der Dienstplantabelle bleibt beim vertikalen Scrollen dauerhaft unterhalb der Navigationsleiste verankert.
+  - Bietet direkte Übersicht über alle Wochenendschichten, Nachtdienste, Interns sowie Vorbelegungs-Markierungen.
+- **Intern-Tagdienst Spaltenbereinigung (`frontend/src/views/MatrixView.tsx`):**
+  - Entfernung redundanter `08:30–20:30`- und `[Intern]`-Badges aus den einzelnen Tabellenzeilen der Spalte 3.
+  - Der Tabellenkopf `🎓 Intern Tagdienst` weist die einheitliche Schichtzeit (`08:30–20:30`) zentral aus; Zeileneinträge konzentrieren sich rein auf die eingeteilte Person.
+
+## [1.13.1] - 2026-11-08
+
+### UI & Workflow: Klickbare Schicht-Kacheln & Wochentagsanzeige in Vorbelegungen
+
+- **Klickbare Schicht-Kacheln (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/types/api.ts`):**
+  - Dropdown im Dialog „Dienst vorab zuweisen“ durch dynamische, interaktive Kacheln mit Piktogrammen, Schichtzeiten und Tooltips ersetzt.
+  - Tagesabhängige Schichtfilterung (`getShiftOptionsForDate`): Zeigt für Samstage, Sonntage oder Feiertage/Werktage nur die jeweils an diesem Tag relevanten Schichten an (z. B. `Sa_10-21`, `So_8-20`, `So_10-22`, `So_8-20:30`, `Sa_Intern`, `So_Intern`, `N_*`).
+  - Strikte Übergabe der tatsächlichen CP-SAT-Schicht-Identifier anstelle ungenauer Sammelbegriffe.
+- **Wochentagsanzeige in Vorbelegungen (`frontend/src/views/PreAssignedView.tsx`):**
+  - Neue Tabellenspalte „Wochentag“ mit farbcodierten Wochentags-Badges (Amber für Sa/So, Purple für Fr, Stone für Mo–Do) zur schnellen Nachvollziehbarkeit.
+- **Datumsfeld-Initialisierung & Fokus (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/views/AbsencesView.tsx`):**
+  - Formulare starten mit unbefülltem Datumsfeld; beim Anklicken des Kalenders öffnet sich der Datepicker direkt zum Start des Planungsjahres (01.01.2027) via `min="2027-01-01"` und automatischem Fokus/`.showPicker()`.
+
+## [1.13.0] - 2026-11-08
+
+### UI & Workflow: Fokussierte Ansichten, Sofortsuche & Dienstplan-Neugestaltung
+
+- **Dienstplan-Spaltenneugestaltung (`frontend/src/views/MatrixView.tsx`):**
+  - **Spalte 1 (`🌙 Nacht`)**: Bündelt alle Nachtschichten für Tierärzte, TFAs und Nacht-Interns.
+  - **Spalte 2 (`☀️ Sa/So Dienst & Rufbereitschaft`)**: Vereint Wochenend-Tagdienste und Rufbereitschaften sortiert nach Schichtabfolge (Früh -> Spät -> Ruf) mit farbcodierten Badges und exakten Arbeitszeiten (`Früh 10–21`, `Spät 10–19`, `Ruf 10–22`, `Früh 8–20`, `Ruf 8–20:30`).
+  - **Spalte 3 (`🎓 Intern Tagdienst`)**: Dedizierte Spalte für Wochenend-Tagdienste der Interns (`08:30–20:30`).
+- **Header-Bereinigung (`frontend/src/components/Navbar.tsx`):**
+  - Redundanten Geburtstags-Hinweis aus der oberen Navigations-/Reiterleiste entfernt zur Fokussierung auf Planungsquartal und Kernnavigation.
+- **Mitarbeiter-Sofortsuche & Autocomplete (`frontend/src/components/ui/SearchableSelect.tsx`):**
+  - Neue barrierefreie `SearchableSelect`-Komponente mit Tastaturnavigation (`ArrowUp`/`ArrowDown`/`Enter`/`Escape`), Rollen-Badges und Sofortfilterung nach Name oder Kürzel.
+  - Ersetzt unübersichtliche 40-Personen-Dropdowns in den Eingabedialogen für Abwesenheiten (`AbsencesView.tsx`) und Vorbelegungen (`PreAssignedView.tsx`).
+- **Fokussierte Abwesenheiten-Ansicht & Filterung (`frontend/src/views/AbsencesView.tsx`):**
+  - Verschlankung auf die reine, übersichtliche Ansicht nach Person (Entfernung redundanter Kalender- und Tabellenmodi).
+  - Neues Live-Filterfeld im Kopfbereich zur sofortigen Suche nach Namen und Kürzeln mit reaktiver Aktualisierung der Personenkarten und KPI-Kennzahlen.
+- **Listenfokussierung & Nachtdienst-Korrektur in Vorbelegungen (`frontend/src/views/PreAssignedView.tsx`, `frontend/src/lib/utils.ts`):**
+  - Reduktion auf die tabellarische Listenansicht für maximale Übersichtlichkeit.
+  - Zentrale Hilfsfunktion `isNightShift` in `lib/utils.ts` erkennt CP-SAT-Schichten (`N_*`) sowie Bezeichnungen wie `"Nachtdienst"` zuverlässig.
+  - Korrektur der KPI-Zählung und Darstellung aller Nachtdienste mit Indigo-Mond-Badge statt fälschlichem "Wochenende Tag".
+- **Dienstplan-Korrekturen & visuelle Aufwertung (`frontend/src/views/MatrixView.tsx`):**
+  - **Namensanzeige**: `getStaff()` um case-insensitives Matching für IDs und Kürzel erweitert. Behebt den Bug, dass "Volle Namen anzeigen" für Mitarbeiter nicht griff.
+  - **Dynamische Rollen-Zuordnung**: Rollen-Badges werden strikt aus `stf.beruf` abgeleitet. Behebt falsche Bezeichnungen (z.B. LiM als TFA statt Azubi bei Paaren).
+  - **Grüne Vorbelegungs-Hervorhebung**: Alle fest vorgegebenen Dienste (Ärzte, TFAs, Azubis und Interns) werden durchgehend smaragdgrün hinterlegt (`bg-emerald-100/90 text-emerald-950 border-emerald-300`) mit Stecknadel-Icon. Wochentags-Feiertage mit Tagdiensten werden nicht mehr fälschlich ausgegraut.
+  - **Prominenter Planungs-Button**: Umbenennung von "Neu berechnen" zu "Neues Quartal planen" mit primärem Farb-Highlight (`bg-[#324b9b]`) und Sparkles-Icon zur klaren Abgrenzung.
+
 ## [1.12.5] - 2026-11-08
 
 ### Serving Architecture, Concurrency & Solver Transparency (Findings C1, C2, C3)

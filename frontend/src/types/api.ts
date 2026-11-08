@@ -33,7 +33,17 @@ export interface AbsenceRecord {
   note?: string | null;
 }
 
-export type PreAssignedShiftType = 'Nachtdienst' | 'Wochenenddienst' | 'Tagdienst';
+export type PreAssignedShiftType =
+  | 'Nachtdienst'
+  | 'Sa_10-21'
+  | 'Sa_10-19'
+  | 'Sa_10-22'
+  | 'Sa_Intern'
+  | 'So_8-20'
+  | 'So_10-22'
+  | 'So_8-20:30'
+  | 'So_Intern'
+  | string;
 
 export interface PreAssignedShift {
   id: string;

@@ -106,6 +106,20 @@ def test_absences_api(client: TestClient) -> None:
     assert query_resp.status_code == 200
     assert len(query_resp.json()) == 1
 
+    # Update absence
+    updated_payload = {
+        "id": "ABS_01",
+        "staff_id": "STAFF_01",
+        "absence_type": "Vacation",
+        "start_date": "2026-05-02",
+        "end_date": "2026-05-12",
+        "note": "Updated holiday",
+    }
+    update_resp = client.put("/api/v1/absences/ABS_01", json=updated_payload)
+    assert update_resp.status_code == 200
+    assert update_resp.json()["start_date"] == "2026-05-02"
+    assert update_resp.json()["note"] == "Updated holiday"
+
     # Query outside range
     query_empty = client.get("/api/v1/absences?start_date=2026-06-01&end_date=2026-06-10")
     assert query_empty.status_code == 200
@@ -355,11 +369,18 @@ def test_preassigned_api_crud_lifecycle(client: TestClient) -> None:
     assert len(items) == 1
     assert items[0]["id"] == "pa-test-1"
 
-    # 3. Delete preassigned shift
+    # 3. Update preassigned shift
+    update_payload = dict(payload)
+    update_payload["note"] = "Aktualisierte Vorgabe"
+    put_resp = client.put("/api/v1/preassigned/pa-test-1", json=update_payload)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["note"] == "Aktualisierte Vorgabe"
+
+    # 4. Delete preassigned shift
     del_resp = client.delete("/api/v1/preassigned/pa-test-1")
     assert del_resp.status_code == 204
 
-    # 4. Verify empty list
+    # 5. Verify empty list
     empty_resp = client.get("/api/v1/preassigned")
     assert empty_resp.status_code == 200
     assert len(empty_resp.json()) == 0
