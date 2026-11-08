@@ -9,6 +9,22 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.12.1] - 2026-11-08
+
+### Security: API-Zugriffskontrolle & Fail-Closed Deployment-Härtung (Findings A1, A2)
+
+- **Router-Level Authentifizierungsschutz (`app/api/v1/router.py`, `staff.py`, `absences.py`, `preassigned.py`, `quarters.py`):**
+  - Alle Lese- und Berechnungs-Endpunkte (`GET /api/v1/staff`, `GET /api/v1/absences`, `GET /api/v1/preassigned`, `GET /api/v1/quarters/*`, `POST /validate`, `POST /validate-feasibility`, `GET /export`) erfordern nun eine autorisierte Planer-Sitzung via `require_planner`.
+  - Redundante Parameter `_planner: PlannerDep` in den Route-Handlern entfernt; Authentifizierung wird zentral auf Router-Ebene deklariert.
+  - Automatisierte Coverage-Testsuite (`tests/test_api_auth_coverage.py`), die dynamisch alle 32 API-Routen prüft und bei unauthentifiziertem Zugriff einen 401 garantiert.
+- **Entfernung hartkodierter Standard-Passwörter & Fail-Closed Schutz (`app/api/v1/auth.py`, `app/api/main.py`):**
+  - Standard-Passwort-Hash `_DEFAULT_PASSWORD_HASH` ("Trillig2026!") vollständig aus dem Quellcode entfernt.
+  - Startup-Validierung (`validate_auth_config`): Startet die Anwendung mit `AUTH_REQUIRED=true` ohne konfiguriertes `PASSWORD_HASH` oder `APP_PASSWORD`, wird der Start sofort verweigert (Fail-Closed).
+  - Anmeldeversuche ohne hinterlegtes Secret scheitern deterministisch mit 401.
+  - Frontend-Komponente `LoginGate.tsx` von fest verdrahteten Standard-Passwörtern bereinigt.
+- **Cloud Run Deployment-Skripte (`scripts/deploy_cloud_run.sh`, `scripts/deploy_cloud_run.ps1`):**
+  - Abbruch mit klarer Fehlermeldung, falls ein Produktions-Deploy (`AUTH_REQUIRED=true`) ohne gesetztes `APP_PASSWORD` oder `PASSWORD_HASH` angestoßen wird.
+
 ## [1.12.0] - 2026-11-07
 
 ### Added: Produktions-Cutover & Firebase Hosting Pipeline (Phase 3C)

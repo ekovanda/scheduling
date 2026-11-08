@@ -44,11 +44,17 @@ $EnvVars = @(
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "GCP_PROJECT=$ProjectId"
 )
-if ($AppPassword -ne "") {
+$EffectivePassword = if ($AppPassword -ne "") { $AppPassword } elseif ($env:APP_PASSWORD) { $env:APP_PASSWORD } else { "" }
+if ($EffectivePassword -ne "") {
     $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('SHA256')
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($AppPassword)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($EffectivePassword)
     $hash = [BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace("-", "").ToLower()
     $EnvVars += "PASSWORD_HASH=$hash"
+} elseif ($env:PASSWORD_HASH) {
+    $EnvVars += "PASSWORD_HASH=$($env:PASSWORD_HASH)"
+} elseif ($AuthRequired -eq "true") {
+    Write-Error "ERROR: AUTH_REQUIRED is 'true' but neither AppPassword parameter nor PASSWORD_HASH/APP_PASSWORD environment variable is set."
+    exit 1
 }
 $EnvVarsCsv = $EnvVars -join ","
 

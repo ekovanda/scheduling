@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.0"
+CURRENT_VERSION = "1.12.1"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,15 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.12.1",
+        date="08. November 2026",
+        summary="Sicherheits-Härtung der API & Passwort-Schutz",
+        highlights=(
+            "Alle Lese- und Berechnungs-Endpunkte erfordern verifizierte Planer-Berechtigung.",
+            "Entfernung des Standard-Passworts und Absicherung gegen unkonfigurierte Deployments.",
+        ),
+    ),
     Release(
         version="1.12.0",
         date="07. November 2026",

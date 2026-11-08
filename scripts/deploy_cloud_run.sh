@@ -81,6 +81,10 @@ if [ -n "${APP_PASSWORD:-}" ]; then
     ENV_VARS_LIST+=("PASSWORD_HASH=${PASSWORD_HASH}")
 elif [ -n "${PASSWORD_HASH:-}" ]; then
     ENV_VARS_LIST+=("PASSWORD_HASH=${PASSWORD_HASH}")
+elif [ "${AUTH_REQUIRED}" = "true" ]; then
+    echo "ERROR: AUTH_REQUIRED is 'true' but neither APP_PASSWORD nor PASSWORD_HASH is configured." >&2
+    echo "Aborting deployment to prevent deploying an inaccessible or fail-open service." >&2
+    exit 1
 fi
 
 ENV_VARS_CSV=$(IFS=,; echo "${ENV_VARS_LIST[*]}")

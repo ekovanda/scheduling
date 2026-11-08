@@ -6,7 +6,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.dependencies import get_repository
-from app.api.v1.auth import require_planner
 from app.persistence.exceptions import EntityNotFoundError
 from app.persistence.models import AbsenceRecord
 from app.persistence.repository import RepositoryProtocol
@@ -14,7 +13,6 @@ from app.persistence.repository import RepositoryProtocol
 router = APIRouter(prefix="/absences", tags=["Absences"])
 
 RepoDep = Annotated[RepositoryProtocol, Depends(get_repository)]
-PlannerDep = Annotated[bool, Depends(require_planner)]
 StaffIdQuery = Annotated[
     str | None, Query(description="Filter absences for a specific staff member")
 ]
@@ -51,7 +49,6 @@ def list_absences(
 def create_absence(
     absence: AbsenceRecord,
     repo: RepoDep,
-    _planner: PlannerDep = True,
 ) -> AbsenceRecord:
     """Record a new absence entry in the ledger."""
     # Verify staff member exists
@@ -90,7 +87,6 @@ def get_absence_by_id(
 def delete_absence(
     absence_id: str,
     repo: RepoDep,
-    _planner: PlannerDep = True,
 ) -> None:
     """Delete an absence record by ID."""
     try:

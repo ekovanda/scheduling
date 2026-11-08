@@ -6,12 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.v1.auth import validate_auth_config
 from app.api.v1.router import api_v1_router
 from app.release_info import CURRENT_VERSION
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    validate_auth_config()
     api_app = FastAPI(
         title="Dienstplan Scheduling Platform API",
         description=(

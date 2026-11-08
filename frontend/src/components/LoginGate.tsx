@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ArrowRight, AlertCircle, Eye, EyeOff, Zap } from 'lucide-react';
+import { Lock, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { Button } from './ui/Button';
 import { checkAuthStatus, getAuthToken, loginClinic } from '../lib/api';
 
@@ -57,20 +57,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
       setIsAuthenticated(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Anmeldung fehlgeschlagen';
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDevQuickLogin = async () => {
-    setErrorMsg(null);
-    setLoading(true);
-    try {
-      await loginClinic('Trillig2026!');
-      setIsAuthenticated(true);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Schnellanmeldung fehlgeschlagen';
       setErrorMsg(msg);
     } finally {
       setLoading(false);
@@ -155,22 +141,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
                 </span>
               )}
             </Button>
-
-            {/* Quick Dev Login */}
-            <div className="pt-3 border-t border-stone-100 flex flex-col items-center gap-2">
-              <button
-                type="button"
-                onClick={handleDevQuickLogin}
-                disabled={loading}
-                className="w-full text-xs font-medium text-stone-600 hover:text-stone-900 bg-stone-100 hover:bg-stone-200/80 py-2 px-3 rounded-lg border border-stone-200/70 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Zap className="h-3.5 w-3.5 text-amber-600" />
-                <span>Entwickler-Login (1 Klick)</span>
-              </button>
-              <span className="text-[10px] text-stone-400">
-                Standard-Passwort: <code className="bg-stone-100 px-1 py-0.5 rounded text-stone-600 font-mono">Trillig2026!</code>
-              </span>
-            </div>
           </form>
         </div>
       </div>
