@@ -828,19 +828,6 @@ def _check_nd_max_consecutive_constraint(
     return violations
 
 
-def _check_nd_count_constraint(
-    schedule: Schedule, staff_dict: dict[str, Staff]
-) -> list[ConstraintViolation]:
-    """DEPRECATED: Check that consecutive night counts match staff nd_count field.
-    
-    This is kept for backwards compatibility but now uses nd_max_consecutive.
-    """
-    # Delegate to the new function
-    return _check_nd_max_consecutive_constraint(schedule, staff_dict)
-
-    return violations
-
-
 def _check_nd_exceptions_constraint(
     schedule: Schedule, staff_dict: dict[str, Staff]
 ) -> list[ConstraintViolation]:
@@ -1139,11 +1126,9 @@ def _calculate_soft_penalty(schedule: Schedule, staff_list: list[Staff]) -> floa
         w_variance = sum((x - w_mean) ** 2 for x in we_counts) / len(we_counts)
         penalty += (w_variance**0.5) * 10
     
-    # NEW: Soft penalty for nd_count violations (moved from hard constraints)
-    violations = _check_nd_count_constraint(schedule, staff_dict)
-    for v in violations:
-        # High penalty per violation to strongly discourage it, but allow it if necessary
-        penalty += 100.0
+    # Soft penalty for consecutive night shifts exceeding nd_max_consecutive
+    consecutive_nd_violations = _check_nd_max_consecutive_constraint(schedule, staff_dict)
+    penalty += 100.0 * len(consecutive_nd_violations)
 
     return penalty
 

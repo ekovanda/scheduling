@@ -191,7 +191,7 @@ st.session_state.validation_result: ValidationResult | None
 
 1. **New constraints**: Add check function to validator.py, add CP constraint to solver_cpsat.py
 2. **New shift types**: Add to ShiftType enum, update generate_quarter_shifts()
-3. **Custom objectives**: Modify `_add_group_fairness_objective()` in solver_cpsat.py
+3. **Custom objectives**: Modify `_add_group_fairness_objective_with_presence()` in solver_cpsat.py
 
 ## Cloud Run Web Serving & Concurrency Architecture
 

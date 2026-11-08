@@ -180,10 +180,6 @@ def generate_schedule_cpsat(
     )
     quarter_end = max(s.shift_date for s in shifts) if shifts else (quarter_end or quarter_start)
 
-    # Index mappings
-    staff_by_id = {s.identifier: s for s in staff_list}
-    shift_index = {(s.shift_date, s.shift_type): i for i, s in enumerate(shifts)}
-
     # Pre-compute vacation dates per staff for efficient lookup
     staff_vacation_dates: dict[str, set[date]] = {
         s.identifier: get_staff_unavailable_dates(vacations, s.identifier) for s in staff_list
@@ -249,10 +245,6 @@ def generate_schedule_cpsat(
     # Staff subsets
     intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
     vet_staff = [s for s in staff_list if s.beruf == Beruf.VET]
-
-    # Night shifts categorized into open and closed nights
-    open_nights = [s for s in night_shifts if s.is_open_night()]
-    closed_nights = [s for s in night_shifts if s.is_closed_night()]
 
     # =========================================================================
     # DECISION VARIABLES
@@ -892,9 +884,7 @@ def generate_schedule_cpsat(
 
     # FTE-scaled counts (multiplied by 40/hours AND adjusted for presence)
     # To avoid fractions in CP, we multiply everything by a common factor
-    # SCALE = 40 * 10 * 1000 (extra 1000 for presence factor precision)
     SCALE = 40 * 10  # Scale factor for integer arithmetic
-    PRESENCE_SCALE = 1000  # Matches presence_factors scaling
 
     # Calculate scaled fairness by group
     objective_terms = []
@@ -920,7 +910,6 @@ def generate_schedule_cpsat(
     # Group staff by role for fairness within groups
     tfa_staff = [s for s in staff_list if s.beruf == Beruf.TFA]
     azubi_staff = [s for s in staff_list if s.beruf == Beruf.AZUBI]
-    intern_staff = [s for s in staff_list if s.beruf == Beruf.INTERN]
 
     # For each group, add combined fairness objective
     for group_name, group in [("TFA", tfa_staff), ("Azubi", azubi_staff), ("Intern", intern_staff)]:
@@ -1229,8 +1218,6 @@ def _add_weekend_isolation_constraints(
     shifts_by_date: dict[date, list[Shift]] = defaultdict(list)
     for s in weekend_shifts + night_shifts:
         shifts_by_date[s.shift_date].append(s)
-
-    all_dates = sorted(shifts_by_date.keys())
 
     for staff in staff_list:
         for we_shift in weekend_shifts:
@@ -1669,72 +1656,6 @@ def _add_abteilung_night_constraints(
                         model.Add(x[key1] + x[key2] <= 1)
 
 
-def _add_group_fairness_objective(
-    model: cp_model.CpModel,
-    objective_terms: list,
-    counts: dict[str, cp_model.LinearExpr],
-    group: list[Staff],
-    scale: int,
-    prefix: str,
-    max_fte_deviation: float = 1.5,
-) -> None:
-    """Add min-max fairness objective for a group with hard constraint.
-
-    Enforces hard constraint: (max - min) <= threshold (FTE-normalized).
-    Then minimizes (max - min) as soft objective for tightest fairness.
-
-    Args:
-        max_fte_deviation: Maximum allowed FTE-normalized Notdienst difference
-            within the group. Default 1.5 means no one can have more than
-            1.5 FTE-adjusted Notdienste more than the person with fewest.
-    """
-    if len(group) < 2:
-        return
-
-    # Create scaled count variables: count * (scale / hours)
-    # This FTE-normalizes the counts so a 20h employee with 5 shifts
-    # equals a 40h employee with 10 shifts.
-    scaled_counts = []
-    for staff in group:
-        count_expr = counts.get(staff.identifier, 0)
-        if isinstance(count_expr, int) and count_expr == 0:
-            # Zero count, skip
-            scaled_var = model.NewIntVar(0, 0, f"{prefix}_scaled_{staff.identifier}")
-        else:
-            # scaled = count * (scale / hours) = count * scale / hours
-            # Since scale=400 and hours in [18,40], multiplier in [10,22]
-            if staff.hours <= 0:
-                raise ValueError(
-                    f"Staff member {staff.identifier} has invalid contracted hours: {staff.hours}"
-                )
-            multiplier = scale // staff.hours
-            max_possible = 100 * multiplier  # Conservative upper bound
-            scaled_var = model.NewIntVar(0, max_possible, f"{prefix}_scaled_{staff.identifier}")
-            model.Add(scaled_var == count_expr * multiplier)
-        scaled_counts.append(scaled_var)
-
-    # Create max and min variables
-    max_var = model.NewIntVar(0, 10000, f"{prefix}_max")
-    min_var = model.NewIntVar(0, 10000, f"{prefix}_min")
-    model.AddMaxEquality(max_var, scaled_counts)
-    model.AddMinEquality(min_var, scaled_counts)
-
-    # Range = max - min
-    range_var = model.NewIntVar(0, 10000, f"{prefix}_range")
-    model.Add(range_var == max_var - min_var)
-
-    # HARD CONSTRAINT: Enforce maximum allowed deviation
-    # Threshold is in scaled units. Since counts are in half-units (1 Notdienst = 2),
-    # and scale=400, for a 40h employee: 1 Notdienst = 2 * (400/40) = 20 scaled units.
-    # So max_fte_deviation=1.5 Notdienste = 1.5 * 20 = 30 scaled units for 40h.
-    # We use 40h as reference (the "full-time equivalent").
-    threshold_scaled = int(max_fte_deviation * 2 * (scale // 40))
-    model.Add(range_var <= threshold_scaled)
-
-    # SOFT OBJECTIVE: Minimize range further (tightest possible fairness)
-    objective_terms.append(range_var)
-
-
 def _add_group_fairness_objective_with_presence(
     model: cp_model.CpModel,
     objective_terms: list,
@@ -1748,8 +1669,9 @@ def _add_group_fairness_objective_with_presence(
 ) -> None:
     """Add min-max fairness objective with presence (vacation) adjustment.
 
-    Similar to _add_group_fairness_objective but scales by presence factor
-    so employees with vacation are expected to do proportionally fewer shifts.
+    Enforces hard constraint: (max - min) <= threshold (FTE-normalized).
+    Then minimizes (max - min) as soft objective for tightest fairness.
+    Scales by presence factor so employees with vacation are expected to do proportionally fewer shifts.
 
     The effective FTE multiplier becomes: (40 / hours) * (1000 / presence_factor)
     where presence_factor = available_days * 1000 / total_days
