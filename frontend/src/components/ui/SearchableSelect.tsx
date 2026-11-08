@@ -245,6 +245,24 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           )}
         </div>
       )}
+
+      {required && (
+        <input
+          type="text"
+          className="sr-only"
+          tabIndex={-1}
+          required={required}
+          value={value}
+          onChange={() => {}}
+          onInvalid={(e) => {
+            (e.target as HTMLInputElement).setCustomValidity('Bitte wählen Sie einen Mitarbeiter aus.');
+          }}
+          onInput={(e) => {
+            (e.target as HTMLInputElement).setCustomValidity('');
+          }}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 };

@@ -25,7 +25,7 @@ export const PreAssignedView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     staff_id: '',
-    shift_date: '2026-04-12',
+    shift_date: '',
     shift_type: 'Nachtdienst' as PreAssignedShiftType,
     is_holiday: true,
     note: '',
@@ -40,9 +40,6 @@ export const PreAssignedView: React.FC = () => {
     const [paData, stfData] = await Promise.all([fetchPreAssigned(), fetchStaff()]);
     setShifts(paData);
     setStaffList(stfData);
-    if (stfData.length > 0) {
-      setFormData((prev) => ({ ...prev, staff_id: stfData[0].id }));
-    }
     setLoading(false);
   };
 
@@ -61,9 +58,13 @@ export const PreAssignedView: React.FC = () => {
   };
 
   const handleOpenAddModal = () => {
-    if (staffList.length > 0 && !formData.staff_id) {
-      setFormData((prev) => ({ ...prev, staff_id: staffList[0].id }));
-    }
+    setFormData({
+      staff_id: '',
+      shift_date: '',
+      shift_type: 'Nachtdienst',
+      is_holiday: true,
+      note: '',
+    });
     setIsModalOpen(true);
   };
 
@@ -83,6 +84,13 @@ export const PreAssignedView: React.FC = () => {
     };
 
     setShifts((prev) => [newRecord, ...prev]);
+    setFormData({
+      staff_id: '',
+      shift_date: '',
+      shift_type: 'Nachtdienst',
+      is_holiday: true,
+      note: '',
+    });
     setIsModalOpen(false);
 
     try {
@@ -311,9 +319,15 @@ export const PreAssignedView: React.FC = () => {
               <input
                 type="date"
                 required
+                min="2027-01-01"
                 value={formData.shift_date}
                 onChange={(e) => setFormData({ ...formData, shift_date: e.target.value })}
-                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker();
+                  } catch {}
+                }}
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b] cursor-pointer"
               />
             </div>
 

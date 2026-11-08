@@ -26,8 +26,8 @@ export const AbsencesView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     staff_id: '',
-    start_date: '2026-04-10',
-    end_date: '2026-04-17',
+    start_date: '',
+    end_date: '',
   });
 
   useEffect(() => {
@@ -39,9 +39,6 @@ export const AbsencesView: React.FC = () => {
     const [absData, stfData] = await Promise.all([fetchAbsences(), fetchStaff()]);
     setAbsences(absData);
     setStaffList(stfData);
-    if (stfData.length > 0) {
-      setFormData((prev) => ({ ...prev, staff_id: stfData[0].id }));
-    }
     setLoading(false);
   };
 
@@ -59,9 +56,11 @@ export const AbsencesView: React.FC = () => {
   };
 
   const handleOpenAddModal = () => {
-    if (staffList.length > 0 && !formData.staff_id) {
-      setFormData((prev) => ({ ...prev, staff_id: staffList[0].id }));
-    }
+    setFormData({
+      staff_id: '',
+      start_date: '',
+      end_date: '',
+    });
     setIsModalOpen(true);
   };
 
@@ -78,6 +77,11 @@ export const AbsencesView: React.FC = () => {
     };
 
     setAbsences((prev) => [newRecord, ...prev]);
+    setFormData({
+      staff_id: '',
+      start_date: '',
+      end_date: '',
+    });
     setIsModalOpen(false);
 
     try {
@@ -333,9 +337,22 @@ export const AbsencesView: React.FC = () => {
               <input
                 type="date"
                 required
+                min="2027-01-01"
                 value={formData.start_date}
-                onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
+                onChange={(e) => {
+                  const newStart = e.target.value;
+                  setFormData((prev) => ({
+                    ...prev,
+                    start_date: newStart,
+                    end_date: prev.end_date && prev.end_date >= newStart ? prev.end_date : newStart,
+                  }));
+                }}
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker();
+                  } catch {}
+                }}
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b] cursor-pointer"
               />
             </div>
             <div>
@@ -345,9 +362,15 @@ export const AbsencesView: React.FC = () => {
               <input
                 type="date"
                 required
+                min={formData.start_date || '2027-01-01'}
                 value={formData.end_date}
                 onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker();
+                  } catch {}
+                }}
+                className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b] cursor-pointer"
               />
             </div>
           </div>
