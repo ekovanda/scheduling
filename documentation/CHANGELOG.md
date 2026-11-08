@@ -9,6 +9,27 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.0.0] - 2026-11-08
+
+### Full Architecture Modernization: React SPA, GCP Cloud Run & Streamlit Retirement
+
+- **Ablösung des Streamlit-Frontends & Bereinigung von Abhängigkeiten (`app/streamlit_app.py`, `pyproject.toml`, `uv.lock`):**
+  - Vollständiges Decommissioning des monolithischen Legacy-Frontends (`app/streamlit_app.py`, ~2.000 Zeilen).
+  - Bereinigung der Runtime-Dependencies um `streamlit` und `matplotlib` (Entfernung von über 30 transitiven Paketen).
+  - Umstellung des Container-Entrypoints (`scripts/entrypoint.sh`) auf direkten Uvicorn-Start als PID 1 mit nativer Signal-Weiterleitung.
+- **Moderne Single-Page-Application (SPA) (`frontend/`):**
+  - Produktionsreife React 19 + TypeScript + Vite + Tailwind CSS Anwendung im Tierklinik Dr. Trillig Branding.
+  - 5 fokussierte Ansichten: Mitarbeiter-Verwaltung (`StaffHubView`), Abwesenheiten (`AbsencesView`), Vorbelegungen (`PreAssignedView`), interaktiver Dienstplan (`MatrixView`) und Fairness-Vektoren (`FairnessView`).
+  - Neue UI-Ergonomie: Sofortsuche via `SearchableSelect`, klickbare Schichtkacheln, angepinnte Legende mit kompakter Wochenendschicht-Nummerierung `(1)`–`(4)` und Inline-Bearbeitung mit PUT-Endpunkten.
+- **Headless FastAPI REST-Backend & Serverless Cloud Run Hosting (`app/api/`, `Dockerfile`, `scripts/`):**
+  - Modulare REST-API unter `/api/v1` für Stammdaten, Abwesenheiten, Vorbelegungen, Dienstpläne und Exporte.
+  - Asynchroner CP-SAT-Hintergrund-Solver (`POST /api/v1/quarters/{key}/solve`) mit Live-Polling und sauberem Abbruch (`POST /cancel`).
+  - Pre-Flight-Diagnose-Engine zur Vorab-Erkennung und verständlichen Erklärung von Konflikten bei Vorbelegungen.
+  - Dual-Driver Persistenzschicht (`app/persistence/`): Unterstützung für Google Cloud Firestore (SSOT) und lokale JSON-Dateien.
+  - Rollenbasierte Authentifizierung (`require_planner`) und gehärtete Sicherheitskonfiguration.
+- **PRD-Abschluss (`documentation/PRDs/implemented/`):**
+  - Vollständige Umsetzung aller Meilensteine (Phase 1, 2, 3A, 3B, 3C) des Architektur-Roadmaps `PRD_gcp_cloud_run_migration_and_modernization.md`.
+
 ## [1.13.3] - 2026-11-08
 
 ### UI & API: Bearbeitungsfunktion für Abwesenheiten und Vorbelegungen
