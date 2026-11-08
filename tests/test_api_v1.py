@@ -672,4 +672,46 @@ def test_b4_export_excel_resolves_staff_names_when_id_differs_from_identifier(
     assert found_name, "Expected full staff name 'Dr. Müller' in Schichtverteilung sheet"
 
 
+def test_delete_staff_cascades_absences_and_preassigned(client: TestClient) -> None:
+    """Ensure hard-deleting a staff member cascades and cleans up absences and preassignments (D1)."""
+    staff_payload = {
+        "id": "cascade_tfa",
+        "identifier": "CAS",
+        "name": "Cascade Test TFA",
+        "beruf": "TFA",
+        "hours": 40,
+        "is_active": True,
+    }
+    assert client.post("/api/v1/staff", json=staff_payload).status_code == 201
 
+    absence_payload = {
+        "id": "abs_cascade_1",
+        "staff_id": "cascade_tfa",
+        "absence_type": "Vacation",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-10",
+        "note": "Cascade vacation",
+    }
+    assert client.post("/api/v1/absences", json=absence_payload).status_code == 201
+
+    pa_payload = {
+        "id": "pa_cascade_1",
+        "staff_id": "cascade_tfa",
+        "staff_identifier": "CAS",
+        "shift_date": "2026-05-20",
+        "shift_type": "N_Mi-Do",
+        "is_holiday": True,
+        "note": "Holiday preassignment",
+    }
+    assert client.post("/api/v1/preassigned", json=pa_payload).status_code == 201
+
+    assert len(client.get("/api/v1/absences?staff_id=cascade_tfa").json()) == 1
+    pa_list = client.get("/api/v1/preassigned").json()
+    assert any(p["id"] == "pa_cascade_1" for p in pa_list)
+
+    assert client.delete("/api/v1/staff/cascade_tfa?hard_delete=true").status_code == 204
+
+    assert client.get("/api/v1/staff/cascade_tfa").status_code == 404
+    assert len(client.get("/api/v1/absences?staff_id=cascade_tfa").json()) == 0
+    pa_list_after = client.get("/api/v1/preassigned").json()
+    assert not any(p["id"] == "pa_cascade_1" for p in pa_list_after)

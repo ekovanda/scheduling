@@ -94,6 +94,46 @@ def update_staff(
     return updated_data
 
 
+def _cascade_delete_staff_associations(
+    repo: RepositoryProtocol,
+    staff: StaffMember,
+) -> None:
+    """Cascade delete all absences and pre-assigned shifts associated with a staff member."""
+    target_keys = {
+        staff.id,
+        staff.identifier,
+        staff.id.lower(),
+        staff.identifier.lower(),
+        staff.identifier.upper(),
+    }
+
+    absence_ids: set[str] = set()
+    for key in target_keys:
+        if not key:
+            continue
+        try:
+            for absence in repo.list_absences_by_staff(key):
+                absence_ids.add(absence.id)
+        except Exception:
+            pass
+
+    for aid in absence_ids:
+        try:
+            repo.delete_absence(aid)
+        except EntityNotFoundError:
+            pass
+
+    try:
+        for pa in repo.list_preassigned():
+            if pa.staff_id in target_keys or pa.staff_identifier in target_keys:
+                try:
+                    repo.delete_preassigned(pa.id)
+                except EntityNotFoundError:
+                    pass
+    except Exception:
+        pass
+
+
 @router.delete("/{staff_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_staff(
     staff_id: StaffIdPath,
@@ -108,6 +148,7 @@ def delete_staff(
             detail=f"Staff member with id '{staff_id}' not found.",
         )
     if hard_delete:
+        _cascade_delete_staff_associations(repo, existing)
         try:
             repo.delete_staff(staff_id)
         except EntityNotFoundError as exc:

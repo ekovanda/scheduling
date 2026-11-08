@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.0.3"
+CURRENT_VERSION = "2.0.4"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,15 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.0.4",
+        date="08. November 2026",
+        summary="Kaskadierende Bereinigung gelöschter Mitarbeiter",
+        highlights=(
+            "Beim Löschen von Mitarbeitenden werden verknüpfte Abwesenheiten und Vorbelegungen automatisch mitbereinigt.",
+            "Verhindert verwaiste Schichtbuchungen und Blockaden bei der automatischen Dienstplan-Berechnung.",
+        ),
+    ),
     Release(
         version="2.0.3",
         date="08. November 2026",

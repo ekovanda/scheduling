@@ -100,9 +100,7 @@ def _parse_quarter_key(quarter_key: str) -> tuple[int, int]:
     except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Invalid quarter '{quarter_key}'. {err}"
-            ),
+            detail=(f"Invalid quarter '{quarter_key}'. {err}"),
         ) from None
 
 
@@ -243,6 +241,7 @@ def get_quarter_fairness_overview(
             end_date=a.end_date,
         )
         for a in raw_absences
+        if a.staff_id in staff_id_to_ident or a.staff_id.lower() in staff_id_to_ident
     ]
 
     context = get_previous_quarter_context(year, quarter, repo)
@@ -474,6 +473,7 @@ def _load_domain_data(
             end_date=a.end_date,
         )
         for a in raw_absences
+        if a.staff_id in staff_id_to_ident or a.staff_id.lower() in staff_id_to_ident
     ]
 
     raw_preassigned = repo.list_preassigned()

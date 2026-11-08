@@ -9,6 +9,18 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.0.4] - 2026-11-08
+
+### Fixed: Cascade Cleanup on Staff Deletion & Active-Staff Vacation Filtering (D1)
+
+- **Kaskadierende Bereinigung beim Löschen von Mitarbeitenden (`app/api/v1/staff.py`):**
+  - `delete_staff` führt bei `hard_delete=True` vor dem Entfernen des Mitarbeiter-Dokuments eine kaskadierende Bereinigung (`_cascade_delete_staff_associations`) durch.
+  - Löscht alle zugehörigen `AbsenceRecord`-Einträge und `PreAssignedShiftRecord`-Vorbelegungen, die über `staff_id`, `identifier` oder Groß-/Kleinschreibung mit dem gelöschten Mitarbeiter verknüpft sind (behebt Review-Finding `D1`).
+- **Filterung verwaister/inaktiver Abwesenheiten im Domain-Loader & Fairness-Rechner (`app/api/v1/quarters.py`):**
+  - `_load_domain_data` und `get_quarter_fairness_overview` filtern Abwesenheiten auf aktive Mitarbeitende (`staff_id_to_ident`), sodass historische oder verwaiste Abwesenheiten inaktiver Mitarbeitender keine Scheineinträge an den Solver übergeben.
+- **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
+  - Neuer Test `test_delete_staff_cascades_absences_and_preassigned` zur Verifikation der Kaskadierung auf Abwesenheiten und Vorbelegungen bei Hard-Deletes.
+
 ## [2.0.3] - 2026-11-08
 
 ### Fixed: Synchronous CRUD Validation, 2026 Date Inputs, Staff Lifecycle Controls & Excel `staff_map` Resolution
