@@ -9,6 +9,21 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.0.3] - 2026-11-08
+
+### Fixed: Synchronous CRUD Validation, 2026 Date Inputs, Staff Lifecycle Controls & Excel `staff_map` Resolution
+
+- **Synchronisierte CRUD-Fehlerbehandlung & vollständige Formularfelder (`frontend/src/lib/api.ts`, `frontend/src/views/StaffView.tsx`, `frontend/src/views/AbsencesView.tsx`, `frontend/src/views/PreAssignedView.tsx`):**
+  - `create*`, `update*` und `delete*` extrahieren die detaillierte Backend-Fehlermeldung (`detail`) über `extractApiError` und aktualisieren den lokalen React-State erst nach erfolgreicher Server-Antwort; Validierungs- oder Konfliktfehler (`409`/`422`) werden direkt im Modal bzw. als Banner angezeigt (behebt Review-Finding `B3`).
+  - Hartcodierte Sperre `min="2027-01-01"` aus den Datumsfeldern in `AbsencesView.tsx` und `PreAssignedView.tsx` entfernt, sodass auch Quartale aus 2026 (z. B. `2026-Q4`) geplant und bearbeitet werden können.
+  - `AbsencesView.tsx` unterstützt nun `absence_type` (`Vacation`, `SickLeave`, `Training`, `SpecialLeave`) und `note` beim Anlegen, Bearbeiten und Anzeigen von Abwesenheiten.
+  - `StaffView.tsx` lädt alle Mitarbeitenden (`fetchStaff(false)`), ergänzt einen Direkt-Umschalter für Aktiv/Inaktiv sowie eine Löschfunktion im Bearbeitungsdialog, während Auswahl-Dropdowns in anderen Ansichten standardmäßig nur aktive Mitarbeitende (`fetchStaff(true)`) beziehen.
+- **Konsistente Auflösung von `staff.id` und `staff.identifier` im Export & Domain-Loader (`app/api/v1/quarters.py`):**
+  - `export_quarter_schedule` indiziert `staff_map` sowohl nach `m.id` als auch nach `m.identifier`, sodass `export_schedule_to_excel` in allen drei Arbeitsblättern (`Nachtdienste`, `Wochenenddienste`, `Schichtverteilung`) die vollständigen Namen auflöst (behebt Review-Finding `B4`).
+  - `_load_domain_data` und `get_quarter_fairness_overview` lösen `staff_id` und `staff_identifier` tolerant über beide Schlüssel (inkl. Kleinschreibung) auf.
+- **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
+  - Neuer Integrationstest `test_b4_export_excel_resolves_staff_names_when_id_differs_from_identifier`.
+
 ## [2.0.2] - 2026-11-08
 
 ### Fixed: Real Solver Footer Metrics, `block_gap_days` Wiring, Pre-Assigned Highlighting & Multi-Day Holiday Block Gap Relaxation

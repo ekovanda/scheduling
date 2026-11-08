@@ -274,10 +274,13 @@ export const PreAssignedView: React.FC = () => {
   const [shifts, setShifts] = useState<PreAssignedShift[]>([]);
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     staff_id: '',
     shift_date: '',
@@ -314,6 +317,7 @@ export const PreAssignedView: React.FC = () => {
 
   const handleOpenAddModal = () => {
     setEditingShiftId(null);
+    setFormError(null);
     setFormData({
       staff_id: '',
       shift_date: '',
@@ -326,6 +330,7 @@ export const PreAssignedView: React.FC = () => {
 
   const handleOpenEditModal = (rec: PreAssignedShift) => {
     setEditingShiftId(rec.id);
+    setFormError(null);
     setFormData({
       staff_id: rec.staff_id,
       shift_date: rec.shift_date,
@@ -341,19 +346,38 @@ export const PreAssignedView: React.FC = () => {
     if (!formData.staff_id || !formData.shift_date) return;
 
     const stf = getStaff(formData.staff_id);
+    setFormError(null);
+    setSaving(true);
 
-    if (editingShiftId) {
-      const updatedRecord: PreAssignedShift = {
-        id: editingShiftId,
-        staff_id: formData.staff_id,
-        staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
-        shift_date: formData.shift_date,
-        shift_type: formData.shift_type,
-        is_holiday: formData.is_holiday,
-        note: formData.note.trim() || undefined,
-      };
+    try {
+      if (editingShiftId) {
+        const updatedRecord: PreAssignedShift = {
+          id: editingShiftId,
+          staff_id: formData.staff_id,
+          staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
+          shift_date: formData.shift_date,
+          shift_type: formData.shift_type,
+          is_holiday: formData.is_holiday,
+          note: formData.note.trim() || undefined,
+        };
 
-      setShifts((prev) => prev.map((s) => (s.id === editingShiftId ? updatedRecord : s)));
+        const saved = await updatePreAssigned(editingShiftId, updatedRecord);
+        setShifts((prev) => prev.map((s) => (s.id === editingShiftId ? saved : s)));
+      } else {
+        const newRecord: PreAssignedShift = {
+          id: `pa-${Date.now()}`,
+          staff_id: formData.staff_id,
+          staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
+          shift_date: formData.shift_date,
+          shift_type: formData.shift_type,
+          is_holiday: formData.is_holiday,
+          note: formData.note.trim() || undefined,
+        };
+
+        const created = await createPreAssigned(newRecord);
+        setShifts((prev) => [created, ...prev]);
+      }
+
       setFormData({
         staff_id: '',
         shift_date: '',
@@ -363,47 +387,20 @@ export const PreAssignedView: React.FC = () => {
       });
       setIsModalOpen(false);
       setEditingShiftId(null);
-
-      try {
-        await updatePreAssigned(editingShiftId, updatedRecord);
-      } catch (err) {
-        console.warn('Backend update failed, saved locally:', err);
-      }
-    } else {
-      const newRecord: PreAssignedShift = {
-        id: `pa-${Date.now()}`,
-        staff_id: formData.staff_id,
-        staff_identifier: stf ? stf.identifier : formData.staff_id.toUpperCase(),
-        shift_date: formData.shift_date,
-        shift_type: formData.shift_type,
-        is_holiday: formData.is_holiday,
-        note: formData.note.trim() || undefined,
-      };
-
-      setShifts((prev) => [newRecord, ...prev]);
-      setFormData({
-        staff_id: '',
-        shift_date: '',
-        shift_type: 'Nachtdienst',
-        is_holiday: true,
-        note: '',
-      });
-      setIsModalOpen(false);
-
-      try {
-        await createPreAssigned(newRecord);
-      } catch (err) {
-        console.warn('Backend sync failed, saved locally:', err);
-      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Fehler beim Speichern der Vorbelegung');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    setShifts((prev) => prev.filter((s) => s.id !== id));
+    setActionError(null);
     try {
       await deletePreAssigned(id);
+      setShifts((prev) => prev.filter((s) => s.id !== id));
     } catch (err) {
-      console.warn('Backend delete failed, removed locally:', err);
+      setActionError(err instanceof Error ? err.message : 'Fehler beim Löschen der Vorbelegung');
     }
   };
 
@@ -470,6 +467,12 @@ export const PreAssignedView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {actionError && (
+        <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-xs text-rose-700 font-medium">
+          {actionError}
+        </div>
+      )}
 
       {/* LIST VIEW ONLY */}
       <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
@@ -617,10 +620,17 @@ export const PreAssignedView: React.FC = () => {
         onClose={() => {
           setIsModalOpen(false);
           setEditingShiftId(null);
+          setFormError(null);
         }}
         title={editingShiftId ? 'Vorbelegung bearbeiten' : 'Dienst vorab zuweisen'}
       >
         <form onSubmit={handleSavePreAssignment} className="space-y-4">
+          {formError && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium">
+              {formError}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1">
               Mitarbeiter (Name oder Kürzel suchen)
@@ -642,7 +652,6 @@ export const PreAssignedView: React.FC = () => {
               <input
                 type="date"
                 required
-                min="2027-01-01"
                 value={formData.shift_date}
                 onChange={(e) => {
                   const newDate = e.target.value;
@@ -765,15 +774,17 @@ export const PreAssignedView: React.FC = () => {
             <Button
               type="button"
               variant="outline"
+              disabled={saving}
               onClick={() => {
                 setIsModalOpen(false);
                 setEditingShiftId(null);
+                setFormError(null);
               }}
             >
               Abbrechen
             </Button>
-            <Button type="submit" variant="primary">
-              {editingShiftId ? 'Änderungen speichern' : 'Vorbelegung speichern'}
+            <Button type="submit" variant="primary" disabled={saving}>
+              {saving ? 'Speichert...' : editingShiftId ? 'Änderungen speichern' : 'Vorbelegung speichern'}
             </Button>
           </div>
         </form>

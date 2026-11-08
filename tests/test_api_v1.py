@@ -608,3 +608,68 @@ def test_b8_cross_quarter_block_gap_holiday_on_second_day_of_block() -> None:
     assert len(exceptions) == 0
 
 
+def test_b4_export_excel_resolves_staff_names_when_id_differs_from_identifier(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure Excel export resolves full staff names when staff.id is lowercase and actual_staff_id is uppercase identifier (B4)."""
+    import io
+
+    import openpyxl
+
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "mue",
+            "identifier": "MUE",
+            "name": "Dr. Müller",
+            "beruf": "Vet",
+            "abteilung": "station",
+            "hours": 40,
+            "is_active": True,
+        },
+    )
+
+    def fake_solve(**kwargs: Any) -> SolverResult:
+        return SolverResult(
+            success=True,
+            schedules=[
+                Schedule(
+                    quarter_start=date(2026, 4, 1),
+                    quarter_end=date(2026, 6, 30),
+                    assignments=[
+                        Assignment(
+                            shift=Shift(
+                                shift_type=ShiftType.NIGHT_WED_THU, shift_date=date(2026, 4, 1)
+                            ),
+                            staff_identifier="MUE",
+                            is_paired=False,
+                        )
+                    ],
+                )
+            ],
+            penalties=[1.0],
+            unsatisfiable_constraints=[],
+        )
+
+    monkeypatch.setattr("app.api.v1.quarters.generate_schedule", fake_solve)
+
+    gen_resp = client.post(
+        "/api/v1/quarters/2026-Q2/generate?sync=true",
+        json={"max_solve_time_seconds": 10},
+    )
+    assert gen_resp.status_code == 200
+
+    resp = client.get("/api/v1/quarters/2026-Q2/export?format=xlsx")
+    assert resp.status_code == 200
+    wb = openpyxl.load_workbook(io.BytesIO(resp.content))
+    ws_summary = wb["Schichtverteilung"]
+    found_name = False
+    for row in ws_summary.iter_rows(values_only=True):
+        if "Dr. Müller" in [str(c) for c in row if c is not None]:
+            found_name = True
+            break
+    assert found_name, "Expected full staff name 'Dr. Müller' in Schichtverteilung sheet"
+
+
+

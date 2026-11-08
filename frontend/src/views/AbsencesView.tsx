@@ -9,7 +9,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import type { AbsenceRecord, StaffMember } from '../types/api';
+import type { AbsenceRecord, AbsenceType, StaffMember } from '../types/api';
 import { fetchAbsences, fetchStaff, createAbsence, updateAbsence, deleteAbsence } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -17,19 +17,31 @@ import { SearchableSelect } from '../components/ui/SearchableSelect';
 import { cn } from '../lib/utils';
 import { getStaffColorScheme } from '../lib/colors';
 
+const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
+  Vacation: 'Urlaub',
+  SickLeave: 'Krankheit',
+  Training: 'Fortbildung',
+  SpecialLeave: 'Sonderurlaub',
+};
+
 export const AbsencesView: React.FC = () => {
   const [absences, setAbsences] = useState<AbsenceRecord[]>([]);
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAbsenceId, setEditingAbsenceId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     staff_id: '',
+    absence_type: 'Vacation' as AbsenceType,
     start_date: '',
     end_date: '',
+    note: '',
   });
 
   useEffect(() => {
@@ -59,20 +71,26 @@ export const AbsencesView: React.FC = () => {
 
   const handleOpenAddModal = () => {
     setEditingAbsenceId(null);
+    setFormError(null);
     setFormData({
       staff_id: '',
+      absence_type: 'Vacation',
       start_date: '',
       end_date: '',
+      note: '',
     });
     setIsModalOpen(true);
   };
 
   const handleOpenEditModal = (rec: AbsenceRecord) => {
     setEditingAbsenceId(rec.id);
+    setFormError(null);
     setFormData({
       staff_id: rec.staff_id,
+      absence_type: rec.absence_type || 'Vacation',
       start_date: rec.start_date,
       end_date: rec.end_date,
+      note: rec.note || '',
     });
     setIsModalOpen(true);
   };
@@ -81,60 +99,58 @@ export const AbsencesView: React.FC = () => {
     e.preventDefault();
     if (!formData.staff_id || !formData.start_date || !formData.end_date) return;
 
-    if (editingAbsenceId) {
-      const updatedRecord: AbsenceRecord = {
-        id: editingAbsenceId,
-        staff_id: formData.staff_id,
-        absence_type: 'Vacation',
-        start_date: formData.start_date,
-        end_date: formData.end_date,
-      };
+    setFormError(null);
+    setSaving(true);
+    try {
+      if (editingAbsenceId) {
+        const updatedRecord: AbsenceRecord = {
+          id: editingAbsenceId,
+          staff_id: formData.staff_id,
+          absence_type: formData.absence_type,
+          start_date: formData.start_date,
+          end_date: formData.end_date,
+          note: formData.note.trim() || null,
+        };
 
-      setAbsences((prev) => prev.map((a) => (a.id === editingAbsenceId ? updatedRecord : a)));
+        const saved = await updateAbsence(editingAbsenceId, updatedRecord);
+        setAbsences((prev) => prev.map((a) => (a.id === editingAbsenceId ? saved : a)));
+      } else {
+        const newRecord: AbsenceRecord = {
+          id: `abs-${Date.now()}`,
+          staff_id: formData.staff_id,
+          absence_type: formData.absence_type,
+          start_date: formData.start_date,
+          end_date: formData.end_date,
+          note: formData.note.trim() || null,
+        };
+
+        const created = await createAbsence(newRecord);
+        setAbsences((prev) => [created, ...prev]);
+      }
+
       setFormData({
         staff_id: '',
+        absence_type: 'Vacation',
         start_date: '',
         end_date: '',
+        note: '',
       });
       setIsModalOpen(false);
       setEditingAbsenceId(null);
-
-      try {
-        await updateAbsence(editingAbsenceId, updatedRecord);
-      } catch (err) {
-        console.warn('Backend update failed, saved locally:', err);
-      }
-    } else {
-      const newRecord: AbsenceRecord = {
-        id: `abs-${Date.now()}`,
-        staff_id: formData.staff_id,
-        absence_type: 'Vacation',
-        start_date: formData.start_date,
-        end_date: formData.end_date,
-      };
-
-      setAbsences((prev) => [newRecord, ...prev]);
-      setFormData({
-        staff_id: '',
-        start_date: '',
-        end_date: '',
-      });
-      setIsModalOpen(false);
-
-      try {
-        await createAbsence(newRecord);
-      } catch (err) {
-        console.warn('Backend sync failed, saved locally:', err);
-      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Fehler beim Speichern der Abwesenheit');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDeleteAbsence = async (id: string) => {
-    setAbsences((prev) => prev.filter((a) => a.id !== id));
+    setActionError(null);
     try {
       await deleteAbsence(id);
+      setAbsences((prev) => prev.filter((a) => a.id !== id));
     } catch (err) {
-      console.warn('Backend delete failed, removed locally:', err);
+      setActionError(err instanceof Error ? err.message : 'Fehler beim Löschen der Abwesenheit');
     }
   };
 
@@ -254,6 +270,19 @@ export const AbsencesView: React.FC = () => {
         </div>
       </div>
 
+      {actionError && (
+        <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-xs text-rose-700 font-medium flex items-center justify-between">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-500 hover:text-rose-700 p-0.5"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Person-by-Person View */}
       {loading ? (
         <div className="bg-white rounded-xl border border-stone-200/80 p-8 text-center text-sm text-stone-500">
@@ -318,7 +347,7 @@ export const AbsencesView: React.FC = () => {
                         key={rec.id}
                         className="px-5 py-2.5 flex items-center justify-between hover:bg-stone-50/60 transition-colors text-xs"
                       >
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-4 flex-wrap">
                           <div className="flex items-center gap-1.5 font-medium text-stone-800">
                             <CalendarIcon className="h-3.5 w-3.5 text-stone-400" />
                             <span>
@@ -328,6 +357,14 @@ export const AbsencesView: React.FC = () => {
                           <span className="px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200 font-semibold text-[11px]">
                             {days} {days === 1 ? 'Tag' : 'Tage'}
                           </span>
+                          <span className="px-2 py-0.5 rounded-full bg-blue-50 text-[#324b9b] border border-blue-200/70 font-medium text-[11px]">
+                            {ABSENCE_TYPE_LABELS[rec.absence_type] || rec.absence_type}
+                          </span>
+                          {rec.note && (
+                            <span className="text-stone-500 italic truncate max-w-[240px]">
+                              {rec.note}
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-1">
@@ -362,10 +399,17 @@ export const AbsencesView: React.FC = () => {
         onClose={() => {
           setIsModalOpen(false);
           setEditingAbsenceId(null);
+          setFormError(null);
         }}
         title={editingAbsenceId ? 'Abwesenheit bearbeiten' : 'Abwesenheit eintragen'}
       >
         <form onSubmit={handleSaveAbsence} className="space-y-4">
+          {formError && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium">
+              {formError}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1">
               Mitarbeiter (Name oder Kürzel suchen)
@@ -379,6 +423,24 @@ export const AbsencesView: React.FC = () => {
             />
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-stone-700 mb-1">
+              Art der Abwesenheit
+            </label>
+            <select
+              value={formData.absence_type}
+              onChange={(e) =>
+                setFormData({ ...formData, absence_type: e.target.value as AbsenceType })
+              }
+              className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
+            >
+              <option value="Vacation">Urlaub</option>
+              <option value="SickLeave">Krankheit</option>
+              <option value="Training">Fortbildung</option>
+              <option value="SpecialLeave">Sonderurlaub</option>
+            </select>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">
@@ -387,7 +449,6 @@ export const AbsencesView: React.FC = () => {
               <input
                 type="date"
                 required
-                min="2027-01-01"
                 value={formData.start_date}
                 onChange={(e) => {
                   const newStart = e.target.value;
@@ -412,7 +473,7 @@ export const AbsencesView: React.FC = () => {
               <input
                 type="date"
                 required
-                min={formData.start_date || '2027-01-01'}
+                min={formData.start_date || undefined}
                 value={formData.end_date}
                 onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
                 onClick={(e) => {
@@ -425,19 +486,34 @@ export const AbsencesView: React.FC = () => {
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-stone-700 mb-1">
+              Notiz (optional)
+            </label>
+            <input
+              type="text"
+              placeholder="z.B. Sommerurlaub, Kongress..."
+              value={formData.note}
+              onChange={(e) => setFormData({ ...formData, note: e.target.value })}
+              className="w-full px-3 py-2 text-sm bg-stone-50/70 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#324b9b]/30 focus:border-[#324b9b]"
+            />
+          </div>
+
           <div className="pt-4 flex items-center justify-end gap-2">
             <Button
               type="button"
               variant="outline"
+              disabled={saving}
               onClick={() => {
                 setIsModalOpen(false);
                 setEditingAbsenceId(null);
+                setFormError(null);
               }}
             >
               Abbrechen
             </Button>
-            <Button type="submit" variant="primary">
-              {editingAbsenceId ? 'Speichern' : 'Eintragen'}
+            <Button type="submit" variant="primary" disabled={saving}>
+              {saving ? 'Speichert...' : editingAbsenceId ? 'Speichern' : 'Eintragen'}
             </Button>
           </div>
         </form>

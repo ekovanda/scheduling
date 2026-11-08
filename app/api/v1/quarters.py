@@ -224,15 +224,21 @@ def get_quarter_fairness_overview(
     active_members = [
         m
         for m in repo.list_staff(active_only=False)
-        if m.is_active or m.identifier in assigned_idents
+        if m.is_active or m.identifier in assigned_idents or m.id in assigned_idents
     ]
     all_staff = [m.to_scheduler_staff() for m in active_members]
-    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+    staff_id_to_ident = {
+        k: m.identifier
+        for m in active_members
+        for k in (m.id, m.identifier, m.id.lower(), m.identifier.lower())
+    }
 
     raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
     vacations = [
         Vacation(
-            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+            identifier=staff_id_to_ident.get(
+                a.staff_id, staff_id_to_ident.get(a.staff_id.lower(), a.staff_id)
+            ),
             start_date=a.start_date,
             end_date=a.end_date,
         )
@@ -251,7 +257,7 @@ def get_quarter_fairness_overview(
         current_assignments = [
             Assignment(
                 shift=Shift(shift_type=a.shift_type, shift_date=a.shift_date),
-                staff_identifier=a.actual_staff_id,
+                staff_identifier=staff_id_to_ident.get(a.actual_staff_id, a.actual_staff_id),
                 is_paired=a.is_paired,
             )
             for a in doc.assignments
@@ -452,12 +458,18 @@ def _load_domain_data(
 
     active_members = repo.list_staff(active_only=True)
     staff_list = [m.to_scheduler_staff() for m in active_members]
-    staff_id_to_ident = {m.id: m.identifier for m in active_members}
+    staff_id_to_ident = {
+        k: m.identifier
+        for m in active_members
+        for k in (m.id, m.identifier, m.id.lower(), m.identifier.lower())
+    }
 
     raw_absences = repo.list_absences_for_range(start=q_start, end=q_end)
     vacations = [
         Vacation(
-            identifier=staff_id_to_ident.get(a.staff_id, a.staff_id),
+            identifier=staff_id_to_ident.get(
+                a.staff_id, staff_id_to_ident.get(a.staff_id.lower(), a.staff_id)
+            ),
             start_date=a.start_date,
             end_date=a.end_date,
         )
@@ -486,11 +498,15 @@ def _load_domain_data(
                         and (x.shift_type == st.value or "nacht" in x.shift_type.lower())
                     ]
                     is_paired = len(same_date_nights) > 1
+                resolved_ident = staff_id_to_ident.get(
+                    r.staff_id,
+                    staff_id_to_ident.get(r.staff_identifier, r.staff_identifier),
+                )
                 pa_shifts.append(
                     PreAssignedShift(
                         shift_date=r.shift_date,
                         shift_type=st,
-                        staff_identifier=r.staff_identifier,
+                        staff_identifier=resolved_ident,
                         is_paired=is_paired,
                     )
                 )
@@ -1133,7 +1149,7 @@ def export_quarter_schedule(
         )
 
     staff_members = repo.list_staff(active_only=False)
-    staff_map = {m.id: m for m in staff_members}
+    staff_map = {k: m for m in staff_members for k in (m.id, m.identifier)}
 
     if export_format == "csv":
         csv_data = export_schedule_to_csv(doc)

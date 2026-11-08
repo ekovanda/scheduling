@@ -11,9 +11,12 @@ import {
   Calendar,
   ChevronDown,
   Check,
+  Trash2,
+  Power,
+  AlertCircle,
 } from 'lucide-react';
 import type { StaffMember, Beruf, Abteilung } from '../types/api';
-import { fetchStaff, createStaff, updateStaff } from '../lib/api';
+import { fetchStaff, createStaff, updateStaff, deleteStaff } from '../lib/api';
 import { RoleBadge, AbteilungBadge, NachtdienstBadge } from '../components/ui/Badge';
 import { getStaffColorScheme } from '../lib/colors';
 import { Button } from '../components/ui/Button';
@@ -39,6 +42,8 @@ export const StaffView: React.FC = () => {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -55,6 +60,7 @@ export const StaffView: React.FC = () => {
     nd_max_consecutive: 4 as number | null,
     birthday: '',
     available_from: '',
+    is_active: true,
   });
 
   // Weekday availability: day IDs 1..7 (1=Mo..7=So) where staff is available
@@ -67,7 +73,7 @@ export const StaffView: React.FC = () => {
 
   const loadStaff = async () => {
     setLoading(true);
-    const data = await fetchStaff();
+    const data = await fetchStaff(false);
     setStaffList(data);
     setLoading(false);
   };
@@ -96,6 +102,7 @@ export const StaffView: React.FC = () => {
 
   const handleOpenAddModal = () => {
     setEditingStaff(null);
+    setFormError(null);
     setFormData({
       name: '',
       identifier: '',
@@ -110,6 +117,7 @@ export const StaffView: React.FC = () => {
       nd_max_consecutive: 4,
       birthday: '',
       available_from: '',
+      is_active: true,
     });
     setAvailableWeekdays([1, 2, 3, 4, 5, 6, 7]);
     setShowAdvanced(false);
@@ -118,6 +126,7 @@ export const StaffView: React.FC = () => {
 
   const handleOpenEditModal = (staff: StaffMember) => {
     setEditingStaff(staff);
+    setFormError(null);
     const a = (staff.abteilung || '').trim().toLowerCase();
     const cleanAbteilung = a === 'station' ? 'Station' : a === 'op' ? 'OP' : 'other';
     setFormData({
@@ -134,6 +143,7 @@ export const StaffView: React.FC = () => {
       nd_max_consecutive: staff.nd_max_consecutive ?? 4,
       birthday: staff.birthday ?? '',
       available_from: staff.available_from ?? '',
+      is_active: staff.is_active ?? true,
     });
 
     const ex = staff.nd_exceptions || [];
@@ -160,59 +170,84 @@ export const StaffView: React.FC = () => {
     const cleanBirthday = formData.birthday && formData.birthday.trim() ? formData.birthday.trim() : null;
     const cleanAvailableFrom = formData.available_from && formData.available_from.trim() ? formData.available_from.trim() : null;
 
-    if (editingStaff) {
-      const updated: StaffMember = {
-        ...editingStaff,
-        name: formData.name.trim(),
-        identifier: formData.identifier.trim().toUpperCase(),
-        beruf: formData.beruf,
-        abteilung: formData.abteilung,
-        hours: cleanHours,
-        adult: formData.adult,
-        reception: formData.reception,
-        nd_possible: formData.adult ? formData.nd_possible : false,
-        nd_alone: formData.adult && formData.nd_possible ? formData.nd_alone : false,
-        nd_min_consecutive: formData.nd_min_consecutive,
-        nd_max_consecutive: formData.nd_max_consecutive,
-        nd_exceptions,
-        birthday: cleanBirthday,
-        available_from: cleanAvailableFrom,
-      };
+    setFormError(null);
+    setSaving(true);
 
-      setStaffList((prev) => prev.map((s) => (s.id === editingStaff.id ? updated : s)));
-      try {
-        await updateStaff(editingStaff.id, updated);
-      } catch (err) {
-        console.warn('Backend update failed:', err);
-      }
-    } else {
-      const newStaff: StaffMember = {
-        id: formData.identifier.trim().toLowerCase(),
-        identifier: formData.identifier.trim().toUpperCase(),
-        name: formData.name.trim(),
-        beruf: formData.beruf,
-        abteilung: formData.abteilung,
-        hours: cleanHours,
-        adult: formData.adult,
-        reception: formData.reception,
-        nd_possible: formData.adult ? formData.nd_possible : false,
-        nd_alone: formData.adult && formData.nd_possible ? formData.nd_alone : false,
-        nd_min_consecutive: formData.nd_min_consecutive,
-        nd_max_consecutive: formData.nd_max_consecutive,
-        nd_exceptions,
-        birthday: cleanBirthday,
-        available_from: cleanAvailableFrom,
-        is_active: true,
-      };
+    try {
+      if (editingStaff) {
+        const updated: StaffMember = {
+          ...editingStaff,
+          name: formData.name.trim(),
+          identifier: formData.identifier.trim().toUpperCase(),
+          beruf: formData.beruf,
+          abteilung: formData.abteilung,
+          hours: cleanHours,
+          adult: formData.adult,
+          reception: formData.reception,
+          nd_possible: formData.adult ? formData.nd_possible : false,
+          nd_alone: formData.adult && formData.nd_possible ? formData.nd_alone : false,
+          nd_min_consecutive: formData.nd_min_consecutive,
+          nd_max_consecutive: formData.nd_max_consecutive,
+          nd_exceptions,
+          birthday: cleanBirthday,
+          available_from: cleanAvailableFrom,
+          is_active: formData.is_active,
+        };
 
-      setStaffList((prev) => [newStaff, ...prev]);
-      try {
-        await createStaff(newStaff);
-      } catch (err) {
-        console.warn('Backend create failed, saved locally:', err);
+        const saved = await updateStaff(editingStaff.id, updated);
+        setStaffList((prev) => prev.map((s) => (s.id === editingStaff.id ? saved : s)));
+      } else {
+        const newStaff: StaffMember = {
+          id: formData.identifier.trim().toLowerCase(),
+          identifier: formData.identifier.trim().toUpperCase(),
+          name: formData.name.trim(),
+          beruf: formData.beruf,
+          abteilung: formData.abteilung,
+          hours: cleanHours,
+          adult: formData.adult,
+          reception: formData.reception,
+          nd_possible: formData.adult ? formData.nd_possible : false,
+          nd_alone: formData.adult && formData.nd_possible ? formData.nd_alone : false,
+          nd_min_consecutive: formData.nd_min_consecutive,
+          nd_max_consecutive: formData.nd_max_consecutive,
+          nd_exceptions,
+          birthday: cleanBirthday,
+          available_from: cleanAvailableFrom,
+          is_active: formData.is_active,
+        };
+
+        const created = await createStaff(newStaff);
+        setStaffList((prev) => [created, ...prev]);
       }
+      setIsModalOpen(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Fehler beim Speichern des Mitarbeiters.');
+    } finally {
+      setSaving(false);
     }
-    setIsModalOpen(false);
+  };
+
+  const handleToggleStaffActive = async (staff: StaffMember) => {
+    try {
+      const updated = await updateStaff(staff.id, { ...staff, is_active: !staff.is_active });
+      setStaffList((prev) => prev.map((s) => (s.id === staff.id ? updated : s)));
+    } catch (err) {
+      console.error('Failed to toggle active state:', err);
+    }
+  };
+
+  const handleDeleteStaff = async (staff: StaffMember) => {
+    setFormError(null);
+    setSaving(true);
+    try {
+      await deleteStaff(staff.id, true);
+      setStaffList((prev) => prev.filter((s) => s.id !== staff.id));
+      setIsModalOpen(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Fehler beim Löschen des Mitarbeiters.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const renderAvailabilityBadge = (exceptions?: number[]) => {
@@ -384,7 +419,10 @@ export const StaffView: React.FC = () => {
                 filteredStaff.map((staff) => (
                   <tr
                     key={staff.id}
-                    className="hover:bg-amber-50/20 transition-colors group"
+                    className={cn(
+                      'hover:bg-amber-50/20 transition-colors group',
+                      staff.is_active === false && 'opacity-50 bg-stone-50/60'
+                    )}
                   >
                     {/* Name + Initials Avatar + Birthday */}
                     <td className="py-3.5 pl-6 pr-3">
@@ -402,7 +440,14 @@ export const StaffView: React.FC = () => {
                             .join('')}
                         </div>
                         <div>
-                          <span className="font-semibold text-stone-900 block">{staff.name}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-stone-900">{staff.name}</span>
+                            {staff.is_active === false && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-200 text-stone-700 font-semibold">
+                                Inaktiv
+                              </span>
+                            )}
+                          </div>
                           {staff.birthday && (
                             <span className="text-[11px] text-stone-400 block font-sans">
                               🎂 {staff.birthday}
@@ -474,13 +519,31 @@ export const StaffView: React.FC = () => {
 
                     {/* Actions */}
                     <td className="py-3.5 pl-3 pr-6 text-right">
-                      <button
-                        onClick={() => handleOpenEditModal(staff)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-stone-600 hover:text-[#324b9b] hover:bg-blue-50/80 rounded-md transition-colors cursor-pointer"
-                      >
-                        <Edit2 className="h-3.5 w-3.5" />
-                        Bearbeiten
-                      </button>
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => handleToggleStaffActive(staff)}
+                          className={cn(
+                            'inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer',
+                            staff.is_active !== false
+                              ? 'text-emerald-700 hover:bg-emerald-50'
+                              : 'text-stone-400 hover:text-stone-700 hover:bg-stone-100'
+                          )}
+                          title={
+                            staff.is_active !== false
+                              ? 'Aktiv (Klicken zum Deaktivieren)'
+                              : 'Inaktiv (Klicken zum Aktivieren)'
+                          }
+                        >
+                          <Power className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditModal(staff)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-stone-600 hover:text-[#324b9b] hover:bg-blue-50/80 rounded-md transition-colors cursor-pointer"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          Bearbeiten
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -497,6 +560,12 @@ export const StaffView: React.FC = () => {
         title={editingStaff ? `Mitarbeiter bearbeiten: ${editingStaff.name}` : 'Neuen Mitarbeiter anlegen'}
       >
         <form onSubmit={handleSaveStaff} className="space-y-4">
+          {formError && (
+            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{formError}</span>
+            </div>
+          )}
           {/* Section 1: Basic Information */}
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1">
@@ -594,7 +663,20 @@ export const StaffView: React.FC = () => {
               Qualifikation & Schutz
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {/* Aktiv / Inaktiv */}
+              <label className="flex items-center gap-2.5 p-2 rounded-lg bg-stone-50/80 border border-stone-200/70 hover:bg-stone-100/70 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={formData.is_active}
+                  onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                  className="h-4 w-4 rounded text-[#324b9b] focus:ring-[#324b9b] border-stone-300"
+                />
+                <span className="text-xs font-semibold text-stone-800">
+                  Aktiv im Dienstplan
+                </span>
+              </label>
+
               {/* Volljährig */}
               <label className="flex items-center gap-2.5 p-2 rounded-lg bg-stone-50/80 border border-stone-200/70 hover:bg-stone-100/70 cursor-pointer transition-colors">
                 <input
@@ -837,18 +919,35 @@ export const StaffView: React.FC = () => {
             )}
           </div>
 
-          <div className="pt-4 flex items-center justify-end gap-2 border-t border-stone-100">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setIsModalOpen(false)}
-            >
-              Abbrechen
-            </Button>
-            <Button type="submit" variant="primary">
-              <Check className="h-4 w-4 mr-1.5" />
-              {editingStaff ? 'Änderungen speichern' : 'Mitarbeiter anlegen'}
-            </Button>
+          <div className="pt-4 flex items-center justify-between gap-2 border-t border-stone-100">
+            <div>
+              {editingStaff && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={saving}
+                  onClick={() => handleDeleteStaff(editingStaff)}
+                  className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                >
+                  <Trash2 className="h-4 w-4 mr-1.5" />
+                  Löschen
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => setIsModalOpen(false)}
+              >
+                Abbrechen
+              </Button>
+              <Button type="submit" variant="primary" disabled={saving}>
+                <Check className="h-4 w-4 mr-1.5" />
+                {editingStaff ? 'Änderungen speichern' : 'Mitarbeiter anlegen'}
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

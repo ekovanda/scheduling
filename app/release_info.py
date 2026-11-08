@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.0.2"
+CURRENT_VERSION = "2.0.3"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.0.3",
+        date="08. November 2026",
+        summary="Zuverlässige Stammdaten-Pflege & vollständiger Excel-Export",
+        highlights=(
+            "Fehlermeldungen beim Speichern und Löschen werden sofort angezeigt statt ignoriert.",
+            "Freie Datumswahl für 2026/2027, Abwesenheitsarten, Notizen und Status-Steuerung im Team.",
+            "Vollständige Mitarbeiternamen in allen Tabellenblättern des Excel-Exports.",
+        ),
+    ),
     Release(
         version="2.0.2",
         date="08. November 2026",

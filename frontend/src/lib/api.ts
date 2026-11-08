@@ -69,9 +69,20 @@ export function logoutClinic(): void {
   window.dispatchEvent(new CustomEvent('clinic:unauthorized'));
 }
 
-export async function fetchStaff(): Promise<StaffMember[]> {
+async function extractApiError(res: Response, fallback: string): Promise<string> {
+  const errData = await res.json().catch(() => null);
+  if (errData && typeof errData.detail === 'string') {
+    return errData.detail;
+  }
+  if (errData && Array.isArray(errData.detail) && errData.detail.length > 0) {
+    return errData.detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join('; ');
+  }
+  return `${fallback} (${res.statusText || res.status})`;
+}
+
+export async function fetchStaff(activeOnly = true): Promise<StaffMember[]> {
   try {
-    const res = await authFetch(`${API_BASE}/staff`);
+    const res = await authFetch(`${API_BASE}/staff?active_only=${activeOnly}`);
     if (!res.ok) {
       throw new Error(`Failed to fetch staff: ${res.statusText}`);
     }
@@ -90,7 +101,7 @@ export async function createStaff(staff: Omit<StaffMember, 'id'>): Promise<Staff
     body: JSON.stringify({ ...staff, id: staff.identifier.toLowerCase() }),
   });
   if (!res.ok) {
-    throw new Error(`Error creating staff: ${res.statusText}`);
+    throw new Error(await extractApiError(res, 'Fehler beim Anlegen des Mitarbeiters'));
   }
   return res.json();
 }
@@ -102,9 +113,18 @@ export async function updateStaff(staffId: string, staff: StaffMember): Promise<
     body: JSON.stringify(staff),
   });
   if (!res.ok) {
-    throw new Error(`Error updating staff: ${res.statusText}`);
+    throw new Error(await extractApiError(res, 'Fehler beim Aktualisieren des Mitarbeiters'));
   }
   return res.json();
+}
+
+export async function deleteStaff(staffId: string, hardDelete = false): Promise<void> {
+  const res = await authFetch(`${API_BASE}/staff/${staffId}?hard_delete=${hardDelete}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Fehler beim Deaktivieren/Löschen des Mitarbeiters'));
+  }
 }
 
 export async function fetchAbsences(): Promise<AbsenceRecord[]> {
@@ -125,7 +145,7 @@ export async function createAbsence(record: AbsenceRecord): Promise<AbsenceRecor
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(record),
   });
-  if (!res.ok) throw new Error(`Failed to record absence: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Speichern der Abwesenheit'));
   return res.json();
 }
 
@@ -135,7 +155,7 @@ export async function updateAbsence(id: string, record: AbsenceRecord): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(record),
   });
-  if (!res.ok) throw new Error(`Failed to update absence: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Aktualisieren der Abwesenheit'));
   return res.json();
 }
 
@@ -143,7 +163,7 @@ export async function deleteAbsence(id: string): Promise<void> {
   const res = await authFetch(`${API_BASE}/absences/${id}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to delete absence: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Löschen der Abwesenheit'));
 }
 
 export async function fetchPreAssigned(): Promise<PreAssignedShift[]> {
@@ -164,7 +184,7 @@ export async function createPreAssigned(shift: PreAssignedShift): Promise<PreAss
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(shift),
   });
-  if (!res.ok) throw new Error(`Failed to save preassigned shift: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Speichern der Vorbelegung'));
   return res.json();
 }
 
@@ -174,7 +194,7 @@ export async function updatePreAssigned(id: string, shift: PreAssignedShift): Pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(shift),
   });
-  if (!res.ok) throw new Error(`Failed to update preassigned shift: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Aktualisieren der Vorbelegung'));
   return res.json();
 }
 
@@ -182,7 +202,7 @@ export async function deletePreAssigned(id: string): Promise<void> {
   const res = await authFetch(`${API_BASE}/preassigned/${id}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to delete preassigned shift: ${res.statusText}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Fehler beim Löschen der Vorbelegung'));
 }
 
 export async function fetchSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
