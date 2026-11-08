@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.12.4"
+CURRENT_VERSION = "1.13.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.13.0",
+        date="08. November 2026",
+        summary="UI-Fokussierung, Sofortsuche & Dienstplan-Neugestaltung",
+        highlights=(
+            "Neue Sofortsuche und Autocomplete-Auswahl für Mitarbeiter in Formularen und Abwesenheiten.",
+            "Fokussierte Ansichten nach Person (Abwesenheiten) und reine Listenansicht (Vorbelegungen).",
+            "Dienstplan mit neuer Spaltenaufteilung für Tag/Rufbereitschaft und Interns sowie grüner Vorbelegung.",
+        ),
+    ),
     Release(
         version="1.12.4",
         date="08. November 2026",

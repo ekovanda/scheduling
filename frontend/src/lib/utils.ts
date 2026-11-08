@@ -18,3 +18,14 @@ export function isBirthdayToday(birthday?: string | null, targetDate = new Date(
   return targetDate.getMonth() + 1 === bMonth && targetDate.getDate() === bDay;
 }
 
+/**
+ * Determines whether a given shift type string represents a night shift.
+ * Matches CP-SAT codes (N_Mo-Di, N_So-Mo, etc.) as well as labels ("Nachtdienst", "night").
+ */
+export function isNightShift(type?: string | null): boolean {
+  if (!type) return false;
+  const s = type.toLowerCase().trim();
+  return s.startsWith('n_') || s.includes('nacht') || s === 'night';
+}
+
+
