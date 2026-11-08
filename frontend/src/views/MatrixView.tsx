@@ -63,7 +63,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
   const [subView, setSubView] = useState<'schedule' | 'rollover'>('schedule');
   const [rollover, setRollover] = useState<RolloverContextData | null>(null);
 
-  // Display toggles matching Streamlit original
+  // Display toggles
   const [showFullNames, setShowFullNames] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<number | 'ALL'>('ALL'); // 3=Apr, 4=May, 5=Jun
 
@@ -595,10 +595,10 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         </div>
       ) : (
         /* ============================================================== */
-        /* STATE B: STREAMLIT-STYLE GENERATED SCHEDULE OVERVIEW */
+        /* STATE B: GENERATED SCHEDULE OVERVIEW */
         /* ============================================================== */
         <div className="space-y-5">
-          {/* Top Streamlit-Style Control Ribbon */}
+          {/* Top Control Ribbon */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-xl border border-stone-200/80 shadow-2xs">
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
@@ -907,10 +907,10 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
             </div>
           ) : (
             /* ============================================================== */
-            /* SUBVIEW: DIENSTPLAN (STREAMLIT CALENDAR TABLE) */
+            /* SUBVIEW: DIENSTPLAN (CALENDAR TABLE) */
             /* ============================================================== */
             <div className="space-y-4">
-              {/* Sub-Toolbar: Name Toggle & Month Tabs (Streamlit-style) */}
+              {/* Sub-Toolbar: Name Toggle & Month Tabs */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-stone-50/80 p-2.5 rounded-lg border border-stone-200/80">
                 {/* Month Filter Tabs */}
                 <div className="flex items-center gap-1 overflow-x-auto">
@@ -930,7 +930,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                   ))}
                 </div>
 
-                {/* Toggle: Full Names vs Identifiers (Direct from Streamlit) */}
+                {/* Toggle: Full Names vs Identifiers */}
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-stone-700 select-none">
                   <input
                     type="checkbox"
@@ -942,7 +942,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </label>
               </div>
 
-              {/* Legend Banner (Streamlit-style) */}
+              {/* Legend Banner */}
               <div className="flex items-center gap-4 text-[11px] text-stone-600 px-1">
                 <span className="flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded bg-[#e8e0f0] border border-purple-200 inline-block" />
@@ -958,7 +958,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </span>
               </div>
 
-              {/* The Streamlit-Style Calendar Matrix Table */}
+              {/* The Calendar Matrix Table */}
               <div className="bg-white rounded-xl border border-stone-200/80 shadow-2xs overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
@@ -1171,7 +1171,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </div>
               </div>
 
-              {/* Bottom Streamlit Metrics Summary */}
+              {/* Bottom Metrics Summary */}
               <div className="bg-stone-50 rounded-lg border border-stone-200/80 p-3.5 flex flex-wrap items-center justify-between gap-4 text-xs">
                 <div className="flex items-center gap-6">
                   <div>

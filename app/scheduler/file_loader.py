@@ -538,7 +538,7 @@ def parse_previous_plan_xlsx(
     with tolerance for known clinic aliases.
 
     Args:
-        source: File path (Path/str) or file-like object (e.g. Streamlit UploadedFile).
+        source: File path (Path/str) or file-like object (e.g. io.BytesIO or UploadFile.file).
 
     Returns:
         List of dicts with keys: shift_date (date), shift_type (str),

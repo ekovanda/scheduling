@@ -9,7 +9,6 @@ fi
 
 # 1. Parse CLI Target Flags (--dev or --prod)
 TARGET="prod"
-APP_TARGET="fastapi"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,15 +20,10 @@ while [[ $# -gt 0 ]]; do
       TARGET="prod"
       shift
       ;;
-    --legacy-streamlit|--streamlit)
-      APP_TARGET="streamlit"
-      shift
-      ;;
     -h|--help)
-      echo "Usage: $0 [--dev | --prod] [--legacy-streamlit]"
+      echo "Usage: $0 [--dev | --prod]"
       echo "  --prod              Deploy production app to 'dienstplan-app' (FastAPI + React SPA, default)"
       echo "  --dev               Deploy to 'dienstplan-dev' (FastAPI + React SPA)"
-      echo "  --legacy-streamlit  Deploy legacy Streamlit UI for temporary fallback"
       exit 0
       ;;
     *)
@@ -57,7 +51,7 @@ IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE_NAME}
 
 echo "=========================================================="
 echo " Deploying Dienstplan App to GCP Cloud Run"
-echo " Target Mode:   ${TARGET} (APP_TARGET=${APP_TARGET})"
+echo " Target Mode:   ${TARGET}"
 echo " Auth Enforced: ${AUTH_REQUIRED}"
 echo " Project:       ${PROJECT_ID}"
 echo " Region:        ${REGION}"
@@ -68,7 +62,6 @@ echo "=========================================================="
 # 2. Environment Variables Configuration
 STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
 ENV_VARS_LIST=(
-  "APP_TARGET=${APP_TARGET}"
   "STORAGE_BACKEND=${STORAGE_BACKEND}"
   "AUTH_REQUIRED=${AUTH_REQUIRED}"
   "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"

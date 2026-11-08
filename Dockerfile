@@ -66,9 +66,9 @@ USER appuser
 # Expose default port
 EXPOSE 8080
 
-# Dual healthcheck: probes FastAPI health endpoint first, falls back to Streamlit
+# Healthcheck: probes FastAPI health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:${PORT}/api/v1/health || curl --fail http://localhost:${PORT}/_stcore/health || exit 1
+    CMD curl --fail http://localhost:${PORT}/api/v1/health || exit 1
 
 # Launch container via entrypoint script for clean PID 1 signal propagation
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
