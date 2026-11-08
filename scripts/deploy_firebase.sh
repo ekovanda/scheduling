@@ -18,7 +18,7 @@ echo "1. Building frontend production bundle via Vite..."
 (cd frontend && npm run build)
 
 echo "2. Deploying to Firebase Hosting..."
-npx firebase-tools deploy --only hosting --project="${PROJECT_ID}"
+npx --yes firebase-tools deploy --only hosting --project="${PROJECT_ID}"
 
 echo "=========================================================="
 echo " Firebase Hosting Deployment Complete!"

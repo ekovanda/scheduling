@@ -9,6 +9,13 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.1.1] - 2026-11-08
+
+### Changed: Bereinigung der Anmeldeoberfläche (LoginGate)
+
+- **LoginGate (`frontend/src/components/LoginGate.tsx`):**
+  - Redundanten Untertitel *"Bitte geben Sie das Klinik-Passwort ein, um fortzufahren."* unter dem Portal-Titel entfernt für ein noch minimalistischeres und aufgeräumteres Erscheinungsbild.
+
 ## [2.1.0] - 2026-11-08
 
 ### Changed: Simplified Fairness View with 90° Rotated Funnel, Relaxed Deviation & Calendar/Pre-Assignment Polish

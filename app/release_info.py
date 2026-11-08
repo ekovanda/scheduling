@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.1.0"
+CURRENT_VERSION = "2.1.1"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,14 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.1.1",
+        date="08. November 2026",
+        summary="Optimierung der Anmeldeansicht",
+        highlights=(
+            "Login-Hinweistext zur Passworteingabe auf der Portalseite entfernt.",
+        ),
+    ),
     Release(
         version="2.1.0",
         date="08. November 2026",

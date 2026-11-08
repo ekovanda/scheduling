@@ -86,9 +86,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ children }) => {
               <h1 className="text-lg font-bold text-stone-900 tracking-tight">
                 Dienstplanungsportal
               </h1>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Bitte geben Sie das Klinik-Passwort ein, um fortzufahren.
-              </p>
             </div>
           </div>
 

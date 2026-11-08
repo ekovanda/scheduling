@@ -42,7 +42,7 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 if [ "$TARGET" = "dev" ]; then
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-dev}"
     AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
-    STORAGE_BACKEND="${STORAGE_BACKEND:-file}"
+    STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
     FIRESTORE_COLLECTION_PREFIX="${FIRESTORE_COLLECTION_PREFIX:-dev_}"
 else
     SERVICE_NAME="${SERVICE_NAME:-dienstplan-app}"

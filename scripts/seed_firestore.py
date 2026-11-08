@@ -32,6 +32,11 @@ def main() -> None:
         help="Source directory containing flat JSON files (default: data/db)",
     )
     parser.add_argument(
+        "--collection-prefix",
+        default=os.getenv("FIRESTORE_COLLECTION_PREFIX", ""),
+        help="Firestore collection prefix (e.g. 'dev_' or '')",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate records without writing to Firestore",
@@ -58,6 +63,7 @@ def main() -> None:
     print("==========================================================")
     print(" Google Cloud Firestore Clinic Baseline Migration")
     print(f" Target Project : {args.project}")
+    print(f" Collection Pfx : '{args.collection_prefix}'")
     print(f" Source Path    : {source_path.resolve()}")
     print(f" Staff Members  : {len(staff_members)}")
     print(f" Absences       : {len(absence_records)}")
@@ -71,7 +77,9 @@ def main() -> None:
         return
 
     print("Connecting to Firestore...")
-    firestore_repo = FirestoreRepository(project=args.project)
+    firestore_repo = FirestoreRepository(
+        project=args.project, collection_prefix=args.collection_prefix
+    )
 
     print("Uploading staff members...")
     for staff in staff_members:
