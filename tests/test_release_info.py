@@ -15,7 +15,7 @@ def test_current_version_uses_semantic_versioning() -> None:
 def test_current_version_is_the_latest_release() -> None:
     """The first release is the version shown to users."""
     assert RELEASES[0].version == CURRENT_VERSION
-    assert CURRENT_VERSION == "1.13.1"
+    assert CURRENT_VERSION == "1.13.2"
 
 
 def test_package_version_matches_displayed_version() -> None:

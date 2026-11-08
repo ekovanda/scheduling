@@ -9,6 +9,25 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [1.13.2] - 2026-11-08
+
+### UI: Kompakte Schichtnummerierung, angepinnte Legende & Intern-Bereinigung im Dienstplan
+
+- **Kompakte Wochenendschicht-Nummerierung (`frontend/src/views/MatrixView.tsx`):**
+  - Mitarbeiternamen und -kürzel stehen in Spalte 2 an erster Stelle und im klaren visuellen Fokus.
+  - Ersatz der breiten Schichttext-Badges durch kompakte, farblich abgestimmte Ziffern-Tags `(1)` bis `(4)`:
+    - `(1)`: Frühdienst (`Sa 10–21`, `So/FT 8–20`)
+    - `(2)`: Spätdienst Azubi (`Sa 10–19`)
+    - `(3)`: Rufbereitschaft (`Sa/So 10–22`)
+    - `(4)`: Azubi Rufbereitschaft (`So 8–20:30`)
+  - Tooltips auf den Ziffern-Tags zeigen bei Mouseover die vollständige Schichtbezeichnung und Arbeitszeiten.
+- **Angepinnte Schicht-Legende (`frontend/src/views/MatrixView.tsx`):**
+  - Neue sticky Legende (`sticky top-14 z-30`) über der Dienstplantabelle bleibt beim vertikalen Scrollen dauerhaft unterhalb der Navigationsleiste verankert.
+  - Bietet direkte Übersicht über alle Wochenendschichten, Nachtdienste, Interns sowie Vorbelegungs-Markierungen.
+- **Intern-Tagdienst Spaltenbereinigung (`frontend/src/views/MatrixView.tsx`):**
+  - Entfernung redundanter `08:30–20:30`- und `[Intern]`-Badges aus den einzelnen Tabellenzeilen der Spalte 3.
+  - Der Tabellenkopf `🎓 Intern Tagdienst` weist die einheitliche Schichtzeit (`08:30–20:30`) zentral aus; Zeileneinträge konzentrieren sich rein auf die eingeteilte Person.
+
 ## [1.13.1] - 2026-11-08
 
 ### UI & Workflow: Klickbare Schicht-Kacheln & Wochentagsanzeige in Vorbelegungen

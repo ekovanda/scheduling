@@ -210,51 +210,83 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
     });
   };
 
-  const getShiftCategoryBadge = (shiftType: string) => {
+  interface WeekendShiftMeta {
+    num: number;
+    label: string;
+    hours: string;
+    className: string;
+  }
+
+  const getWeekendShiftMeta = (shiftType: string): WeekendShiftMeta => {
     const t = (shiftType || '').toLowerCase().trim();
 
-    // Saturday
+    // 1: Frühdienst (Sa 10–21, So/FT 8–20)
     if (shiftType === 'Sa_10-21') {
-      return { label: 'Früh', hours: '10–21', className: 'bg-amber-100 text-amber-900 border-amber-300' };
+      return {
+        num: 1,
+        label: 'Frühdienst',
+        hours: 'Sa 10:00–21:00',
+        className: 'bg-amber-100 text-amber-900 border-amber-300',
+      };
     }
-    if (shiftType === 'Sa_10-19') {
-      return { label: 'Spät', hours: '10–19', className: 'bg-orange-100 text-orange-900 border-orange-300' };
-    }
-    if (shiftType === 'Sa_10-22') {
-      return { label: 'Ruf', hours: '10–22', className: 'bg-purple-100 text-purple-900 border-purple-300' };
+    if (shiftType === 'So_8-20') {
+      return {
+        num: 1,
+        label: 'Frühdienst',
+        hours: 'So/FT 08:00–20:00',
+        className: 'bg-amber-100 text-amber-900 border-amber-300',
+      };
     }
 
-    // Sunday / Feiertag
-    if (shiftType === 'So_8-20') {
-      return { label: 'Früh', hours: '8–20', className: 'bg-amber-100 text-amber-900 border-amber-300' };
+    // 2: Spätdienst Azubi (Sa 10–19)
+    if (shiftType === 'Sa_10-19') {
+      return {
+        num: 2,
+        label: 'Spätdienst Azubi',
+        hours: 'Sa 10:00–19:00',
+        className: 'bg-orange-100 text-orange-900 border-orange-300',
+      };
     }
-    if (shiftType === 'So_10-22') {
-      return { label: 'Ruf', hours: '10–22', className: 'bg-purple-100 text-purple-900 border-purple-300' };
+
+    // 3: Rufbereitschaft (Sa/So 10–22)
+    if (shiftType === 'Sa_10-22' || shiftType === 'So_10-22') {
+      return {
+        num: 3,
+        label: 'Rufbereitschaft',
+        hours: 'Sa & So 10:00–22:00',
+        className: 'bg-purple-100 text-purple-900 border-purple-300',
+      };
     }
+
+    // 4: Azubi Rufbereitschaft (So 8–20:30)
     if (shiftType === 'So_8-20:30') {
-      return { label: 'Ruf', hours: '8–20:30', className: 'bg-purple-100 text-purple-900 border-purple-300' };
+      return {
+        num: 4,
+        label: 'Azubi Rufbereitschaft',
+        hours: 'So/FT 08:00–20:30',
+        className: 'bg-blue-100 text-blue-900 border-blue-300',
+      };
     }
 
     // Generic fallbacks
-    if (t.includes('10-22') || t.includes('ruf')) {
-      return { label: 'Ruf', hours: '', className: 'bg-purple-100 text-purple-900 border-purple-300' };
-    }
     if (t.includes('8-20') || t.includes('10-21') || t.includes('früh') || t.includes('tag')) {
-      return { label: 'Früh', hours: '', className: 'bg-amber-100 text-amber-900 border-amber-300' };
+      return { num: 1, label: 'Frühdienst', hours: '', className: 'bg-amber-100 text-amber-900 border-amber-300' };
     }
     if (t.includes('10-19') || t.includes('spät')) {
-      return { label: 'Spät', hours: '', className: 'bg-orange-100 text-orange-900 border-orange-300' };
+      return { num: 2, label: 'Spätdienst', hours: '', className: 'bg-orange-100 text-orange-900 border-orange-300' };
+    }
+    if (t.includes('10-22') || t.includes('ruf')) {
+      return { num: 3, label: 'Rufbereitschaft', hours: '', className: 'bg-purple-100 text-purple-900 border-purple-300' };
+    }
+    if (t.includes('20:30') || t.includes('azubi')) {
+      return { num: 4, label: 'Azubi Ruf', hours: '', className: 'bg-blue-100 text-blue-900 border-blue-300' };
     }
 
-    return { label: shiftType, hours: '', className: 'bg-stone-100 text-stone-700 border-stone-200' };
+    return { num: 1, label: shiftType, hours: '', className: 'bg-stone-100 text-stone-700 border-stone-200' };
   };
 
   const getShiftOrder = (shiftType: string): number => {
-    const badge = getShiftCategoryBadge(shiftType);
-    if (badge.label === 'Früh') return 1;
-    if (badge.label === 'Spät') return 2;
-    if (badge.label === 'Ruf') return 3;
-    return 4;
+    return getWeekendShiftMeta(shiftType).num;
   };
 
   const getStaffDisplayName = (id: string, isVet = false) => {
@@ -1016,24 +1048,70 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </label>
               </div>
 
-              {/* Legend Banner (Streamlit-style) */}
-              <div className="flex flex-wrap items-center gap-4 text-[11px] text-stone-600 px-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#e8e0f0] border border-purple-200 inline-block" />
-                  <span>🌙 Nachtdienst</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#fff3e0] border border-amber-200 inline-block" />
-                  <span>☀️ Wochenenddienst & Rufbereitschaft</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#e0f2f1] border border-teal-200 inline-block" />
-                  <span>🎓 Intern Tagdienst</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded bg-[#b2dfdb] border border-teal-300 inline-block" />
-                  <span>📌 Fest vorbelegt</span>
-                </span>
+              {/* Pinned Sticky Legend for Shifts */}
+              <div className="sticky top-14 z-30 bg-white/95 backdrop-blur-md border border-stone-200/90 rounded-lg px-3 py-2 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
+                  {/* Left: Weekend Shift Numbers (1, 2, 3, 4) */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <span className="font-bold text-stone-700 flex items-center gap-1 shrink-0">
+                      <span>☀️ Wochenendschichten:</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5 font-sans">
+                      <span
+                        className="inline-flex items-center gap-1 bg-amber-50 text-amber-950 border border-amber-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag 10:00–21:00 / Sonntag & Feiertag 08:00–20:00"
+                      >
+                        <span className="font-bold text-amber-900 font-mono">(1)</span>
+                        <span className="font-medium">Früh</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa 10–21 / So 8–20)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-orange-50 text-orange-950 border border-orange-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag 10:00–19:00 (Azubi)"
+                      >
+                        <span className="font-bold text-orange-900 font-mono">(2)</span>
+                        <span className="font-medium">Spät Azubi</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa 10–19)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-purple-50 text-purple-950 border border-purple-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Samstag & Sonntag 10:00–22:00"
+                      >
+                        <span className="font-bold text-purple-900 font-mono">(3)</span>
+                        <span className="font-medium">Ruf</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(Sa & So 10–22)</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 bg-blue-50 text-blue-950 border border-blue-200 px-2 py-0.5 rounded text-[11px]"
+                        title="Sonntag & Feiertag 08:00–20:30 (Azubi Präsenz 8–12, Ruf 12–20:30)"
+                      >
+                        <span className="font-bold text-blue-900 font-mono">(4)</span>
+                        <span className="font-medium">Azubi Ruf</span>
+                        <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">(So 8–20:30)</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right: Quick Indicators */}
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-stone-600">
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-[#eee8f5] border border-purple-300 inline-block" />
+                      <span>🌙 Nacht</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-[#e8f5f3] border border-teal-300 inline-block" />
+                      <span>🎓 Intern (08:30–20:30)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded bg-emerald-100 border border-emerald-300 inline-block" />
+                      <Pin className="h-2.5 w-2.5 text-emerald-700" />
+                      <span className="text-emerald-950 font-medium">Fest vorbelegt</span>
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* The Streamlit-Style Calendar Matrix Table */}
@@ -1047,10 +1125,13 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                           🌙 Nacht
                         </th>
                         <th className="py-2.5 px-3 border-r border-stone-200 w-64 bg-[#fff8e7]">
-                          ☀️ Sa/So Dienst & Rufbereitschaft
+                          ☀️ Sa/So Dienst & Rufbereitschaft (1–4)
                         </th>
                         <th className="py-2.5 px-3 border-r border-stone-200 w-44 bg-[#e8f5f3]">
-                          🎓 Intern Tagdienst
+                          <div className="flex items-center justify-between">
+                            <span>🎓 Intern Tagdienst</span>
+                            <span className="text-[10px] text-teal-800/70 font-mono font-normal">08:30–20:30</span>
+                          </div>
                         </th>
                       </tr>
                     </thead>
@@ -1188,51 +1269,57 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                       const isPre = isShiftPreAssigned(shift);
                                       const stf = getStaff(shift.actual_staff_id);
                                       const role = stf?.beruf;
-                                      const cat = getShiftCategoryBadge(shift.shift_type);
+                                      const meta = getWeekendShiftMeta(shift.shift_type);
 
                                       return (
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
                                           className={cn(
-                                            'flex items-center gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
+                                            'flex items-center justify-between gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
                                             isPre
                                               ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
                                               : 'text-stone-900'
                                           )}
                                         >
-                                          {isPre && (
-                                            <span title="Fest vorgegebener Dienst">
-                                              <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            {isPre && (
+                                              <span title="Fest vorgegebener Dienst">
+                                                <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
+                                              </span>
+                                            )}
+                                            <span className="truncate">
+                                              {getStaffDisplayName(shift.actual_staff_id, false)}
                                             </span>
-                                          )}
+                                            {role && role !== 'TFA' && (
+                                              <span
+                                                className={cn(
+                                                  'text-[9px] px-1 py-0.2 rounded font-medium shrink-0',
+                                                  role === 'Azubi'
+                                                    ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                                    : role === 'Intern'
+                                                      ? 'bg-teal-100 text-teal-900 border border-teal-200'
+                                                      : 'bg-rose-100 text-rose-900 border border-rose-200'
+                                                )}
+                                              >
+                                                {role}
+                                              </span>
+                                            )}
+                                            {shift.is_override && (
+                                              <span className="text-[11px]" title="Getauchter Dienst">
+                                                ⚠️
+                                              </span>
+                                            )}
+                                          </div>
+
                                           <span
                                             className={cn(
-                                              'text-[10px] font-bold px-1.5 py-0.2 rounded border shrink-0',
-                                              cat.className
+                                              'text-[10px] font-bold px-1.5 py-0.2 rounded border font-mono shrink-0 cursor-help',
+                                              meta.className
                                             )}
-                                            title={shift.shift_type}
+                                            title={`${meta.label} (${meta.hours})`}
                                           >
-                                            {cat.label}
-                                            {cat.hours ? ` ${cat.hours}` : ''}
+                                            ({meta.num})
                                           </span>
-                                          <span className="truncate">
-                                            {getStaffDisplayName(shift.actual_staff_id, false)}
-                                          </span>
-                                          {role && role !== 'TFA' && (
-                                            <span
-                                              className={cn(
-                                                'text-[10px] px-1 py-0.2 rounded font-medium shrink-0',
-                                                role === 'Azubi'
-                                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                                                  : role === 'Intern'
-                                                    ? 'bg-teal-100 text-teal-900 border border-teal-200'
-                                                    : 'bg-rose-100 text-rose-900 border border-rose-200'
-                                              )}
-                                            >
-                                              {role}
-                                            </span>
-                                          )}
-                                          {shift.is_override && <span>⚠️</span>}
                                         </div>
                                       );
                                     })}
@@ -1261,10 +1348,10 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                         <div
                                           key={`${shift.shift_date}-${shift.shift_type}-${shift.actual_staff_id}-${idx}`}
                                           className={cn(
-                                            'flex items-center gap-1.5 text-left font-medium transition-all rounded px-1.5 py-0.5',
+                                            'flex items-center gap-1.5 text-left font-semibold transition-all rounded px-1.5 py-0.5',
                                             isPre
-                                              ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs font-semibold'
-                                              : 'text-teal-950 font-semibold'
+                                              ? 'bg-emerald-100/90 text-emerald-950 border border-emerald-300 shadow-2xs'
+                                              : 'text-stone-900'
                                           )}
                                         >
                                           {isPre && (
@@ -1272,19 +1359,14 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                                               <Pin className="h-3 w-3 text-emerald-700 shrink-0" />
                                             </span>
                                           )}
-                                          <span
-                                            className="text-[10px] font-bold px-1.5 py-0.2 rounded border bg-teal-100 text-teal-900 border-teal-300 shrink-0"
-                                            title={shift.shift_type}
-                                          >
-                                            08:30–20:30
-                                          </span>
                                           <span className="truncate">
                                             {getStaffDisplayName(shift.actual_staff_id, false)}
                                           </span>
-                                          <span className="text-[10px] px-1 py-0.2 rounded font-medium bg-teal-50 text-teal-800 border border-teal-200 shrink-0">
-                                            Intern
-                                          </span>
-                                          {shift.is_override && <span>⚠️</span>}
+                                          {shift.is_override && (
+                                            <span className="text-[11px]" title="Getauchter Dienst">
+                                              ⚠️
+                                            </span>
+                                          )}
                                         </div>
                                       );
                                     })}

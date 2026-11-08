@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "1.13.1"
+CURRENT_VERSION = "1.13.2"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="1.13.2",
+        date="08. November 2026",
+        summary="Dienstplan: Angepinnte Legende & Schichtnummerierung",
+        highlights=(
+            "Mitarbeiternamen im Vordergrund; Schichten kompakt als (1) bis (4) nummeriert.",
+            "Angepinnte Schicht-Legende bleibt beim vertikalen Scrollen dauerhaft sichtbar.",
+            "Intern-Tagdienst auf Person fokussiert ohne redundante Zeit- und Rollenanzeige.",
+        ),
+    ),
     Release(
         version="1.13.1",
         date="08. November 2026",
