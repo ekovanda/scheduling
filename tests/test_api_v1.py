@@ -409,7 +409,31 @@ def test_quarter_fairness_overview_endpoint(client: TestClient) -> None:
     assert "groups" in data
     assert "TFA" in data["groups"]
     assert "records" in data
-    assert any(r["identifier"] == "T1" for r in data["records"])
+    t1_rec = next(r for r in data["records"] if r["identifier"] == "T1")
+    assert t1_rec["status"] == "balanced"  # delta 0.0 is <= 1.0
+
+
+def test_fairness_overview_threshold_tiering(client: TestClient) -> None:
+    """Ensure fairness status follows +-1.0 (balanced), +-2.0 (slight_deviation), and >2.0 (warning)."""
+    # Create 3 staff members
+    for ident, hours in [("T_A", 40), ("T_B", 40), ("T_C", 40)]:
+        client.post(
+            "/api/v1/staff",
+            json={
+                "id": f"staff_{ident}",
+                "identifier": ident,
+                "name": f"Staff {ident}",
+                "beruf": "TFA",
+                "hours": hours,
+                "is_active": True,
+            },
+        )
+    # Check overview
+    resp = client.get("/api/v1/quarters/2026-Q4/fairness")
+    assert resp.status_code == 200
+    records = resp.json()["records"]
+    # With 0 shifts for all, net_delta is 0.0 -> all balanced
+    assert all(r["status"] == "balanced" for r in records if r["beruf"] == "TFA")
 
 
 def test_umlaut_entity_ids_crud(client: TestClient) -> None:

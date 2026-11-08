@@ -273,7 +273,7 @@ def get_quarter_fairness_overview(
             if (s.beruf.value == role_name) or (role_name == "Vet" and s.beruf == Beruf.VET)
         ]
 
-        temp_recs = []
+        temp_recs: list[dict[str, Any]] = []
         for s in group_staff:
             avail_days = calculate_available_days(
                 s.identifier, vacations, q_start, q_end, effective_start=s.available_from
@@ -305,9 +305,9 @@ def get_quarter_fairness_overview(
                 }
             )
 
-        total_w = sum(r["weight"] for r in temp_recs)
+        total_w = sum(float(r["weight"]) for r in temp_recs)
         group_mean = (
-            sum(r["normalized_40h"] * r["weight"] for r in temp_recs) / total_w
+            sum(float(r["normalized_40h"]) * float(r["weight"]) for r in temp_recs) / total_w
             if total_w > 0
             else 0.0
         )
@@ -315,36 +315,37 @@ def get_quarter_fairness_overview(
 
         role_records: list[StaffFairnessRecord] = []
         for r in temp_recs:
-            s = r["staff"]
-            plan_delta = round(r["normalized_40h"] - group_mean, 2)
-            cf_delta = round(prev_cf.get(s.identifier, 0.0), 2)
+            member_staff: Staff = r["staff"]
+            norm_40h: float = float(r["normalized_40h"])
+            plan_delta = round(norm_40h - group_mean, 2)
+            cf_delta = round(prev_cf.get(member_staff.identifier, 0.0), 2)
             net_delta = round(plan_delta + cf_delta, 2)
 
             abs_net = abs(net_delta)
-            if abs_net <= 0.5:
+            if abs_net <= 1.0:
                 status_str = "balanced"
-                if abs(cf_delta) >= 0.5:
+                if abs(cf_delta) >= 1.0:
                     exp = f"Vorquartal ({cf_delta:+.2f}) durch aktuellen Plan ({plan_delta:+.2f}) erfolgreich neutralisiert."
                 else:
-                    exp = "Exakt im fairen Zielbereich der Berufsgruppe."
-            elif abs_net <= 1.0:
+                    exp = "Im fairen Zielbereich der Berufsgruppe (±1.0 Dienst)."
+            elif abs_net <= 2.0:
                 status_str = "slight_deviation"
                 exp = f"Leichte Netto-Abweichung von {net_delta:+.2f} Diensten (wird im Folgequartal ausgeglichen)."
             else:
                 status_str = "warning"
-                exp = f"Netto-Abweichung von {net_delta:+.2f} Diensten (Prioritärer Ausgleich im Folgequartal)."
+                exp = f"Ausreißer mit {net_delta:+.2f} Diensten Abweichung (prioritärer Ausgleich im Folgequartal)."
 
             rec = StaffFairnessRecord(
-                identifier=s.identifier,
-                name=s.name,
+                identifier=member_staff.identifier,
+                name=member_staff.name,
                 beruf=role_name,
-                hours=r["hours"],
-                vacation_days=r["vacation_days"],
-                presence_factor=r["presence_factor"],
-                effective_nights=r["effective_nights"],
-                weekend_shifts=r["weekend_shifts"],
-                total_notdienst=r["total_notdienst"],
-                normalized_40h=r["normalized_40h"],
+                hours=int(r["hours"]),
+                vacation_days=int(r["vacation_days"]),
+                presence_factor=float(r["presence_factor"]),
+                effective_nights=float(r["effective_nights"]),
+                weekend_shifts=int(r["weekend_shifts"]),
+                total_notdienst=float(r["total_notdienst"]),
+                normalized_40h=norm_40h,
                 group_mean_40h=group_mean,
                 plan_delta=plan_delta,
                 cf_delta=cf_delta,

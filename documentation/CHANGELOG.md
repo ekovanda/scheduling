@@ -9,6 +9,24 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.1.0] - 2026-11-08
+
+### Changed: Simplified Fairness View with 90° Rotated Funnel & Relaxed ±1.0/±2.0 Deviation Thresholds
+
+- **Fokussierte Ausgleichs-Pfeile & 90°-gedrehter Konvergenz-Trichter (`frontend/src/views/FairnessView.tsx`):**
+  - Redundante Visualisierungsmodi (*Balance-Balken*, *2D-Scatterplot*, *Dichte-Streifen*) sowie die untere Mitarbeiter-Tabelle und der 3-Karten-Erklärungsblock vollständig entfernt.
+  - Ansicht fokussiert sich rein auf die *Ausgleichs-Pfeile* mit zwei wählbaren Submodi: *Einzel-Vektoren* (Dumbbell-Vektoren pro Person inkl. Such- und Sortierleiste) und *Konvergenz-Trichter*.
+  - Der Konvergenz-Trichter wurde um 90 Grad gedreht: Die horizontale Achse nutzt die Bildschirmbreite optimal für den Wertebereich (links Entlastung, rechts Mehrarbeit, Mitte 0.0), während der Zeitverlauf vertikal von oben (*Vorher / Vorquartal*) nach unten (*Nachher / Plan*) verläuft. Dadurch entfällt das vertikale Überlappen der Kurven.
+  - Kompakter Detail-Inspektor öffnet sich bedarfsgerecht bei Klick auf eine Person in beiden Modi.
+- **Aktualisierte Toleranz-Schwellenwerte für Fairness-Bewertung (`app/api/v1/quarters.py`, `frontend/src/views/FairnessView.tsx`):**
+  - Schwellenwerte für die Netto-Abweichung an die betriebliche Vorgabe angepasst:
+    - $| \text{net\_delta} | \le 1.0$: *Im Zielbereich / Ausgeglichen* (`balanced`, grün).
+    - $1.0 < | \text{net\_delta} | \le 2.0$: *Leichte Abweichung* (`slight_deviation`, gelb).
+    - $| \text{net\_delta} | > 2.0$: *Ausreißer* (`warning`, rot).
+  - Zielkorridor in den Vektorspuren und im Trichter auf $\pm 1.0$ Dienste angepasst.
+- **Tests (`tests/test_api_v1.py`, `tests/test_release_info.py`):**
+  - Test `test_fairness_overview_threshold_tiering` verifiziert die aktualisierte Status-Klassifizierung.
+
 ## [2.0.4] - 2026-11-08
 
 ### Fixed: Cascade Cleanup on Staff Deletion & Active-Staff Vacation Filtering (D1)

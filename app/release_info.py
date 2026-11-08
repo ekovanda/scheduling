@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.0.4"
+CURRENT_VERSION = "2.1.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,16 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.1.0",
+        date="08. November 2026",
+        summary="Kompakte Fairness-Ansicht & flexibler Zielkorridor",
+        highlights=(
+            "Fokus auf Ausgleichs-Pfeile mit Einzel-Vektoren und vertikalem Konvergenz-Trichter.",
+            "Praxisnaher Zielkorridor von ±1 Dienst als ausgeglichen und ±2 als leichte Abweichung.",
+            "Aufgeräumte Ansicht ohne redundante Tabellen und mit reduzierter Textlast.",
+        ),
+    ),
     Release(
         version="2.0.4",
         date="08. November 2026",

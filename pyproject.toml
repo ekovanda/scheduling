@@ -1,6 +1,6 @@
 [project]
 name = "dienstplan"
-version = "2.0.4"
+version = "2.1.0"
 description = "Quarterly Notdienst scheduling platform for veterinary clinics (FastAPI + React)"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "uvicorn[standard]>=0.48.0",
     "google-cloud-firestore>=2.34.1",
+    "itsdangerous>=2.2.0",
 ]
 
 [project.optional-dependencies]
