@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 APP_NAME = "Dienstplan Generator"
-CURRENT_VERSION = "2.1.2"
+CURRENT_VERSION = "2.2.0"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,15 @@ class Release:
 
 
 RELEASES: tuple[Release, ...] = (
+    Release(
+        version="2.2.0",
+        date="08. November 2026",
+        summary="Ausnahmen bei Vorbelegungen aktiv akzeptieren/lösen",
+        highlights=(
+            "Konflikte aus Vorbelegungen (z. B. Feiertagsdienste) können in der Machbarkeitsprüfung direkt akzeptiert oder gelöscht werden.",
+            "Der Solver übernimmt akzeptierte Vorbelegungen als verbindliche Ausnahmen, ohne die Berechnung zu blockieren.",
+        ),
+    ),
     Release(
         version="2.1.2",
         date="08. November 2026",

@@ -253,17 +253,23 @@ def generate_schedule_cpsat(
     # DECISION VARIABLES
     # =========================================================================
 
+    pre_assigned_set = {
+        (pa.staff_identifier, pa.shift_date, pa.shift_type)
+        for pa in (pre_assigned or [])
+    }
+
     # x[s, d, t] = 1 if staff s is assigned to shift (d, t)
-    # Staff on vacation are excluded from consideration for that date
+    # Staff on vacation are excluded from consideration for that date (unless pre-assigned)
     x: dict[tuple[str, date, ShiftType], cp_model.IntVar] = {}
     for staff in staff_list:
         vacation_dates = staff_vacation_dates[staff.identifier]
         for shift in shifts:
-            # Skip if staff is on vacation on this date
-            if shift.shift_date in vacation_dates:
+            key = (staff.identifier, shift.shift_date, shift.shift_type)
+            is_pa = key in pre_assigned_set
+            # Skip if staff is on vacation on this date (unless explicitly pre-assigned)
+            if shift.shift_date in vacation_dates and not is_pa:
                 continue
-            if staff.can_work_shift(shift.shift_type, shift.shift_date):
-                key = (staff.identifier, shift.shift_date, shift.shift_type)
+            if staff.can_work_shift(shift.shift_type, shift.shift_date) or is_pa:
                 x[key] = model.NewBoolVar(
                     f"x_{staff.identifier}_{shift.shift_date}_{shift.shift_type.value}"
                 )
@@ -322,7 +328,13 @@ def generate_schedule_cpsat(
                 if (staff.identifier, s.shift_date, s.shift_type) in x
             ]
             if len(vars_for_day) > 1:
-                model.Add(sum(vars_for_day) <= 1)
+                # If multiple shifts on the same day are fixed by pre-assignments, allow them
+                pa_on_day = sum(
+                    1
+                    for s in day_shifts
+                    if (staff.identifier, s.shift_date, s.shift_type) in pre_assigned_keys
+                )
+                model.Add(sum(vars_for_day) <= max(1, pa_on_day))
 
     # 1. Weekend shift coverage
     # Regular TFA/Azubi shifts: default exactly 1 person per shift.
@@ -686,7 +698,9 @@ def generate_schedule_cpsat(
 
     # 5. Weekend isolation: weekend shifts cannot be adjacent to any other shift
     # This ensures weekend shifts are always single-shift blocks
-    _add_weekend_isolation_constraints(model, x, staff_list, weekend_shifts, night_shifts)
+    _add_weekend_isolation_constraints(
+        model, x, staff_list, weekend_shifts, night_shifts, pre_assigned_keys=pre_assigned_keys
+    )
 
     # 6. Night/Day conflict: no day shift same day or next day after night shift
     for staff in staff_list:
@@ -700,7 +714,8 @@ def generate_schedule_cpsat(
                 if we_shift.shift_date == night_shift.shift_date:
                     we_key = (staff.identifier, we_shift.shift_date, we_shift.shift_type)
                     if we_key in x:
-                        model.Add(x[night_key] + x[we_key] <= 1)
+                        if not (night_key in pre_assigned_keys and we_key in pre_assigned_keys):
+                            model.Add(x[night_key] + x[we_key] <= 1)
 
             # Next day weekend shift
             next_day = night_shift.shift_date + timedelta(days=1)
@@ -708,7 +723,8 @@ def generate_schedule_cpsat(
                 if we_shift.shift_date == next_day:
                     we_key = (staff.identifier, we_shift.shift_date, we_shift.shift_type)
                     if we_key in x:
-                        model.Add(x[night_key] + x[we_key] <= 1)
+                        if not (night_key in pre_assigned_keys and we_key in pre_assigned_keys):
+                            model.Add(x[night_key] + x[we_key] <= 1)
 
     # 6b. Night/Day conflict at quarter boundary:
     #     If someone had a night shift on the last day of the previous quarter,
@@ -759,6 +775,7 @@ def generate_schedule_cpsat(
         staff_list,
         night_shifts,
         trailing_night_dates=trailing_night_dates or None,
+        pre_assigned_keys=pre_assigned_keys,
     )
 
     # 9. Non-Azubi min consecutive nights: TFA/Intern must work at least 2 consecutive nights
@@ -768,6 +785,7 @@ def generate_schedule_cpsat(
         staff_list,
         night_shifts,
         trailing_night_dates=trailing_night_dates or None,
+        pre_assigned_keys=pre_assigned_keys,
     )
 
     # 10. Abteilung constraint: employees in same abteilung (op or station) cannot work
@@ -1211,6 +1229,7 @@ def _add_weekend_isolation_constraints(
     staff_list: list[Staff],
     weekend_shifts: list[Shift],
     night_shifts: list[Shift],
+    pre_assigned_keys: set[tuple[str, date, ShiftType]] | None = None,
 ) -> None:
     """Ensure weekend shifts are isolated (not adjacent to other shifts).
 
@@ -1256,7 +1275,15 @@ def _add_weekend_isolation_constraints(
                         )
                         if other_key in x and other_key != we_key:
                             # Weekend shift and adjacent shift cannot both be assigned
-                            model.Add(x[we_key] + x[other_key] <= 1)
+                            # If both were fixed by pre-assignments, allow them
+                            if (
+                                pre_assigned_keys
+                                and we_key in pre_assigned_keys
+                                and other_key in pre_assigned_keys
+                            ):
+                                pass
+                            else:
+                                model.Add(x[we_key] + x[other_key] <= 1)
 
 
 def _add_block_constraints(
@@ -1424,6 +1451,7 @@ def _add_nd_max_consecutive_constraints(
     staff_list: list[Staff],
     night_shifts: list[Shift],
     trailing_night_dates: dict[str, list[date]] | None = None,
+    pre_assigned_keys: set[tuple[str, date, ShiftType]] | None = None,
 ) -> None:
     """Enforce max consecutive nights based on nd_max_consecutive field.
 
@@ -1479,7 +1507,22 @@ def _add_nd_max_consecutive_constraints(
                 for k in range(len(window_vars) - max_consecutive):
                     # Sum of (max_consecutive + 1) consecutive vars <= max_consecutive
                     constraint_vars = window_vars[k : k + max_consecutive + 1]
-                    model.Add(sum(constraint_vars) <= max_consecutive)
+                    pa_in_window = 0
+                    if pre_assigned_keys:
+                        window_dates = [
+                            staff_night_vars[i + idx][0]
+                            for idx in range(k, k + max_consecutive + 1)
+                        ]
+                        pa_in_window = sum(
+                            1
+                            for d_cur in window_dates
+                            if any(
+                                (staff.identifier, d_cur, s.shift_type) in pre_assigned_keys
+                                for s in night_shifts
+                                if s.shift_date == d_cur
+                            )
+                        )
+                    model.Add(sum(constraint_vars) <= max(max_consecutive, pa_in_window))
 
             i = j
 
@@ -1490,6 +1533,7 @@ def _add_min_consecutive_nights_constraints(
     staff_list: list[Staff],
     night_shifts: list[Shift],
     trailing_night_dates: dict[str, list[date]] | None = None,
+    pre_assigned_keys: set[tuple[str, date, ShiftType]] | None = None,
 ) -> None:
     """Enforce minimum consecutive nights based on staff.nd_min_consecutive.
 
@@ -1570,8 +1614,16 @@ def _add_min_consecutive_nights_constraints(
                     # var => OR(adjacent_vars)
                     model.Add(sum(adjacent_vars) >= 1).OnlyEnforceIf(var)
                 else:
-                    # No adjacent nights available - cannot work this night
-                    model.Add(var == 0)
+                    # No adjacent nights available - cannot work this night unless pre-assigned
+                    is_pa = False
+                    if pre_assigned_keys:
+                        is_pa = any(
+                            (staff.identifier, d, s.shift_type) in pre_assigned_keys
+                            for s in night_shifts
+                            if s.shift_date == d
+                        )
+                    if not is_pa:
+                        model.Add(var == 0)
         else:
             # General case for min_consecutive >= 3
             # For each night, if assigned, it must be part of a block of at least min_consecutive

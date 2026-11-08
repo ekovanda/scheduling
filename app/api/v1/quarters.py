@@ -70,6 +70,13 @@ class ShiftSwapRequest(BaseModel):
     force: bool = False
 
 
+class AcceptViolationRequest(BaseModel):
+    """Payload for accepting or revoking a pre-assignment feasibility violation."""
+
+    violation_id: str
+    accepted: bool = True
+
+
 class ValidationReport(BaseModel):
     """Result of rule validation on a quarterly plan."""
 
@@ -505,6 +512,7 @@ def _load_domain_data(
                 )
                 pa_shifts.append(
                     PreAssignedShift(
+                        id=r.id,
                         shift_date=r.shift_date,
                         shift_type=st,
                         staff_identifier=resolved_ident,
@@ -714,6 +722,9 @@ def validate_quarter_feasibility(
 
     from app.scheduler.models import SchedulerConfig
 
+    doc = repo.get_schedule(quarter_key)
+    accepted_ids = doc.config.get("accepted_feasibility_violations", []) if doc else []
+
     return run_full_feasibility_check(
         staff_list=staff_list,
         vacations=vacations,
@@ -722,6 +733,57 @@ def validate_quarter_feasibility(
         quarter_end=q_end,
         config=SchedulerConfig(),
         quarter_key=quarter_key,
+        accepted_violation_ids=accepted_ids,
+    )
+
+
+@router.post(
+    "/{quarter_key}/accept-feasibility-violation",
+    response_model=FeasibilityReportRecord,
+)
+def accept_feasibility_violation(
+    quarter_key: str,
+    req: AcceptViolationRequest,
+    repo: RepoDep,
+) -> FeasibilityReportRecord:
+    """Accept or revoke acceptance of a pre-assignment feasibility violation."""
+    year, quarter = _parse_quarter_key(quarter_key)
+    doc = repo.get_schedule(quarter_key)
+    if not doc:
+        doc = QuarterScheduleDocument(
+            quarter_key=quarter_key,
+            year=year,
+            quarter=quarter,
+            state=ScheduleState.DRAFT,
+            config={},
+        )
+
+    accepted_list: list[str] = list(doc.config.get("accepted_feasibility_violations", []))
+    if req.accepted:
+        if req.violation_id not in accepted_list:
+            accepted_list.append(req.violation_id)
+    else:
+        if req.violation_id in accepted_list:
+            accepted_list.remove(req.violation_id)
+
+    doc.config["accepted_feasibility_violations"] = accepted_list
+    doc.updated_at = datetime.now(UTC)
+    repo.save_schedule(doc)
+
+    year, quarter, q_start, q_end, staff_list, vacations, pa_shifts = _load_domain_data(
+        quarter_key, repo
+    )
+    from app.scheduler.models import SchedulerConfig
+
+    return run_full_feasibility_check(
+        staff_list=staff_list,
+        vacations=vacations,
+        pre_assigned=pa_shifts,
+        quarter_start=q_start,
+        quarter_end=q_end,
+        config=SchedulerConfig(),
+        quarter_key=quarter_key,
+        accepted_violation_ids=accepted_list,
     )
 
 
@@ -764,6 +826,9 @@ def generate_quarter_schedule(
     # Deterministic Pre-Flight Consistency & Capacity Validation
     from app.scheduler.models import SchedulerConfig
 
+    doc = repo.get_schedule(quarter_key)
+    accepted_ids = doc.config.get("accepted_feasibility_violations", []) if doc else []
+
     feasibility_report = run_full_feasibility_check(
         staff_list=staff_list,
         vacations=vacations,
@@ -772,6 +837,7 @@ def generate_quarter_schedule(
         quarter_end=q_end,
         config=SchedulerConfig(block_gap_days=solver_req.block_gap_days),
         quarter_key=quarter_key,
+        accepted_violation_ids=accepted_ids,
     )
     if feasibility_report.blocking_error_count > 0:
         first_err = feasibility_report.diagnostics[0]

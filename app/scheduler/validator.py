@@ -199,6 +199,8 @@ def _check_minor_sunday_constraint(
     """Minors cannot work Sundays."""
     violations: list[ConstraintViolation] = []
     for assignment in schedule.assignments:
+        if assignment.is_pre_assigned:
+            continue
         if assignment.shift.shift_type.value.startswith("So_"):
             staff = staff_dict.get(assignment.staff_identifier)
             if staff and not staff.adult:
@@ -224,6 +226,9 @@ def _check_same_day_double_booking(schedule: Schedule) -> list[ConstraintViolati
 
     for (staff_id, shift_date), assignments in assignments_by_staff_date.items():
         if len(assignments) > 1:
+            # Allow multiple shifts if all were explicitly pre-assigned by management
+            if all(a.is_pre_assigned for a in assignments):
+                continue
             shift_types = [a.shift.shift_type.value for a in assignments]
             violations.append(
                 ConstraintViolation(
@@ -260,6 +265,9 @@ def _check_nd_alone_improper_pairing(
             continue
 
         if len(assignments) < 2:
+            continue
+
+        if all(a.is_pre_assigned for a in assignments):
             continue
 
         # Check if any nd_alone=True staff is paired with ANYONE
@@ -506,11 +514,14 @@ def _check_night_pairing_constraint(
         if not assignments:
             continue
 
+        if all(a.is_pre_assigned for a in assignments):
+            continue
+
         # Categorize staff
         azubis = []
         non_azubis = []
         nd_alone_false_staff = []
-        
+
         for assignment in assignments:
             staff = staff_dict.get(assignment.staff_identifier)
             if not staff:
@@ -585,6 +596,8 @@ def _check_same_day_next_day_constraint(schedule: Schedule) -> list[ConstraintVi
                 if not assignment.shift.is_night_shift():
                     shift_date = assignment.shift.shift_date
                     if shift_date == night_date or shift_date == next_date:
+                        if night_assignment.is_pre_assigned and assignment.is_pre_assigned:
+                            continue
                         violations.append(
                             ConstraintViolation(
                                 "Night/Day Conflict",
@@ -652,6 +665,8 @@ def _check_three_week_block_constraint(
 
                 # Check if block2 starts within required_gap days of block1 start
                 if (block2_start - block1_start).days < required_gap:
+                    if all(a.is_pre_assigned for a in block1) and all(a.is_pre_assigned for a in block2):
+                        continue
                     name = (
                         "Holiday Block Limit"
                         if (b1_has_holiday or b2_has_holiday)
@@ -687,9 +702,9 @@ def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintVi
     for staff_id, assignments in staff_assignments.items():
         # Get weekend shifts and all dates worked
         weekend_assignments = [a for a in assignments if a.shift.is_weekend_shift()]
-        shifts_by_date: dict[date, list[ShiftType]] = defaultdict(list)
+        assignments_by_date: dict[date, list[Assignment]] = defaultdict(list)
         for a in assignments:
-            shifts_by_date[a.shift.shift_date].append(a.shift.shift_type)
+            assignments_by_date[a.shift.shift_date].append(a)
 
         for we_assignment in weekend_assignments:
             we_date = we_assignment.shift.shift_date
@@ -698,22 +713,30 @@ def _check_weekend_isolation_constraint(schedule: Schedule) -> list[ConstraintVi
 
             # Check if adjacent to another shift (forming a block)
             adjacent_worked = []
-            if prev_date in shifts_by_date:
-                prev_types = shifts_by_date[prev_date]
+            if prev_date in assignments_by_date:
+                prev_asgns = assignments_by_date[prev_date]
+                prev_types = [a.shift.shift_type for a in prev_asgns]
                 is_coupled = (
                     we_assignment.shift.shift_type == ShiftType.SUNDAY_INTERN
                     and prev_types == [ShiftType.SATURDAY_INTERN]
                 )
-                if not is_coupled:
+                both_preassigned = we_assignment.is_pre_assigned and all(
+                    a.is_pre_assigned for a in prev_asgns
+                )
+                if not is_coupled and not both_preassigned:
                     adjacent_worked.append(prev_date.strftime('%d.%m.%Y'))
 
-            if next_date in shifts_by_date:
-                next_types = shifts_by_date[next_date]
+            if next_date in assignments_by_date:
+                next_asgns = assignments_by_date[next_date]
+                next_types = [a.shift.shift_type for a in next_asgns]
                 is_coupled = (
                     we_assignment.shift.shift_type == ShiftType.SATURDAY_INTERN
                     and next_types == [ShiftType.SUNDAY_INTERN]
                 )
-                if not is_coupled:
+                both_preassigned = we_assignment.is_pre_assigned and all(
+                    a.is_pre_assigned for a in next_asgns
+                )
+                if not is_coupled and not both_preassigned:
                     adjacent_worked.append(next_date.strftime('%d.%m.%Y'))
 
             if adjacent_worked:
@@ -821,6 +844,8 @@ def _check_min_consecutive_nights_constraint(
 
             block_length = len(block)
             if block_length < min_consecutive:
+                if all(a.is_pre_assigned for a in block):
+                    continue
                 violations.append(
                     ConstraintViolation(
                         "Min Consecutive Nights",
@@ -887,6 +912,8 @@ def _check_nd_max_consecutive_constraint(
 
             block_length = len(block)
             if block_length > staff.nd_max_consecutive:
+                if all(a.is_pre_assigned for a in block):
+                    continue
                 violations.append(
                     ConstraintViolation(
                         "ND Max Consecutive",
@@ -906,6 +933,8 @@ def _check_nd_exceptions_constraint(
     violations: list[ConstraintViolation] = []
 
     for assignment in schedule.assignments:
+        if assignment.is_pre_assigned:
+            continue
         if assignment.shift.is_night_shift():
             staff = staff_dict.get(assignment.staff_identifier)
             if not staff:
@@ -932,6 +961,8 @@ def _check_shift_eligibility(
     violations: list[ConstraintViolation] = []
 
     for assignment in schedule.assignments:
+        if assignment.is_pre_assigned:
+            continue
         staff = staff_dict.get(assignment.staff_identifier)
         if not staff:
             violations.append(
@@ -1054,13 +1085,13 @@ def _check_abteilung_night_constraint(
     """
     violations: list[ConstraintViolation] = []
     restricted_abteilungen = {Abteilung.OP, Abteilung.STATION}
-    
+
     # Group night assignments by date
     night_assignments_by_date: dict[Any, list[Assignment]] = defaultdict(list)
     for assignment in schedule.assignments:
         if assignment.shift.is_night_shift():
             night_assignments_by_date[assignment.shift.shift_date].append(assignment)
-    
+
     sorted_dates = sorted(night_assignments_by_date.keys())
 
     # Check cross-quarter boundary with previous context
@@ -1086,20 +1117,26 @@ def _check_abteilung_night_constraint(
                                     f"and {curr_staff.name} on {schedule.quarter_start.strftime('%d.%m.%Y')}",
                                 )
                             )
-    
+
     for i, shift_date in enumerate(sorted_dates):
         assignments = night_assignments_by_date[shift_date]
-        
+
         # Get staff with restricted abteilung for this night
         restricted_staff_today: dict[Abteilung, list[str]] = defaultdict(list)
         for a in assignments:
             staff = staff_dict.get(a.staff_identifier)
             if staff and staff.abteilung in restricted_abteilungen:
                 restricted_staff_today[staff.abteilung].append(staff.name)
-        
+
         # 1. Check same night: no two staff from same abteilung
         for abteilung, names in restricted_staff_today.items():
             if len(names) >= 2:
+                if all(
+                    a.is_pre_assigned
+                    for a in assignments
+                    if (s := staff_dict.get(a.staff_identifier)) and s.abteilung == abteilung
+                ):
+                    continue
                 violations.append(
                     ConstraintViolation(
                         "Abteilung Same Night",
@@ -1107,38 +1144,48 @@ def _check_abteilung_night_constraint(
                         f"assigned to same night on {shift_date.strftime('%d.%m.%Y')}",
                     )
                 )
-        
+
         # 2. Check consecutive days: no two staff from same abteilung on consecutive days
         if i < len(sorted_dates) - 1:
             next_date = sorted_dates[i + 1]
             # Only check if dates are actually consecutive
             if (next_date - shift_date).days == 1:
                 next_assignments = night_assignments_by_date[next_date]
-                
+
                 restricted_staff_tomorrow: dict[Abteilung, list[str]] = defaultdict(list)
                 for a in next_assignments:
                     staff = staff_dict.get(a.staff_identifier)
                     if staff and staff.abteilung in restricted_abteilungen:
                         restricted_staff_tomorrow[staff.abteilung].append(staff.name)
-                
+
                 # Check for same abteilung on consecutive days (different people)
                 for abteilung in restricted_abteilungen:
                     today_names = set(restricted_staff_today.get(abteilung, []))
                     tomorrow_names = set(restricted_staff_tomorrow.get(abteilung, []))
-                    
+
                     # Find different people from same abteilung on consecutive days
                     # (same person on consecutive days is allowed and handled elsewhere)
                     different_people = today_names.symmetric_difference(tomorrow_names)
                     if today_names and tomorrow_names and different_people:
-                        violations.append(
-                            ConstraintViolation(
-                                "Abteilung Consecutive Days",
-                                f"Staff from {abteilung.value} on consecutive nights: "
-                                f"{', '.join(today_names)} on {shift_date.strftime('%d.%m.%Y')} "
-                                f"and {', '.join(tomorrow_names)} on {next_date.strftime('%d.%m.%Y')}",
-                            )
+                        both_preassigned = all(
+                            a.is_pre_assigned
+                            for a in assignments
+                            if (s := staff_dict.get(a.staff_identifier)) and s.abteilung == abteilung
+                        ) and all(
+                            a.is_pre_assigned
+                            for a in next_assignments
+                            if (s := staff_dict.get(a.staff_identifier)) and s.abteilung == abteilung
                         )
-    
+                        if not both_preassigned:
+                            violations.append(
+                                ConstraintViolation(
+                                    "Abteilung Consecutive Days",
+                                    f"Staff from {abteilung.value} on consecutive nights: "
+                                    f"{', '.join(today_names)} on {shift_date.strftime('%d.%m.%Y')} "
+                                    f"and {', '.join(tomorrow_names)} on {next_date.strftime('%d.%m.%Y')}",
+                                )
+                            )
+
     return violations
 
 
@@ -1200,7 +1247,7 @@ def _calculate_soft_penalty(
         w_mean = sum(we_counts) / len(we_counts)
         w_variance = sum((x - w_mean) ** 2 for x in we_counts) / len(we_counts)
         penalty += (w_variance**0.5) * 10
-    
+
     # Soft penalty for consecutive night shifts exceeding nd_max_consecutive
     consecutive_nd_violations = _check_nd_max_consecutive_constraint(
         schedule, staff_dict, previous_context=previous_context

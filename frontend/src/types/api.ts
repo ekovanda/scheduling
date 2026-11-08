@@ -100,6 +100,7 @@ export type InfeasibilityCategory =
 export type DiagnosticSeverity = 'ERROR' | 'WARNING';
 
 export interface InfeasibilityDiagnosticRecord {
+  id?: string;
   category: InfeasibilityCategory;
   severity: DiagnosticSeverity;
   title: string;
@@ -107,6 +108,9 @@ export interface InfeasibilityDiagnosticRecord {
   affected_staff_ids: string[];
   affected_dates: string[];
   remediation_hint: string;
+  can_be_accepted?: boolean;
+  is_accepted?: boolean;
+  pre_assigned_ids?: string[];
 }
 
 export interface FeasibilityReportRecord {

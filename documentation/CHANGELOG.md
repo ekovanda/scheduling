@@ -9,6 +9,27 @@ Developer-facing implementation reference for released changes. This document co
 - `X.0.0` — significant product change; `1.0.0` marks the first productive release.
 - Entries are newest first. Historical entries group related commits approximately; commit hashes are included where useful for tracing.
 
+## [2.2.0] - 2026-11-08
+
+### Added: Interaktive Ausnahme-Akzeptanz für Vorbelegungen in der Machbarkeitsprüfung
+
+- **Feasibility & Diagnostics (`app/scheduler/feasibility.py`):**
+  - `InfeasibilityDiagnosticRecord` um Felder `id` (deterministische Kennung), `can_be_accepted`, `is_accepted` und `pre_assigned_ids` erweitert.
+  - Vorbelegungs-Konflikte (Doppelbelegungen, Wochentagssperren, Ruhezeitverletzungen, Qualifikationsabweichungen, Höchstgrenzen) generieren stabile IDs und markieren `can_be_accepted = True`.
+  - `run_full_feasibility_check` akzeptiert `accepted_violation_ids`. Akzeptierte Konflikte werden nicht mehr als blockierende Fehler gewertet (`blocking_error_count`), sodass `is_feasible` auf `True` wechselt.
+- **API (`app/api/v1/quarters.py`):**
+  - Neuer Endpunkt `POST /{quarter_key}/accept-feasibility-violation` zum Annehmen oder Widerrufen von Ausnahmegenehmigungen (persistiert in `QuarterScheduleDocument.config["accepted_feasibility_violations"]`).
+  - `validate-feasibility` und `generate` berücksichtigen die gespeicherten akzeptierten Ausnahmen bei der Vorprüfung.
+- **Solver & Validator (`app/scheduler/solver_cpsat.py`, `app/scheduler/validator.py`):**
+  - Sliding-Window-Indexverschiebung in `_add_nd_max_consecutive_constraints` korrigiert (`staff_night_vars[i + idx]`).
+  - Entscheidungsvariablen `x` im CP-SAT-Solver werden für explizit vorgegebene Dienste auch bei Rollenabweichungen erzeugt, um die betriebliche Zuweisung verbindlich zu fixieren.
+  - Post-Solve-Validierung (`validate_schedule`) nimmt vorgegebene Dienste (`is_pre_assigned=True`) von harten Validierungsfehlern aus.
+- **Frontend (`frontend/src/views/MatrixView.tsx`, `frontend/src/types/api.ts`, `frontend/src/lib/api.ts`):**
+  - Machbarkeits-Modal bietet für jeden Konflikt direkte Aktionen: "Ausnahme akzeptieren", "Widerrufen" sowie "Vorbelegung löschen".
+  - Statusanzeige schaltet bei vollständig akzeptierten oder bereinigten Konflikten auf Grün um und ermöglicht den direkten Start der Berechnung.
+- **Tests (`tests/test_feasibility_diagnostics.py`, `tests/test_release_info.py`):**
+  - Integrationstests für den gesamten Lebenszyklus der Ausnahmeakzeptanz (Prüfung, Akzeptanz, Entlastung der Blockade, Widerruf).
+
 ## [2.1.2] - 2026-11-08
 
 ### Fixed: Berücksichtigung von Vorquartals-Nachtdiensten in der Post-Solve-Validierung (`nd_min_consecutive`)

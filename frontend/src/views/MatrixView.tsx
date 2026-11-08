@@ -16,6 +16,7 @@ import {
   Sparkles,
   ShieldCheck,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react';
 import type {
   QuarterScheduleDocument,
@@ -24,6 +25,7 @@ import type {
   AbsenceRecord,
   SolverJobRecord,
   FeasibilityReportRecord,
+  InfeasibilityDiagnosticRecord,
 } from '../types/api';
 import {
   fetchSchedule,
@@ -35,6 +37,8 @@ import {
   fetchSolverStatus,
   cancelSolverJob,
   validateQuarterFeasibility,
+  acceptFeasibilityViolation,
+  deletePreAssigned,
   exportQuarterSchedule,
   type RolloverContextData,
 } from '../lib/api';
@@ -108,6 +112,8 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
   const [feasibilityReport, setFeasibilityReport] = useState<FeasibilityReportRecord | null>(null);
   const [checkingFeasibility, setCheckingFeasibility] = useState(false);
   const [feasibilityModalOpen, setFeasibilityModalOpen] = useState(false);
+  const [acceptingViolationId, setAcceptingViolationId] = useState<string | null>(null);
+  const [deletingPreassignedId, setDeletingPreassignedId] = useState<string | null>(null);
 
   const currentQuarterKey = `${setupYear}-${setupQuarter}`;
 
@@ -320,6 +326,40 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
       console.error('Feasibility check failed:', msg);
     } finally {
       setCheckingFeasibility(false);
+    }
+  };
+
+  const handleToggleAcceptViolation = async (diag: InfeasibilityDiagnosticRecord) => {
+    if (!diag.id) return;
+    setAcceptingViolationId(diag.id);
+    try {
+      const updated = await acceptFeasibilityViolation(
+        currentQuarterKey,
+        diag.id,
+        !diag.is_accepted
+      );
+      setFeasibilityReport(updated);
+    } catch (err: unknown) {
+      console.error('Failed to toggle violation acceptance:', err);
+    } finally {
+      setAcceptingViolationId(null);
+    }
+  };
+
+  const handleDeletePreassignedFromDiag = async (paIds: string[]) => {
+    if (!paIds || paIds.length === 0) return;
+    setDeletingPreassignedId(paIds[0]);
+    try {
+      for (const id of paIds) {
+        await deletePreAssigned(id);
+      }
+      const updated = await validateQuarterFeasibility(currentQuarterKey);
+      setFeasibilityReport(updated);
+      loadData();
+    } catch (err: unknown) {
+      console.error('Failed to delete pre-assigned shift:', err);
+    } finally {
+      setDeletingPreassignedId(null);
     }
   };
 
@@ -1664,10 +1704,16 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
             <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-2">
               <div className="flex items-center gap-2.5 text-emerald-800 font-bold text-sm">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-                <span>Alle Vorbelegungen und Kapazitäten konsistent!</span>
+                <span>
+                  {feasibilityReport.diagnostics.some((d) => d.is_accepted)
+                    ? 'Vorprüfung bestanden (Ausnahmen aktiv akzeptiert)!'
+                    : 'Alle Vorbelegungen und Kapazitäten konsistent!'}
+                </span>
               </div>
               <p className="text-xs text-emerald-800/90 leading-relaxed">
-                Es wurden keine mathematischen Widersprüche (wie Doppelbelegungen, Wochentags-Sperren oder Ruhezeitverletzungen) erkannt. Das Quartal kann mit CP-SAT berechnet werden.
+                {feasibilityReport.diagnostics.some((d) => d.is_accepted)
+                  ? 'Alle blockierenden Vorbelegungs-Konflikte wurden aktiv als Ausnahmegenehmigung akzeptiert. Der Solver übernimmt diese festen Belegungen und plant das Restquartal.'
+                  : 'Es wurden keine mathematischen Widersprüche erkannt. Das Quartal kann mit CP-SAT berechnet werden.'}
               </p>
             </div>
           ) : (
@@ -1679,29 +1725,34 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-red-800/90 leading-relaxed">
-                Der mathematische Solver würde mit diesen Vorbelegungen sofort scheitern (Status: INFEASIBLE). Bitte beheben Sie die folgenden Punkte:
+                Vorbelegte Schichten verletzen Randbedingungen. Sie können die Vorbelegung entfernen oder die Ausnahme aktiv genehmigen / akzeptieren:
               </p>
             </div>
           )}
 
           {/* Diagnostic Cards List */}
           {feasibilityReport && feasibilityReport.diagnostics.length > 0 && (
-            <div className="max-h-80 overflow-y-auto space-y-2.5 pr-1">
+            <div className="max-h-96 overflow-y-auto space-y-2.5 pr-1">
               {feasibilityReport.diagnostics.map((diag, idx) => {
                 const isErr = diag.severity === 'ERROR';
+                const isAccepted = diag.is_accepted;
                 return (
                   <div
-                    key={idx}
+                    key={diag.id || idx}
                     className={cn(
-                      'p-3.5 rounded-xl border text-xs space-y-2 transition-all',
-                      isErr
+                      'p-3.5 rounded-xl border text-xs space-y-2.5 transition-all',
+                      isAccepted
+                        ? 'bg-emerald-50/60 border-emerald-300 text-emerald-950'
+                        : isErr
                         ? 'bg-red-50/70 border-red-200 text-red-950'
                         : 'bg-amber-50/70 border-amber-200 text-amber-950'
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {isErr ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isAccepted ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                        ) : isErr ? (
                           <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                         ) : (
                           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
@@ -1709,12 +1760,14 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
                         <span
                           className={cn(
                             'text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider',
-                            isErr
+                            isAccepted
+                              ? 'bg-emerald-200 text-emerald-900'
+                              : isErr
                               ? 'bg-red-200/80 text-red-900'
                               : 'bg-amber-200/80 text-amber-900'
                           )}
                         >
-                          {isErr ? 'Blockierend' : 'Warnung'}
+                          {isAccepted ? 'Akzeptiert' : isErr ? 'Blockierend' : 'Warnung'}
                         </span>
                         <span className="font-bold text-stone-900">{diag.title}</span>
                       </div>
@@ -1734,19 +1787,70 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
 
                     <p className="text-stone-700 leading-relaxed font-sans">{diag.message}</p>
 
-                    {diag.remediation_hint && (
+                    {diag.remediation_hint && !isAccepted && (
                       <div className="bg-white/80 rounded-lg p-2.5 border border-stone-200/60 flex items-start gap-2 text-stone-800 text-[11px]">
                         <span className="text-amber-600 shrink-0 font-bold">💡 Lösung:</span>
                         <span>{diag.remediation_hint}</span>
                       </div>
                     )}
+
+                    {/* Action Bar for Accept / Reject / Delete Pre-Assignments */}
+                    <div className="pt-1.5 flex items-center justify-between border-t border-stone-200/50 gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        {diag.can_be_accepted && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAcceptViolation(diag)}
+                            disabled={acceptingViolationId === diag.id}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                              isAccepted
+                                ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                            )}
+                          >
+                            {acceptingViolationId === diag.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : isAccepted ? (
+                              <span>Ausnahme widerrufen</span>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Ausnahme akzeptieren</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                        {isAccepted && (
+                          <span className="text-[11px] text-emerald-800 font-medium">
+                            ✓ Wird bei der Solver-Berechnung ignoriert
+                          </span>
+                        )}
+                      </div>
+
+                      {diag.pre_assigned_ids && diag.pre_assigned_ids.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePreassignedFromDiag(diag.pre_assigned_ids || [])}
+                          disabled={deletingPreassignedId !== null}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white hover:bg-red-50 text-red-700 border border-red-200 transition-colors"
+                        >
+                          {deletingPreassignedId === diag.pre_assigned_ids[0] ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                          )}
+                          <span>Vorbelegung löschen</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
 
-          <div className="pt-2 flex items-center justify-end border-t border-stone-100">
+          <div className="pt-3 flex items-center justify-between border-t border-stone-100">
             <Button
               type="button"
               variant="outline"
@@ -1755,6 +1859,21 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
             >
               Schließen
             </Button>
+            {feasibilityReport?.is_feasible && (
+              <Button
+                type="button"
+                variant="primary"
+                size="md"
+                onClick={() => {
+                  setFeasibilityModalOpen(false);
+                  handleRunSolver();
+                }}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                <Play className="h-4 w-4" />
+                <span>Berechnung starten</span>
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

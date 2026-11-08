@@ -278,6 +278,23 @@ export async function validateQuarterFeasibility(
   return res.json();
 }
 
+export async function acceptFeasibilityViolation(
+  quarterKey: string,
+  violationId: string,
+  accepted: boolean = true
+): Promise<FeasibilityReportRecord> {
+  const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/accept-feasibility-violation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ violation_id: violationId, accepted }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.detail || `Fehler beim Aktualisieren der Ausnahme: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 export async function generateSchedule(quarterKey: string): Promise<QuarterScheduleDocument | null> {
   const res = await authFetch(`${API_BASE}/quarters/${quarterKey}/generate?sync=true`, {
     method: 'POST',

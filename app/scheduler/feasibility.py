@@ -59,6 +59,7 @@ class DiagnosticSeverity(str, Enum):
 class InfeasibilityDiagnosticRecord(BaseModel):
     """Structured clinical diagnostic explaining an infeasibility or configuration clash."""
 
+    id: str = ""
     category: InfeasibilityCategory
     severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
     title: str
@@ -66,6 +67,9 @@ class InfeasibilityDiagnosticRecord(BaseModel):
     affected_staff_ids: list[str] = Field(default_factory=list)
     affected_dates: list[date] = Field(default_factory=list)
     remediation_hint: str
+    can_be_accepted: bool = False
+    is_accepted: bool = False
+    pre_assigned_ids: list[str] = Field(default_factory=list)
 
 
 class FeasibilityReportRecord(BaseModel):
@@ -459,6 +463,16 @@ def analyze_capacity(
     return CapacityReport(checks=checks)
 
 
+def _generate_diagnostic_id(
+    category: InfeasibilityCategory,
+    staff_ids: list[str],
+    dates: list[date],
+) -> str:
+    staff_str = "_".join(sorted(staff_ids))
+    date_str = "_".join(d.strftime("%Y%m%d") for d in sorted(dates))
+    return f"{category.value}:{staff_str}:{date_str}"
+
+
 def validate_pre_assigned_consistency(
     pre_assigned: list[PreAssignedShift],
     staff_list: list[Staff],
@@ -497,15 +511,25 @@ def validate_pre_assigned_consistency(
     for ident, pa_list in by_staff.items():
         staff = staff_by_id.get(ident)
         if not staff:
+            aff_dates = [pa.shift_date for pa in pa_list]
+            pa_ids = [pa.id for pa in pa_list if pa.id]
             diagnostics.append(
                 InfeasibilityDiagnosticRecord(
+                    id=_generate_diagnostic_id(
+                        InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
+                        [ident],
+                        aff_dates,
+                    ),
                     category=InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
                     severity=DiagnosticSeverity.ERROR,
                     title="Mitarbeiter nicht im Personalstamm",
                     message=f"Für das Kürzel '{ident}' existiert kein aktiver Mitarbeiter im Personalstamm.",
                     affected_staff_ids=[ident],
-                    affected_dates=[pa.shift_date for pa in pa_list],
+                    affected_dates=aff_dates,
                     remediation_hint=f"Legen Sie '{ident}' im Personal-Manager an oder korrigieren Sie das Kürzel in den Vorbelegungen.",
+                    can_be_accepted=True,
+                    is_accepted=False,
+                    pre_assigned_ids=pa_ids,
                 )
             )
             continue
@@ -522,6 +546,11 @@ def validate_pre_assigned_consistency(
             if pa.shift_date in blocked_dates:
                 diagnostics.append(
                     InfeasibilityDiagnosticRecord(
+                        id=_generate_diagnostic_id(
+                            InfeasibilityCategory.PREASSIGNED_ABSENCE_COLLISION,
+                            [staff.identifier],
+                            [pa.shift_date],
+                        ),
                         category=InfeasibilityCategory.PREASSIGNED_ABSENCE_COLLISION,
                         severity=DiagnosticSeverity.ERROR,
                         title="Vorbelegung kollidiert mit Abwesenheit / Urlaub",
@@ -536,6 +565,9 @@ def validate_pre_assigned_consistency(
                             f"Löschen Sie die Vorbelegung von {staff.identifier} am {pa.shift_date.strftime('%d.%m.%Y')} "
                             f"oder passen Sie den Abwesenheitseintrag im Abwesenheits-Manager an."
                         ),
+                        can_be_accepted=True,
+                        is_accepted=False,
+                        pre_assigned_ids=[pa.id] if pa.id else [],
                     )
                 )
 
@@ -544,6 +576,11 @@ def validate_pre_assigned_consistency(
                 weekday_name = GERMAN_WEEKDAYS.get(pa.shift_date.isoweekday(), str(pa.shift_date.isoweekday()))
                 diagnostics.append(
                     InfeasibilityDiagnosticRecord(
+                        id=_generate_diagnostic_id(
+                            InfeasibilityCategory.PREASSIGNED_BLOCKED_WEEKDAY,
+                            [staff.identifier],
+                            [pa.shift_date],
+                        ),
                         category=InfeasibilityCategory.PREASSIGNED_BLOCKED_WEEKDAY,
                         severity=DiagnosticSeverity.ERROR,
                         title="Vorbelegung an gesperrtem Wochentag",
@@ -555,6 +592,9 @@ def validate_pre_assigned_consistency(
                         affected_staff_ids=[staff.identifier],
                         affected_dates=[pa.shift_date],
                         remediation_hint="Entfernen Sie die Vorbelegung an diesem Tag oder passen Sie die gesperrten Wochentage in den Mitarbeiter-Stammdaten an.",
+                        can_be_accepted=True,
+                        is_accepted=False,
+                        pre_assigned_ids=[pa.id] if pa.id else [],
                     )
                 )
 
@@ -573,6 +613,11 @@ def validate_pre_assigned_consistency(
 
                     diagnostics.append(
                         InfeasibilityDiagnosticRecord(
+                            id=_generate_diagnostic_id(
+                                InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
+                                [staff.identifier],
+                                [pa.shift_date],
+                            ),
                             category=InfeasibilityCategory.PREASSIGNED_QUALIFICATION_MISMATCH,
                             severity=DiagnosticSeverity.ERROR,
                             title=f"Qualifikations-Konflikt für {st.value}",
@@ -580,6 +625,9 @@ def validate_pre_assigned_consistency(
                             affected_staff_ids=[staff.identifier],
                             affected_dates=[pa.shift_date],
                             remediation_hint=hint,
+                            can_be_accepted=True,
+                            is_accepted=False,
+                            pre_assigned_ids=[pa.id] if pa.id else [],
                         )
                     )
 
@@ -594,8 +642,14 @@ def validate_pre_assigned_consistency(
                     st.value if (st := to_st(s.shift_type)) is not None else str(s.shift_type)
                     for s in d_shifts
                 )
+                d_pa_ids = [s.id for s in d_shifts if s.id]
                 diagnostics.append(
                     InfeasibilityDiagnosticRecord(
+                        id=_generate_diagnostic_id(
+                            InfeasibilityCategory.PREASSIGNED_SAME_DAY,
+                            [staff.identifier],
+                            [d],
+                        ),
                         category=InfeasibilityCategory.PREASSIGNED_SAME_DAY,
                         severity=DiagnosticSeverity.ERROR,
                         title="Doppelbelegung am selben Kalendertag",
@@ -607,6 +661,9 @@ def validate_pre_assigned_consistency(
                         affected_staff_ids=[staff.identifier],
                         affected_dates=[d],
                         remediation_hint="Entfernen Sie eine der Schichten am selben Tag oder teilen Sie den Dienst einer anderen Fachkraft zu.",
+                        can_be_accepted=True,
+                        is_accepted=False,
+                        pre_assigned_ids=d_pa_ids,
                     )
                 )
 
@@ -623,8 +680,14 @@ def validate_pre_assigned_consistency(
                         current_streak.append(night_dates[i])
                     else:
                         if len(current_streak) > staff.nd_max_consecutive:
+                            streak_pa_ids = [s.id for s in pa_list if s.shift_date in current_streak and s.id]
                             diagnostics.append(
                                 InfeasibilityDiagnosticRecord(
+                                    id=_generate_diagnostic_id(
+                                        InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
+                                        [staff.identifier],
+                                        list(current_streak),
+                                    ),
                                     category=InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
                                     severity=DiagnosticSeverity.ERROR,
                                     title="Höchstgrenze aufeinanderfolgender Nächte überschritten",
@@ -636,12 +699,21 @@ def validate_pre_assigned_consistency(
                                     affected_staff_ids=[staff.identifier],
                                     affected_dates=list(current_streak),
                                     remediation_hint=f"Kürzen Sie die Serie aufeinanderfolgender Nächte für {staff.name} auf maximal {staff.nd_max_consecutive} Nächte.",
+                                    can_be_accepted=True,
+                                    is_accepted=False,
+                                    pre_assigned_ids=streak_pa_ids,
                                 )
                             )
                         current_streak = [night_dates[i]]
                 if len(current_streak) > staff.nd_max_consecutive:
+                    streak_pa_ids = [s.id for s in pa_list if s.shift_date in current_streak and s.id]
                     diagnostics.append(
                         InfeasibilityDiagnosticRecord(
+                            id=_generate_diagnostic_id(
+                                InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
+                                [staff.identifier],
+                                list(current_streak),
+                            ),
                             category=InfeasibilityCategory.PREASSIGNED_CONSECUTIVE_CAP,
                             severity=DiagnosticSeverity.ERROR,
                             title="Höchstgrenze aufeinanderfolgender Nächte überschritten",
@@ -653,6 +725,9 @@ def validate_pre_assigned_consistency(
                             affected_staff_ids=[staff.identifier],
                             affected_dates=list(current_streak),
                             remediation_hint=f"Kürzen Sie die Serie aufeinanderfolgender Nächte für {staff.name} auf maximal {staff.nd_max_consecutive} Nächte.",
+                            can_be_accepted=True,
+                            is_accepted=False,
+                            pre_assigned_ids=streak_pa_ids,
                         )
                     )
 
@@ -678,8 +753,15 @@ def validate_pre_assigned_consistency(
                         and other.shift_date == we.shift_date - timedelta(days=1)
                     )
                     if not is_intern_pair:
+                        iso_dates = [we.shift_date, other.shift_date]
+                        iso_pa_ids = [s.id for s in [we, other] if s.id]
                         diagnostics.append(
                             InfeasibilityDiagnosticRecord(
+                                id=_generate_diagnostic_id(
+                                    InfeasibilityCategory.PREASSIGNED_WEEKEND_ISOLATION,
+                                    [staff.identifier],
+                                    iso_dates,
+                                ),
                                 category=InfeasibilityCategory.PREASSIGNED_WEEKEND_ISOLATION,
                                 severity=DiagnosticSeverity.ERROR,
                                 title="Verletzung der Wochenend-Isolation / 11h-Ruhezeit",
@@ -690,8 +772,11 @@ def validate_pre_assigned_consistency(
                                     f"eingeteilt. Dies verletzt die gesetzliche Ruhezeit von 11 Stunden."
                                 ),
                                 affected_staff_ids=[staff.identifier],
-                                affected_dates=[we.shift_date, other.shift_date],
+                                affected_dates=iso_dates,
                                 remediation_hint="Legen Sie mindestens einen freien Tag zwischen Wochenenddienst und Nachtdienst.",
+                                can_be_accepted=True,
+                                is_accepted=False,
+                                pre_assigned_ids=iso_pa_ids,
                             )
                         )
 
@@ -708,6 +793,8 @@ def validate_pre_assigned_consistency(
         if not first_st:
             continue
 
+        night_pa_ids = [s.id for s in d_nights if s.id]
+
         if first_st in (ShiftType.NIGHT_FRI_SAT, ShiftType.NIGHT_SAT_SUN, ShiftType.NIGHT_SUN_MON):
             if len(d_nights) == 2:
                 s1 = staff_by_id.get(d_nights[0].staff_identifier)
@@ -716,6 +803,11 @@ def validate_pre_assigned_consistency(
                     if s1.beruf != Beruf.TFA and s2.beruf != Beruf.TFA:
                         diagnostics.append(
                             InfeasibilityDiagnosticRecord(
+                                id=_generate_diagnostic_id(
+                                    InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
+                                    [s1.identifier, s2.identifier],
+                                    [d],
+                                ),
                                 category=InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
                                 severity=DiagnosticSeverity.ERROR,
                                 title="Fehlende TFA bei offener Wochenend-Nacht",
@@ -727,11 +819,19 @@ def validate_pre_assigned_consistency(
                                 affected_staff_ids=[s1.identifier, s2.identifier],
                                 affected_dates=[d],
                                 remediation_hint="Ersetzen Sie eine der beiden Personen durch eine TFA.",
+                                can_be_accepted=True,
+                                is_accepted=False,
+                                pre_assigned_ids=night_pa_ids,
                             )
                         )
                     if s1.beruf == Beruf.AZUBI and s2.beruf == Beruf.AZUBI:
                         diagnostics.append(
                             InfeasibilityDiagnosticRecord(
+                                id=_generate_diagnostic_id(
+                                    InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
+                                    [s1.identifier, s2.identifier],
+                                    [d],
+                                ),
                                 category=InfeasibilityCategory.PREASSIGNED_PAIRING_UNQUALIFIED,
                                 severity=DiagnosticSeverity.ERROR,
                                 title="Unzulässiges Azubi-Doppel im Nachtdienst",
@@ -742,6 +842,9 @@ def validate_pre_assigned_consistency(
                                 affected_staff_ids=[s1.identifier, s2.identifier],
                                 affected_dates=[d],
                                 remediation_hint="Teilen Sie mindestens eine erfahrene Fachkraft ein.",
+                                can_be_accepted=True,
+                                is_accepted=False,
+                                pre_assigned_ids=night_pa_ids,
                             )
                         )
         else:
@@ -750,6 +853,11 @@ def validate_pre_assigned_consistency(
                 if s and not s.nd_alone:
                     diagnostics.append(
                         InfeasibilityDiagnosticRecord(
+                            id=_generate_diagnostic_id(
+                                InfeasibilityCategory.PREASSIGNED_SOLO_UNQUALIFIED,
+                                [s.identifier],
+                                [d],
+                            ),
                             category=InfeasibilityCategory.PREASSIGNED_SOLO_UNQUALIFIED,
                             severity=DiagnosticSeverity.ERROR,
                             title="Alleindienst ohne Berechtigung (nd_alone=False)",
@@ -760,6 +868,9 @@ def validate_pre_assigned_consistency(
                             affected_staff_ids=[s.identifier],
                             affected_dates=[d],
                             remediation_hint=f"Weisen Sie {s.name} eine begleitende Fachkraft zu oder besetzen Sie die Nacht mit einer alleindienstfähigen Fachkraft.",
+                            can_be_accepted=True,
+                            is_accepted=False,
+                            pre_assigned_ids=night_pa_ids,
                         )
                     )
 
@@ -814,11 +925,15 @@ def validate_capacity_and_coverage(
         detail_text = f" Details: {'; '.join(check.details)}" if check.details else ""
         diagnostics.append(
             InfeasibilityDiagnosticRecord(
+                id=_generate_diagnostic_id(category, [], []),
                 category=category,
                 severity=sev,
                 title=title,
                 message=f"{check.message}{detail_text}",
                 remediation_hint=hint,
+                can_be_accepted=False,
+                is_accepted=False,
+                pre_assigned_ids=[],
             )
         )
 
@@ -833,6 +948,7 @@ def run_full_feasibility_check(
     quarter_end: date,
     config: SchedulerConfig,
     quarter_key: str = "",
+    accepted_violation_ids: list[str] | set[str] | None = None,
 ) -> FeasibilityReportRecord:
     """Run both deterministic pre-flight checks and capacity analyses."""
     diagnostics: list[InfeasibilityDiagnosticRecord] = []
@@ -860,7 +976,15 @@ def run_full_feasibility_check(
         )
     )
 
-    blocking = [d for d in diagnostics if d.severity == DiagnosticSeverity.ERROR]
+    accepted_set = set(accepted_violation_ids or [])
+    for d in diagnostics:
+        if d.id in accepted_set:
+            d.is_accepted = True
+
+    blocking = [
+        d for d in diagnostics
+        if d.severity == DiagnosticSeverity.ERROR and not d.is_accepted
+    ]
     warnings = [d for d in diagnostics if d.severity == DiagnosticSeverity.WARNING]
 
     return FeasibilityReportRecord(
@@ -900,6 +1024,7 @@ def diagnose_structured_infeasibility(
         )
         diagnostics.append(
             InfeasibilityDiagnosticRecord(
+                id=_generate_diagnostic_id(InfeasibilityCategory.SOLVER_UNSATISFIABLE, [], []),
                 category=InfeasibilityCategory.SOLVER_UNSATISFIABLE,
                 severity=DiagnosticSeverity.ERROR,
                 title="Komplexe Randbedingungs-Kollision (CP-SAT Unlösbar)",
@@ -911,6 +1036,9 @@ def diagnose_structured_infeasibility(
                     "Lockern Sie Urlaubszeiten, vergrößern Sie den Mitarbeiterpool, "
                     "oder prüfen Sie, ob feste Vorbelegungen an Feiertagen das Restproblem überbeschränken."
                 ),
+                can_be_accepted=False,
+                is_accepted=False,
+                pre_assigned_ids=[],
             )
         )
 

@@ -510,6 +510,7 @@ def load_staff_from_csv(csv_path: Path) -> list[Staff]:
 class PreAssignedShift(BaseModel):
     """A shift pre-assigned from an external process (e.g., holidays)."""
 
+    id: str | None = None
     shift_date: date
     shift_type: ShiftType
     staff_identifier: str

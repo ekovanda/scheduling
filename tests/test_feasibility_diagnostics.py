@@ -268,3 +268,66 @@ def test_generate_fails_fast_on_infeasible_preassignments(client: TestClient) ->
     assert "Vorprüfung fehlgeschlagen" in job["error"]
     assert len(job["diagnostics"]) >= 1
     assert any(d["category"] == "PREASSIGNED_CONSECUTIVE_CAP" for d in job["diagnostics"])
+
+
+def test_accept_feasibility_violation_lifecycle(client: TestClient) -> None:
+    """Verify accepting and revoking violations changes feasibility status."""
+    # 1. Onboard staff with weekday restriction
+    client.post(
+        "/api/v1/staff",
+        json={
+            "id": "TFA_KS2",
+            "identifier": "KS2",
+            "name": "Kaitlyn S. Two",
+            "beruf": "TFA",
+            "hours": 40,
+            "nd_possible": True,
+            "nd_alone": True,
+            "nd_max_consecutive": 2,
+            "nd_exceptions": [4],
+        },
+    )
+
+    # 2. Pre-assign conflicting shift
+    client.post(
+        "/api/v1/preassigned",
+        json={
+            "id": "PA_KS2_01",
+            "staff_id": "TFA_KS2",
+            "staff_identifier": "KS2",
+            "shift_date": "2027-03-25",
+            "shift_type": "N_Do-Fr",
+        },
+    )
+
+    # 3. Validate -> must be infeasible with can_be_accepted=True
+    resp = client.post("/api/v1/quarters/2027-Q1/validate-feasibility")
+    assert resp.status_code == 200
+    report = resp.json()
+    assert report["is_feasible"] is False
+    target = next(d for d in report["diagnostics"] if "KS2" in d["affected_staff_ids"])
+    assert target["can_be_accepted"] is True
+    assert target["is_accepted"] is False
+    assert target["id"] != ""
+    assert "PA_KS2_01" in target["pre_assigned_ids"]
+
+    # 4. Accept violation
+    v_id = target["id"]
+    accept_resp = client.post(
+        "/api/v1/quarters/2027-Q1/accept-feasibility-violation",
+        json={"violation_id": v_id, "accepted": True},
+    )
+    assert accept_resp.status_code == 200
+    acc_report = accept_resp.json()
+    acc_target = next(d for d in acc_report["diagnostics"] if d["id"] == v_id)
+    assert acc_target["is_accepted"] is True
+
+    # 5. Revoke violation
+    revoke_resp = client.post(
+        "/api/v1/quarters/2027-Q1/accept-feasibility-violation",
+        json={"violation_id": v_id, "accepted": False},
+    )
+    assert revoke_resp.status_code == 200
+    rev_report = revoke_resp.json()
+    rev_target = next(d for d in rev_report["diagnostics"] if d["id"] == v_id)
+    assert rev_target["is_accepted"] is False
